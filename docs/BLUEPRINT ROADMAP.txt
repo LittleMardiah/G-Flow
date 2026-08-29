@@ -1,0 +1,379 @@
+================================================================================
+BLUEPRINT ROADMAP: G-Flow Super-App Ecosystem (v2.0-FINAL)
+================================================================================
+
+Version:         2.0-FINAL
+Last Updated:    2026-08-14
+Author:          M. Arif Aulia
+Status:          ✅ LOCKED — NO MORE PLANNING. START CODING.
+
+================================================================================
+📌 EXECUTIVE SUMMARY
+================================================================================
+
+Dokumen ini adalah **MASTER BLUEPRINT** untuk pengembangan G-Flow V1.0-MVP.
+Ini adalah hasil konsensus final antara Claude, DeepSeek, dan Gemini.
+
+TIDAK ADA LAGI REVISI DOKUMEN.
+TIDAK ADA LAGI PERDEBATAN ARSITEKTUR.
+TIDAK ADA LAGI ANALYSIS PARALYSIS.
+
+Sekarang waktunya EKSEKUSI.
+
+## 🏗️ ARSITEKTUR: MODULAR MONOLITH (MODULITH)
+- Satu codebase Golang, satu binary, satu deployment.
+- 4 modul internal: wallet/, ride/, food/, send/
+- Shared: auth/, db/, middleware/, util/
+- Scalability: Dapat dipecah ke microservices di V2.0+ jika diperlukan.
+
+================================================================================
+📊 KONSENSUS FINAL (Claude + DeepSeek + Gemini)
+================================================================================
+
+| Aspek | Konsensus |
+|-------|-----------|
+| Total Effort | ~700 jam (10 bulan @ 15 jam/minggu) |
+| Struktur | 4 Phase (Vertical Slicing) |
+| Mobile Strategy | Lazy Melos Monorepo |
+| Backend | Golang 1.22+ (Gin, pgx, decimal) |
+| Database | Supabase PostgreSQL 15+ |
+| Frontend | Flutter 3.16+ (3 apps, 1 repo) |
+| Admin Web | Next.js 14+ (React) |
+| Deployment | Render.com + Supabase Free Tier |
+| Testing | Unit (85%) + Integration + E2E + k6 |
+
+================================================================================
+🎯 4 PHASE ROADMAP (VERTICAL SLICING)
+================================================================================
+
+PHASE 1: WALLET & AUTHENTICATION (120 jam)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fokus:
+  ✅ PayPulse (Wallet + Ledger + Top-Up + Transfer)
+  ✅ Authentication (JWT + RBAC)
+  ✅ Observability (Logging + Metrics + Health)
+  ✅ Customer Mobile App (Wallet UI + Auth Screens)
+
+Tujuan:
+  ⭐ Customer bisa login, lihat balance, dan top-up di HP
+
+Backend Deliverables:
+  - Wallet lifecycle (F001)
+  - Double-entry ledger (F002)
+  - Top-up + Transfer + Idempotency (F003)
+  - Auth + RBAC (F012)
+  - Observability (F014)
+
+Mobile Deliverables (Customer App):
+  - Splash + Login + Register
+  - Wallet screen (balance, history, top-up button)
+  - Top-up flow (input amount, confirm, see new balance)
+  - API integration (Dio, Riverpod)
+
+Testing:
+  - Unit tests: wallet/ service (85% coverage)
+  - Integration: top-up idempotency, ledger balance
+  - E2E: customer login → top-up → see balance (on real device)
+
+Go/No-Go Gate:
+  ✅ Customer bisa top-up di HP
+  ✅ SUM(DEBIT) = SUM(CREDIT) verified
+  ✅ Idempotency: 5 requests, 1 ledger entry
+  ✅ 85% code coverage on wallet/
+
+Monorepo State:
+  ✅ packages/core (shared)
+  ✅ apps/customer_app (only)
+  ❌ apps/driver_app (not created yet)
+  ❌ apps/merchant_app (not created yet)
+
+
+PHASE 2: RIDE HAILING (200 jam)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fokus:
+  ✅ G-Ride (Booking + Dispatch + Settlement)
+  ✅ Race Condition Prevention (10 drivers, 1 order)
+  ✅ Driver Mobile App (GPS + Accept + Track)
+
+Tujuan:
+  ⭐ Customer bisa book ride, driver bisa accept & complete
+
+Backend Deliverables:
+  - Ride booking (F004)
+  - Fare calculation (F004)
+  - Dispatch matching engine (F005) — CRITICAL
+  - Order settlement (F006)
+  - Cancellation + refund (F006)
+  - Driver location tracking (simplified)
+
+Mobile Deliverables:
+  Customer App:
+    - Ride booking screen (map, pickup/dropoff, fare preview)
+    - Order tracking (status timeline, driver location)
+    - Ride history
+  Driver App (NEW!):
+    - Dashboard (online/offline toggle)
+    - Available orders list (with distance, fare)
+    - Accept order flow (60s countdown)
+    - Active order (pickup address, customer info, status buttons)
+    - Earnings summary
+
+Testing:
+  - Concurrency test: 10 drivers accept 1 order → 1 winner, 9 conflict
+  - Settlement: ledger balanced, driver gets 90%, platform 10%
+  - E2E: customer books ride → driver accepts → completes → sees earning
+
+Go/No-Go Gate:
+  ✅ 10 concurrent drivers → 1 assigned, 9 get 409 Conflict
+  ✅ No double-booking (zero race condition)
+  ✅ Settlement ledger balanced
+  ✅ Driver sees earning on HP
+  ✅ 85% code coverage on ride/
+
+Monorepo State:
+  ✅ packages/core (shared)
+  ✅ apps/customer_app (existing)
+  ✅ apps/driver_app (NEW! — add now)
+  ❌ apps/merchant_app (not created yet)
+
+
+PHASE 3: FOOD DELIVERY & LOGISTICS (220 jam)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fokus:
+  ✅ G-Food (Merchant + Catalog + Orders + 4-Way Settlement)
+  ✅ G-Send (Package + Multi-stop + Capacity Check)
+  ✅ Merchant Mobile App (Orders + Catalog)
+
+Tujuan:
+  ⭐ Merchant bisa manage menu & orders. Customer bisa order food & send package.
+
+Backend Deliverables:
+  G-Food:
+    - Merchant onboarding (F007)
+    - Menu catalog management (F007)
+    - Food order creation (F008)
+    - Food order status machine (F009)
+    - 4-way settlement (merchant + driver + platform)
+  G-Send:
+    - Package order creation (F010)
+    - Multi-stop capability (F011)
+    - Capacity check (max 3 active orders/driver)
+    - Send order settlement (3-way)
+
+Mobile Deliverables:
+  Customer App:
+    - Food catalog (merchant list, search, categories)
+    - Food cart (items, quantity, checkout)
+    - Food order tracking (status timeline)
+    - Send package (form: weight, dimensions, addresses)
+    - Send tracking (multi-stop status)
+  Driver App:
+    - Send package acceptance (with capacity check)
+    - Multi-stop delivery flow
+    - Proof of delivery (photo capture)
+  Merchant App (NEW!):
+    - Dashboard (today's orders, revenue, new orders count)
+    - Order list (all orders with status badges)
+    - Order detail (items, customer, delivery address)
+    - Status updates: CONFIRMED → PREPARING → READY_FOR_PICKUP
+    - Catalog management (add/edit/delete menu items)
+    - Basic analytics (daily/weekly revenue chart)
+
+Testing:
+  - Food order flow: CONFIRMED → PREPARING → READY → PICKED_UP → DELIVERED → SETTLED
+  - 4-way settlement math verified
+  - Send capacity check: driver can't accept > 3 orders
+  - Multi-stop: partial cancellation, allocated_fare per stop
+  - E2E: merchant receives order → prepares → driver delivers → merchant sees revenue
+
+Go/No-Go Gate:
+  ✅ 4-way settlement ledger balanced (customer → merchant + driver + platform)
+  ✅ Driver capacity check enforced (max 3 active)
+  ✅ Multi-stop works with allocated_fare per stop
+  ✅ Merchant sees order & revenue on HP
+  ✅ 85% code coverage on food/ + send/
+
+Monorepo State:
+  ✅ packages/core (shared)
+  ✅ apps/customer_app (existing)
+  ✅ apps/driver_app (existing)
+  ✅ apps/merchant_app (NEW! — add now)
+
+
+PHASE 4: HARDENING, TESTING & DEPLOYMENT (160 jam)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fokus:
+  ✅ Comprehensive System Testing
+  ✅ Admin Web Panel
+  ✅ Performance Benchmarking
+  ✅ Production Deployment
+  ✅ Documentation Completion
+
+Tujuan:
+  ⭐ V1.0-MVP Production Ready.
+
+Deliverables:
+  Testing:
+    - Unit tests: Complete all coverage targets (85%)
+    - Integration tests: All critical flows (ride, food, send)
+    - Concurrency tests: Race conditions, deadlock prevention
+    - E2E tests: Complete user journeys on real devices
+    - Performance tests: k6 load test (500 RPS, p95 < 200ms)
+    - Security tests: OWASP, BOLA, PII masking, UU PDP
+
+  Admin Web Panel:
+    - Dashboard (KPIs, active orders, revenue)
+    - Ledger audit trail (filters, export)
+    - Balance verification (SUM debit = SUM credit)
+    - User management (freeze/unfreeze)
+    - Transaction reversal
+
+  Deployment:
+    - Render.com setup (environment vars, health checks)
+    - Supabase connection pooling (max_conns=15)
+    - Zero-downtime migration (Expand-Contract)
+    - Graceful shutdown (SIGTERM handling)
+    - SSL/TLS enforcement
+
+  Documentation:
+    - User guides (Customer, Driver, Merchant)
+    - Admin guide
+    - API docs (OpenAPI 3.0)
+    - Deployment runbook
+    - Troubleshooting guide
+
+Testing:
+  - All 18 test cases from STP.md pass
+  - Code coverage: 85%+ overall
+  - Load test: 500 RPS, p95 < 200ms
+  - Security scan: 0 critical vulnerabilities
+  - E2E: all user journeys pass on real devices
+
+Go/No-Go Gate:
+  ✅ All tests pass
+  ✅ Performance SLA met
+  ✅ Deployment tested on staging
+  ✅ Documentation complete
+  ✅ Production ready
+
+Monorepo State:
+  ✅ packages/core (shared)
+  ✅ apps/customer_app (existing)
+  ✅ apps/driver_app (existing)
+  ✅ apps/merchant_app (existing)
+  ✅ Admin Web Panel (new repo or app)
+
+================================================================================
+📂 FILE STRUCTURE (PER PHASE)
+================================================================================
+
+Setiap file roadmap fase harus berisi:
+
+1. HEADER
+   - Phase name & number
+   - Estimated effort (jam)
+   - Focus area
+
+2. OBJECTIVE
+   - Apa yang dicapai di fase ini
+   - Tujuan utama (⭐ milestone)
+
+3. BACKEND DELIVERABLES
+   - List fitur + endpoint
+   - PRD reference (F001-F017)
+
+4. MOBILE DELIVERABLES
+   - Customer app screens
+   - Driver app screens
+   - Merchant app screens (sesuai fase)
+
+5. TESTING
+   - Unit test targets
+   - Integration test scenarios
+   - E2E test scenarios
+   - Concurrency tests (jika ada)
+
+6. GO/NO-GO GATE
+   - Checklist sebelum lanjut ke fase berikutnya
+   - Kriteri acceptance
+
+7. MONOREPO STATE
+   - packages/core (shared)
+   - apps/* (yang aktif di fase ini)
+
+8. EFFORT TRACKER
+   - Estimasi jam per deliverable
+   - Actual tracking (diisi selama eksekusi)
+
+================================================================================
+📋 FILE YANG HARUS DIBUAT (4 FILE)
+================================================================================
+
+1. ROADMAP_01_WALLET_AUTH.md      (120 jam)
+   - Wallet + Ledger + Auth + UI Customer
+
+2. ROADMAP_02_RIDE_HAILING.md      (200 jam)
+   - G-Ride + Dispatch + UI Customer & Driver
+
+3. ROADMAP_03_FOOD_LOGISTICS.md    (220 jam)
+   - G-Food + G-Send + UI Merchant
+
+4. ROADMAP_04_HARDENING_DEPLOY.md  (160 jam)
+   - Testing + Admin + Deploy
+
+================================================================================
+📌 GOLDEN RULES (UNTUK CLAUDE SAAT BUAT FILE ROADMAP)
+================================================================================
+
+1. JANGAN buat struktur monorepo all-in di Day 1
+   → Mulai dengan apps/customer_app dulu, tambah driver_app di Phase 2, merchant_app di Phase 3
+
+2. JANGAN pisahkan backend & mobile
+   → Setiap fase kerjakan backend + mobile BERSAMAAN (vertical slicing)
+
+3. PASTIKAN milestone akhir setiap fase bisa di-test di HP
+   → Bukan cuma "backend selesai", tapi "customer bisa top-up di HP"
+
+4. GUNAKAN effort estimation dari BLUEPRINT ini (±10% tolerance)
+   → Phase 1: 120 jam, Phase 2: 200 jam, Phase 3: 220 jam, Phase 4: 160 jam
+
+5. JANGAN tambah scope di luar PRD V1.0-MVP
+   → WebSocket, surge pricing, payment gateway → V1.1+
+
+================================================================================
+🚨 KRITIKAL: STOP PLANNING, START CODING
+================================================================================
+
+DeepSeek sudah bilang: "Tidak ada lagi yang bisa dianalisis, diperdebatkan, atau disempurnakan."
+
+Claude sudah setuju dengan angka dan struktur.
+Gemini sudah setuju dengan lazy monorepo.
+
+TIDAK ADA LAGI ALASAN UNTUK MENUNDA.
+
+LANGKAH SELANJUTNYA (HARI INI):
+  1. Buka terminal
+  2. git init g-flow
+  3. Setup Melos dengan packages/core + apps/customer_app
+  4. Mulai backend Go Wallet
+  5. Mulai Flutter UI Wallet
+  6. Test di HP
+
+TARGET MILESTONE 1 (Akhir Phase 1):
+  Customer bisa login, lihat balance, dan top-up di HP.
+
+Bismillah — Gas! 🚀
+
+================================================================================
+END OF BLUEPRINT ROADMAP v2.0-FINAL
+================================================================================
+
+This document is LOCKED. NO MORE REVISIONS.
+Next action: Create 4 roadmap files and START CODING.
+
+Last Updated: 2026-08-14 by M. Arif Aulia
+Status: ✅ READY FOR EXECUTION

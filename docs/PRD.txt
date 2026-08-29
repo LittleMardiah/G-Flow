@@ -1,0 +1,1269 @@
+================================================================================
+PRD: G-Flow Super-App Ecosystem (v4.0-FIXED)
+================================================================================
+
+📌 HEADER & METADATA
+================================================================================
+
+| Field             | Value                                                                 |
+|-------------------|-----------------------------------------------------------------------|
+| Project Name      | G-Flow Super-App Ecosystem                                            |
+| Document Version  | 4.0-FIXED                                                             |
+| Created Date      | 2026-08-14                                                            |
+| Last Updated      | 2026-08-14                                                            |
+| Author            | M. Arif Aulia                                                         |
+| Status            | ✅ APPROVED FOR DEVELOPMENT (Post-Gemini Review)                      |
+| Contact           | Bahasa Indonesia preferred                                            |
+
+================================================================================
+📋 EXECUTIVE SUMMARY
+================================================================================
+
+PROBLEM STATEMENT
+
+Layanan transportasi, pesan-antar makanan, dan kurir instan saat ini terfragmentasi
+dengan sistem pembayaran yang tidak efisien. Setiap layanan menggunakan dompet
+digital terpisah, menyebabkan:
+- Race condition saat multiple driver menerima order bersamaan
+- Double spending pada wallet payment (pengeluaran ganda)
+- State drift (ketidaksesuaian status order antara client & server)
+- Concurrency bugs saat high-volume transaction di infrastructure terbatas
+- Tidak ada unified ledger untuk audit keuangan yang akurat
+
+SOLUTION OVERVIEW
+
+G-Flow adalah platform super-app terpadu berbasis Modular Monolith Golang yang
+mengintegrasikan 4 modul core + 1 mobile app dalam satu ekosistem:
+
+1. PayPulse — Digital wallet engine dengan double-entry bookkeeping ledger
+2. G-Ride — Ride-hailing dengan driver dispatch matching & pessimistic locking
+3. G-Food — Food delivery dengan merchant catalog & order management
+4. G-Send — Instant logistics untuk package delivery
+5. Mobile App — Flutter/React Native untuk Customer, Driver, & Merchant
+
+Infrastruktur: Supabase PostgreSQL + Golang backend native + Mobile App
+
+VALUE PROPOSITION
+
+- Financial Accuracy: Zero balance discrepancy via double-entry bookkeeping
+- Zero Race Conditions: Formal state machines + SELECT FOR UPDATE locking
+- Free Tier Ready: Berjalan di Supabase Free Tier + Render.com (No CC required)
+- Single Codebase: Maintainable untuk solo developer dengan structured modularity
+- Complete Ecosystem: Customer, Driver, Merchant, Admin dalam 1 platform utuh
+
+TARGET USERS
+
+| Role      | Goals                                                                 |
+|-----------|-----------------------------------------------------------------------|
+| Customer  | Memesan ride/food/package, manage PayPulse balance, track order       |
+| Driver    | Accept orders, update location, complete delivery, withdraw earnings  |
+| Merchant  | Manage menu catalog, accept/prepare orders, track sales & revenue     |
+| Admin     | Monitor ledger audit trail, manage disputes, suspend/freeze accounts  |
+
+================================================================================
+🎯 OBJECTIVES & SUCCESS CRITERIA
+================================================================================
+
+PRIMARY OBJECTIVES
+
+1. Build scalable super-app ecosystem dengan zero financial discrepancy (Rp 0)
+2. Implement thread-safe order matching untuk cegah race condition & double-booking
+3. Create production-grade Golang backend yang showcase real-world patterns
+4. Deliver complete mobile-first experience untuk semua roles (Customer, Driver, Merchant)
+5. Build modular, maintainable architecture untuk sustainable solo dev pace
+
+SUCCESS METRICS (HARD NUMBERS)
+
+| Metric                               | Target                 | Validation Method                           |
+|--------------------------------------|------------------------|---------------------------------------------|
+| API Latency (Core Mutations)         | < 200ms (p95)          | k6 load test on /wallet/transfer, /order    |
+| Double Spending Incidents            | 0 occurrences          | 10 concurrent drivers accept 1 order        |
+| Ledger Balance Discrepancy           | Rp 0 (exact)           | SQL: SUM(debit) - SUM(credit) = 0           |
+| Idempotency Accuracy                 | 100% deduplication     | Same request 5x → 1 ledger entry            |
+| Order State Consistency              | 100% (no ghost states) | Audit trail matches status transitions      |
+| Mobile App Crashes (per session)     | < 1%                   | Firebase Crashlytics reporting              |
+| Mobile App Launch Time               | < 3 seconds            | Cold start on mid-range Android device      |
+| Memory Footprint (Backend)           | < 100 MB (idle)        | ps monitoring on deployed binary            |
+
+================================================================================
+📦 SCOPE DEFINITION
+================================================================================
+
+V1.0 MVP (MUST HAVE — SEMUA FITUR MASUK V1.0)
+
+| Feature ID | Feature Name                              | Priority | Effort | Dependencies |
+|------------|-------------------------------------------|----------|--------|--------------|
+| F001       | PayPulse: Wallet Lifecycle & Account Mgmt | P0       | M      | None         |
+| F002       | PayPulse: Double-Entry Ledger             | P0       | L      | F001         |
+| F003       | PayPulse: Transfer, Top-Up, Idempotency   | P0       | L      | F002         |
+| F004       | G-Ride: Point-to-Point Booking & Fare     | P0       | L      | F001-F003    |
+| F005       | G-Ride: Driver Dispatch Matching Engine   | P0       | XL     | F004         |
+| F006       | G-Ride: Order Settlement & Auto-Deduction | P0       | L      | F002-F005    |
+| F007       | G-Food: Merchant Onboarding & Catalog     | P0       | M      | F001-F003    |
+| F008       | G-Food: Multi-Item Cart & Order Creation  | P0       | M      | F007         |
+| F009       | G-Food: Order Prep State Machine          | P0       | L      | F008         |
+| F010       | G-Send: Package Specs & Pricing Engine    | P0       | M      | F001-F003    |
+| F011       | G-Send: Multi-Stop Pickup & Delivery      | P0       | L      | F010         |
+| F012       | Core: Authentication (JWT) & RBAC         | P0       | M      | None         |
+| F013       | Core: Admin Audit Trail & Dashboard       | P0       | M      | F001-F012    |
+| F014       | Core: Observability (Logging & Metrics)   | P1       | S      | F012         |
+| F015       | Mobile App: Customer (Flutter/RN)         | P0       | XL     | F001-F014    |
+| F016       | Mobile App: Driver (Flutter/RN)           | P0       | XL     | F001-F014    |
+| F017       | Mobile App: Merchant (Flutter/RN)         | P0       | XL     | F001-F014    |
+
+V1.0 ACCEPTANCE CRITERIA
+
+- ✅ PayPulse + G-Ride + G-Food + G-Send fully operational
+- ✅ Zero race conditions on concurrent order matching
+- ✅ Ledger selalu balanced (SUM debit = SUM credit)
+- ✅ Mobile App untuk Customer, Driver, Merchant bisa jalan
+- ✅ Semua alur bisnis (Booking → Assign → Complete → Settlement) berfungsi
+
+EXPLICITLY OUT OF SCOPE (V1.0)
+
+- ❌ Third-party payment gateway integration (Stripe, GCash, etc.) — Simulasi internal
+- ❌ Real-time WebSocket/GPS tracking — Polling REST API cukup
+- ❌ Dynamic surge pricing algorithms — Fare berdasarkan jarak statis
+- ❌ Voice/video call features
+- ❌ Advanced ML-based driver matching
+- ❌ Push notification native (FCM/APNS) — Bisa ditambahkan via Supabase Realtime
+
+RATIONALE: Fokus pada financial system correctness, concurrency safety, dan
+mobile experience yang solid. Fitur advanced ditunda ke post-MVP.
+
+================================================================================
+👥 USER STORIES & ACCEPTANCE CRITERIA
+================================================================================
+
+STORY 1: Customer Wallet Top-Up (Idempotent)
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Customer
+I WANT TO top-up my PayPulse balance using simulated payment
+SO THAT I can use it to book rides, order food, and send packages
+
+ACCEPTANCE CRITERIA:
+- [ ] Customer dapat top-up dengan nominal Rp 10,000 - Rp 10,000,000
+- [ ] Top-up menciptakan 2 ledger entries (Debit dari Escrow → Credit ke Wallet)
+- [ ] Request dengan X-Idempotency-Key yang sama menghasilkan response identik
+- [ ] Balance langsung ter-update di wallet customer (real-time)
+- [ ] Top-up gagal jika nominal invalid → rollback transaction
+- [ ] Mobile App menampilkan balance baru setelah top-up sukses
+
+PRIORITY: P0 | EFFORT: Medium
+
+
+STORY 2: Customer Booking Ride (Idempotent)
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Customer
+I WANT TO book a ride from point A to point B
+SO THAT I can reach my destination conveniently
+
+ACCEPTANCE CRITERIA:
+- [ ] Customer input pickup & dropoff location (lat/lng)
+- [ ] Sistem menghitung estimated fare berdasarkan jarak (Haversine formula)
+- [ ] Order status menjadi SEARCHING_DRIVER
+- [ ] Customer wallet belum di-deduct (deduct saat settlement)
+- [ ] Double-click booking → hanya 1 order terbuat (X-Idempotency-Key)
+- [ ] Mobile App menampilkan status "Mencari Driver..." dengan animasi
+
+PRIORITY: P0 | EFFORT: Medium
+
+
+STORY 3: Concurrent Driver Order Matching (Race Condition Prevention)
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Driver
+I WANT TO accept nearby ride orders before other drivers
+SO THAT I can maximize my earnings without missing opportunities
+
+AS A Customer
+I WANT TO get matched with the nearest available driver quickly
+SO THAT I don't wait too long
+
+ACCEPTANCE CRITERIA:
+- [ ] 10 driver dapat melihat order yang sama (status: SEARCHING_DRIVER)
+- [ ] Ketika semua driver click "Accept" dalam 100ms yang sama, hanya 1 driver berhasil
+- [ ] 9 driver lain menerima HTTP 409 Conflict → "Order sudah diambil"
+- [ ] Pemenang driver menerima order details + customer contact
+- [ ] Order state langsung berubah ke DRIVER_ASSIGNED (atomic update)
+- [ ] No ghost orders (order gak diterima 2 driver sekaligus)
+- [ ] Mobile App driver menampilkan notifikasi "Order Assigned!" untuk pemenang
+- [ ] Mobile App driver lain menampilkan "Order Taken by Another Driver"
+
+PRIORITY: P0 | EFFORT: Extra Large
+
+
+STORY 4: Food Order with Merchant & Driver Coordination
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Customer
+I WANT TO order food from a merchant and have it delivered by a driver
+SO THAT I can enjoy restaurant-quality meal at home
+
+AS A Merchant
+I WANT TO receive orders, prepare food, and hand off to drivers
+SO THAT I can serve customers efficiently
+
+AS A Driver
+I WANT TO pick up prepared food and deliver to customers
+SO THAT I can earn delivery fees
+
+ACCEPTANCE CRITERIA:
+- [ ] Customer dapat browse merchant catalog (items, price, availability)
+- [ ] Customer add items ke cart, set delivery address, confirm order
+- [ ] Wallet PayPulse ter-deduct atomically (F003)
+- [ ] Merchant mobile app menerima order notification
+- [ ] Merchant mark pesanan "PREPARING" → "READY_FOR_PICKUP"
+- [ ] Ketika READY_FOR_PICKUP, sistem auto-assign driver terdekat (pakai F005)
+- [ ] Driver pick up food, mark "PICKED_UP"
+- [ ] Driver deliver, mark "DELIVERED"
+- [ ] Settlement auto-execute: Customer → Merchant (item) + Driver (delivery fee)
+- [ ] Merchant & Driver earnings langsung credited ke wallet masing-masing
+
+PRIORITY: P0 | EFFORT: Extra Large
+
+
+STORY 5: Package Delivery (G-Send) with Multi-Stop
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Customer
+I WANT TO send a package from my location to another address
+SO THAT I can deliver items without going myself
+
+AS A Driver
+I WANT TO pick up packages and deliver them efficiently
+SO THAT I can earn delivery fees
+
+ACCEPTANCE CRITERIA:
+- [ ] Customer input package specs (weight, dimensions, description)
+- [ ] Customer input pickup address & delivery address
+- [ ] Sistem menghitung delivery fee berdasarkan jarak + weight surcharge
+- [ ] Customer wallet ter-deduct saat order dibuat
+- [ ] Driver menerima order via matching engine (sama seperti G-Ride)
+- [ ] Driver pick up package, mark "PICKED_UP"
+- [ ] Driver deliver, mark "DELIVERED"
+- [ ] Settlement: Driver gets delivery fee, Platform gets service fee
+- [ ] Multi-stop routing: Driver bisa ambil 2+ packages dalam 1 trip dengan batas kapasitas
+
+PRIORITY: P0 | EFFORT: Large
+
+
+STORY 6: Cancellation & Refund Workflow
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Customer
+I WANT TO cancel my order before it's completed
+SO THAT I can get my money back if I change my mind
+
+AS A Driver/Merchant
+I WANT TO cancel orders that I can't fulfill
+SO THAT I don't get penalized for situations outside my control
+
+ACCEPTANCE CRITERIA:
+- [ ] Customer can cancel ride/food/send order before DRIVER_ASSIGNED → full refund
+- [ ] Customer can cancel after DRIVER_ASSIGNED with penalty (Rp 5,000)
+- [ ] Driver can cancel after assigned with penalty (deduct from wallet)
+- [ ] Merchant can reject food order before PREPARING → full refund to customer
+- [ ] All cancellation creates REVERSAL ledger entries (DEBIT Escrow → CREDIT Customer)
+- [ ] Refund reflected in customer wallet within 5 seconds
+- [ ] Admin can view all cancellation history with reason
+
+PRIORITY: P0 | EFFORT: Large
+
+
+STORY 7: Admin Audit Trail & Ledger Verification
+────────────────────────────────────────────────────────────────────────────────
+
+AS AN Admin
+I WANT TO view complete audit trail of all financial transactions
+SO THAT I can verify ledger integrity and detect fraud
+
+ACCEPTANCE CRITERIA:
+- [ ] Admin dapat filter transactions by date, user, type (debit/credit)
+- [ ] Setiap entry menunjukkan: timestamp, user, amount, linked order ID
+- [ ] Aggregate reports: total inflow, total outflow, pending balances
+- [ ] Consistency check: SUM(all debits) = SUM(all credits) returns PASS/FAIL
+- [ ] Can suspend account (freeze balance) & rollback transactions
+- [ ] Export audit trail ke CSV/JSON
+- [ ] Mobile Admin dashboard (terpisah atau web-based)
+
+PRIORITY: P0 | EFFORT: Medium
+
+
+STORY 8: Mobile App Customer Experience
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Customer
+I WANT TO use the G-Flow mobile app to book services and manage my wallet
+SO THAT I can do everything from my phone without visiting a website
+
+ACCEPTANCE CRITERIA:
+- [ ] Login/Register via email & password (Supabase Auth)
+- [ ] Home screen: 4 service icons (Ride, Food, Send, Top-Up)
+- [ ] Wallet screen: Balance, transaction history, top-up button
+- [ ] Ride screen: Map (static) with pickup/dropoff input
+- [ ] Food screen: Merchant list, catalog, cart, checkout
+- [ ] Send screen: Package form, pickup/delivery address
+- [ ] Order tracking screen: Real-time status updates (polling)
+- [ ] Profile screen: Name, email, ride history
+- [ ] App runs on Android 7.0+ (API level 24)
+
+PRIORITY: P0 | EFFORT: Extra Large
+
+
+STORY 9: Mobile App Driver Experience
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Driver
+I WANT TO use the G-Flow mobile app to accept orders and manage my earnings
+SO THAT I can work efficiently on the road
+
+ACCEPTANCE CRITERIA:
+- [ ] Login via email & password
+- [ ] Dashboard: Online/Offline toggle
+- [ ] Available orders list (SEARCHING_DRIVER status)
+- [ ] Accept order button with countdown (60 seconds to respond)
+- [ ] Active order screen: Pickup address, customer info, navigation link
+- [ ] Status updates: ARRIVED → PICKED_UP → DELIVERED
+- [ ] Earnings screen: Today's earnings, withdrawal button
+- [ ] App runs on Android 7.0+ (API level 24)
+
+PRIORITY: P0 | EFFORT: Extra Large
+
+
+STORY 10: Mobile App Merchant Experience
+────────────────────────────────────────────────────────────────────────────────
+
+AS A Merchant
+I WANT TO use the G-Flow mobile app to manage my menu and orders
+SO THAT I can run my food business efficiently
+
+ACCEPTANCE CRITERIA:
+- [ ] Login via email & password
+- [ ] Dashboard: Today's orders, revenue, new orders count
+- [ ] Order list: All incoming orders with status
+- [ ] Order detail: Items, customer info, delivery address
+- [ ] Status updates: CONFIRMED → PREPARING → READY_FOR_PICKUP
+- [ ] Catalog management: Add/edit/delete menu items (name, price, photo URL)
+- [ ] App runs on Android 7.0+ (API level 24)
+
+PRIORITY: P0 | EFFORT: Extra Large
+
+================================================================================
+📐 FUNCTIONAL REQUIREMENTS (DETAILED — HIGH LEVEL)
+================================================================================
+
+F001: PayPulse Wallet Lifecycle
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Central wallet account management dengan balance tracking & activation.
+
+INPUTS:
+  POST /wallets/create
+  {
+    "user_id": "uuid",
+    "user_type": "customer|driver|merchant",
+    "initial_balance": 0
+  }
+
+PROCESS:
+  1. Validate user_id exists & unique wallet not already created
+  2. Insert wallet record dengan status: "ACTIVE", balance: 0
+  3. Log creation event di audit trail
+
+OUTPUTS:
+  {
+    "wallet_id": "uuid",
+    "user_id": "uuid",
+    "balance": 0,
+    "status": "ACTIVE",
+    "created_at": "ISO-8601"
+  }
+
+EDGE CASES:
+  - Duplicate wallet creation → HTTP 409 Conflict
+  - User not found → HTTP 404
+  - Database constraint violation → HTTP 500 + retry
+
+
+F002: Double-Entry Bookkeeping Ledger
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Financial backbone. Setiap mutation menciptakan 2 balanced entries.
+
+LEDGER ENTRY SCHEMA:
+  - id: UUID PRIMARY KEY
+  - wallet_id: UUID (FK to wallets)
+  - type: 'DEBIT' | 'CREDIT'
+  - amount: NUMERIC(15,2)
+  - reference_type: 'WALLET_TOPUP' | 'RIDE_PAYMENT' | 'FOOD_DELIVERY' | 'SEND_DELIVERY' | 'ORDER_REFUND' | 'PLATFORM_FEE' | 'DRIVER_EARNING'
+  - reference_id: UUID (link ke order_id atau transaction_id)
+  - description: TEXT
+  - created_at: TIMESTAMP
+
+INVARIANT: SUM(amount) WHERE type='DEBIT' = SUM(amount) WHERE type='CREDIT'
+
+ATOMIC TRANSFER PROCESS:
+  BEGIN TRANSACTION;
+    1. SELECT balance FROM wallets WHERE id = from_wallet FOR UPDATE;
+    2. IF balance < amount THEN ROLLBACK; RETURN error;
+    3. UPDATE wallets SET balance = balance - amount WHERE id = from_wallet;
+    4. INSERT ledger_entries VALUES (debit_entry, from_wallet, DEBIT, ...);
+    5. INSERT ledger_entries VALUES (credit_entry, to_wallet, CREDIT, ...);
+    6. UPDATE wallets SET balance = balance + amount WHERE id = to_wallet;
+  COMMIT;
+
+VALIDATION RULES:
+  - ✅ Setiap transaction = 1 debit + 1 credit
+  - ✅ Amounts harus exactly balance
+  - ✅ No partial transactions (atomicity)
+  - ✅ All transactions immutable (no delete/update ledger entries)
+
+
+F003: Transfer + Top-Up + Idempotency Layer
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: User dapat transfer antar wallet dengan guarantee no duplicate charge.
+
+INPUTS (TRANSFER):
+  POST /wallets/transfer
+  {
+    "from_wallet_id": "uuid",
+    "to_wallet_id": "uuid",
+    "amount": 50000,
+    "description": "Payment for ride XYZ"
+  }
+  Headers: X-Idempotency-Key: uuid (REQUIRED), Authorization: Bearer {token}
+
+INPUTS (TOP-UP):
+  POST /wallets/topup
+  {
+    "amount": 100000,
+    "method": "simulated"  // Internal simulation, not real payment
+  }
+  Headers: X-Idempotency-Key: uuid (REQUIRED), Authorization: Bearer {token}
+
+IDEMPOTENCY IMPLEMENTATION:
+  - Cek cache SELECT FROM idempotency_cache WHERE key = $1
+  - If found & not expired → return cached response
+  - If found & expired → delete & continue
+  - Execute transfer/topup
+  - Cache result with TTL 24 hours
+  - Return response
+
+EDGE CASES:
+  - Insufficient balance → 422 Unprocessable Entity
+  - Invalid wallet ID → 404 Not Found
+  - Duplicate request (same key) → 200 OK + cached response
+  - Transfer to self → 400 Bad Request
+
+
+F004: G-Ride Point-to-Point Booking & Fare Calculation
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Customer booking ride dengan fare calculation berbasis jarak.
+
+INPUTS:
+  POST /rides/book
+  {
+    "pickup_lat": -6.123,
+    "pickup_lng": 106.456,
+    "dropoff_lat": -6.234,
+    "dropoff_lng": 106.567
+  }
+  Headers: Authorization: Bearer {token}, X-Idempotency-Key: uuid
+
+PROCESS:
+  1. Validasi input (lat/lng dalam range valid)
+  2. Hitung jarak menggunakan Haversine formula
+  3. Kalkulasi fare = base_fare + (distance_km * per_km_rate)
+  4. Insert order dengan status 'CREATED'
+  5. Auto-transition ke 'SEARCHING_DRIVER'
+  6. Return order_id + estimated_fare
+
+FARE FORMULA:
+  - base_fare = Rp 10,000
+  - per_km_rate = Rp 4,000
+  - minimum_fare = Rp 15,000
+  - estimated_fare = max(minimum_fare, base_fare + (distance_km * per_km_rate))
+
+OUTPUTS:
+  {
+    "order_id": "uuid",
+    "estimated_fare": 35000,
+    "distance_km": 6.25,
+    "status": "SEARCHING_DRIVER",
+    "pickup": { "lat": -6.123, "lng": 106.456 },
+    "dropoff": { "lat": -6.234, "lng": 106.567 }
+  }
+
+
+F005: G-Ride Driver Dispatch Matching Engine (CRITICAL — RACE CONDITION PREVENTION)
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Thread-safe driver matching engine untuk prevent race condition.
+
+ORDER STATE MACHINE:
+  [CREATED] → [SEARCHING_DRIVER] → [DRIVER_ASSIGNED] → [DRIVER_ARRIVED] → [TRIP_STARTED] → [COMPLETED] → [SETTLED]
+                           ↑                              ↓
+                     [CANCELLED] (before assign)    [CANCELLED] (after assign with penalty)
+
+INPUTS:
+  POST /rides/orders/{order_id}/accept
+  {
+    "driver_id": "uuid"
+  }
+  Headers: Authorization: Bearer {token}
+
+PROCESS (ATOMIC — WITH PESSIMISTIC LOCKING):
+  BEGIN TRANSACTION;
+    SET LOCAL statement_timeout = '3000ms';  -- Prevent hanging connections
+    1. SELECT status, assigned_driver FROM ride_orders WHERE id = $order_id FOR UPDATE;
+    2. IF status != 'SEARCHING_DRIVER' THEN
+         ROLLBACK;
+         RETURN HTTP 409 "Order no longer available"
+    3. UPDATE ride_orders SET status = 'DRIVER_ASSIGNED', assigned_driver_id = $driver_id, assigned_at = NOW() WHERE id = $order_id;
+    4. INSERT INTO audit_trail (order_id, from_status, to_status, actor_id, timestamp) VALUES (...);
+  COMMIT;
+
+CONCURRENCY TEST SCENARIO:
+  Time 0ms: Driver A clicks Accept
+  Time 1ms: Driver B clicks Accept (concurrent)
+  Time 2ms: Driver C clicks Accept (concurrent)
+
+  Outcome:
+  - Driver A: Acquires lock first → HTTP 200 "ASSIGNED" ✅
+  - Driver B: Lock wait → after A commits, fails check → HTTP 409
+  - Driver C: Same as B → HTTP 409
+
+  Result: ONLY 1 driver assigned. ZERO double-booking. ✅
+
+OUTPUTS:
+  {
+    "order_id": "uuid",
+    "status": "DRIVER_ASSIGNED",
+    "driver_id": "uuid",
+    "customer_id": "uuid",
+    "pickup": { "lat": -6.123, "lng": 106.456 },
+    "dropoff": { "lat": -6.234, "lng": 106.567 },
+    "estimated_fare": 35000,
+    "assigned_at": "ISO-8601"
+  }
+
+
+F006: Order Settlement & Auto-Deduction (FIXED PER GEMINI REVIEW)
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Automatic settlement ketika order mencapai status COMPLETED.
+
+SETTLEMENT RULES (FIXED — MATEMATIKA AKURAT):
+
+  | Service | Breakdown Distribusi Ledger (AKURAT)                                                                 | Contoh Numerik (Rp)                                                    |
+  |---------|-------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
+  | G-Ride  | Customer pays Fare. Platform takes 10% fee. Driver gets 90% of Fare.                                  | Fare: 100K → Platform: 10K, Driver: 90K.                              |
+  | G-Food  | Customer pays (Items + Delivery Fee). Merchant gets (Items - 5% merchant fee). Driver gets (Delivery Fee - 10% platform fee). Platform gets (5% merchant fee + 10% delivery fee). | Items: 150K, Delivery Fee: 20K → Customer Bayar: 170K. Merchant: 142.5K (150K - 5%), Driver: 18K (20K - 10%), Platform: 9.5K (7.5K + 2K). |
+  | G-Send  | Customer pays Delivery Fee. Platform takes 8% fee. Driver gets 92% of Delivery Fee.                   | Delivery Fee: 50K → Platform: 4K, Driver: 46K.                         |
+
+AUTO-SETTLEMENT TRIGGER:
+  Event: ride_order.status = 'COMPLETED' atau food_order.status = 'DELIVERED' atau send_order.status = 'DELIVERED'
+     ↓
+  Call /orders/{order_id}/settle
+     ↓
+  1. Retrieve order details + customer wallet
+  2. Deduct total amount from customer → Escrow
+  3. Distribute based on rules above
+  4. Mark order as SETTLED
+  5. Log all ledger entries (minimum 3 entries per settlement)
+
+LEDGER ENTRIES CREATED (Contoh G-Food: Customer Bayar 170K):
+  Entry 1: DEBIT  from=Customer,  amount=170000, type=FOOD_PAYMENT
+  Entry 2: CREDIT to=Merchant,    amount=142500, type=MERCHANT_EARNING
+  Entry 3: CREDIT to=Driver,      amount=18000,  type=DRIVER_EARNING
+  Entry 4: CREDIT to=Platform,    amount=9500,   type=PLATFORM_FEE
+
+
+F007: G-Food Merchant Onboarding & Catalog Management
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Merchant dapat mendaftar dan mengelola menu katalog.
+
+INPUTS:
+  POST /merchants/register
+  {
+    "user_id": "uuid",         // Sudah terdaftar sebagai user
+    "merchant_name": "Warung Makan Enak",
+    "address": "Jl. Sudirman No. 10",
+    "lat": -6.123,
+    "lng": 106.456,
+    "phone": "081234567890"
+  }
+
+  POST /merchants/catalog/items
+  {
+    "merchant_id": "uuid",
+    "name": "Nasi Goreng Special",
+    "price": 25000,
+    "description": "Nasi goreng dengan telur + ayam",
+    "category": "Main Course",
+    "available": true,
+    "image_url": "https://storage.supabase.co/..."
+  }
+
+PROCESS:
+  1. Validasi merchant user (harus role = 'merchant')
+  2. Buat wallet otomatis via F001 jika belum ada
+  3. Insert merchant profile
+  4. Insert menu items ke catalog
+  5. Auto-create wallet untuk merchant
+
+
+F008: G-Food Multi-Item Cart & Order Creation
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Customer dapat membuat pesanan makanan dengan multiple items.
+
+INPUTS:
+  POST /food/orders/create
+  {
+    "merchant_id": "uuid",
+    "items": [
+      { "item_id": "uuid", "quantity": 2, "price": 25000 },
+      { "item_id": "uuid", "quantity": 1, "price": 12000 }
+    ],
+    "delivery_address": "Jl. Gatot Subroto No. 5",
+    "delivery_lat": -6.234,
+    "delivery_lng": 106.567,
+    "customer_note": "Jangan pakai bawang"
+  }
+  Headers: Authorization: Bearer {token}, X-Idempotency-Key: uuid
+
+PROCESS:
+  1. Validasi semua item tersedia di merchant
+  2. Hitung total_amount = sum(items.price * quantity)
+  3. Hitung delivery_fee = base_delivery_fee (Rp 15,000) + (distance * 1,500)
+  4. Deduct wallet customer via F003 (transfer ke escrow)
+  5. Insert food_order dengan status 'CREATED'
+  6. Auto-transition ke 'CONFIRMED'
+  7. Notify merchant via mobile app (polling)
+
+OUTPUTS:
+  {
+    "order_id": "uuid",
+    "merchant_id": "uuid",
+    "items": [...],
+    "subtotal": 62000,
+    "delivery_fee": 15000,
+    "total_amount": 77000,
+    "status": "CONFIRMED",
+    "created_at": "ISO-8601"
+  }
+
+
+F009: G-Food Order Preparation State Machine
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Merchant dan Driver mengelola status pesanan makanan.
+
+STATES:
+  [CREATED] → [CONFIRMED] → [PREPARING] → [READY_FOR_PICKUP] → [PICKED_UP] → [DELIVERED] → [SETTLED]
+                     ↓             ↓              ↓
+                [REJECTED]    [CANCELLED]   [CANCELLED]
+
+TRANSITIONS:
+  - Merchant: CONFIRMED → PREPARING → READY_FOR_PICKUP
+  - Driver: READY_FOR_PICKUP → PICKED_UP → DELIVERED
+  - System: DELIVERED → SETTLED (auto via settlement engine)
+
+INPUTS:
+  PATCH /food/orders/{order_id}/status
+  {
+    "status": "PREPARING|READY_FOR_PICKUP|PICKED_UP|DELIVERED"
+  }
+  Headers: Authorization: Bearer {token}
+
+PROCESS:
+  1. Validasi user memiliki akses ke order
+  2. Validasi status transition sesuai state machine
+  3. Update status
+  4. If status = 'DELIVERED' → trigger settlement (F006)
+  5. Log ke audit_trail
+
+
+F010: G-Send Package Specs & Pricing Engine
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Customer dapat mengirim paket dengan spesifikasi dan harga.
+
+INPUTS:
+  POST /send/orders/create
+  {
+    "package_name": "Buku",
+    "weight_kg": 2.5,
+    "dimensions": { "length": 30, "width": 20, "height": 10 },
+    "pickup_address": "Jl. Merdeka No. 1",
+    "pickup_lat": -6.123,
+    "pickup_lng": 106.456,
+    "delivery_address": "Jl. Thamrin No. 2",
+    "delivery_lat": -6.234,
+    "delivery_lng": 106.567,
+    "description": "Buku ekonomi, fragile"
+  }
+  Headers: Authorization: Bearer {token}, X-Idempotency-Key: uuid
+
+PRICING FORMULA:
+  - base_delivery_fee = Rp 15,000
+  - per_km_rate = Rp 2,500
+  - weight_surcharge = weight_kg * Rp 1,000
+  - total_fee = base_delivery_fee + (distance_km * per_km_rate) + weight_surcharge
+  - minimum_fee = Rp 20,000
+
+PROCESS:
+  1. Hitung jarak pickup → delivery
+  2. Kalkulasi total_fee
+  3. Deduct wallet customer via F003 (transfer ke escrow)
+  4. Insert send_order dengan status 'CREATED'
+  5. Auto-transition ke 'SEARCHING_DRIVER'
+  6. Driver matching menggunakan engine F005 yang sama
+
+OUTPUTS:
+  {
+    "order_id": "uuid",
+    "package_name": "Buku",
+    "weight_kg": 2.5,
+    "total_fee": 32500,
+    "distance_km": 5.8,
+    "status": "SEARCHING_DRIVER"
+  }
+
+
+F011: G-Send Multi-Stop Pickup & Delivery (FIXED — WITH CAPACITY CHECK PER GEMINI REVIEW)
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Driver dapat melakukan multiple pickup & delivery dalam 1 trip dengan batas kapasitas.
+
+CAPACITY CHECK (WAJIB):
+  Sebelum driver menerima order G-Send baru, sistem WAJIB menjalankan query:
+  SELECT COUNT(*) FROM send_orders WHERE driver_id = $1 AND status IN ('DRIVER_ASSIGNED', 'PICKED_UP');
+  - Jika active_orders >= 3, tolak request dengan HTTP 400 ("Kapasitas maksimum pengiriman tercapai, selesaikan order aktif terlebih dahulu").
+  - Ini untuk mencegah overbooking driver di layanan logistik dan menjaga kualitas layanan.
+
+PROCESS (ATOMIC — EXTENDED F005):
+  1. Driver melihat daftar order SEARCHING_DRIVER di dashboard
+  2. Driver click Accept:
+     BEGIN TRANSACTION;
+       SET LOCAL statement_timeout = '3000ms';
+       a. Lock order: SELECT ... FOR UPDATE (sama seperti F005)
+       b. Check order status = SEARCHING_DRIVER
+       c. Capacity Check: SELECT COUNT(*) FROM send_orders WHERE driver_id = $driver_id AND status IN ('DRIVER_ASSIGNED', 'PICKED_UP');
+          IF count >= 3 THEN ROLLBACK; RETURN HTTP 400 "Capacity full";
+       d. UPDATE send_orders SET status = 'DRIVER_ASSIGNED', driver_id = $driver_id, assigned_at = NOW() WHERE id = $order_id;
+     COMMIT;
+  3. Driver pergi ke pickup_address → tap "PICKED_UP"
+  4. Driver pergi ke delivery_address → tap "DELIVERED"
+  5. Settlement tetap per order (F006)
+
+STATE MACHINE (Sama dengan G-Ride):
+  [CREATED] → [SEARCHING_DRIVER] → [DRIVER_ASSIGNED] → [PICKED_UP] → [DELIVERED] → [SETTLED]
+
+INPUTS:
+  PATCH /send/orders/{order_id}/status
+  {
+    "status": "PICKED_UP|DELIVERED"
+  }
+  Headers: Authorization: Bearer {token}
+
+
+F012: Core Authentication (JWT) & RBAC
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Sistem autentikasi dan otorisasi berbasis role.
+
+JWT PAYLOAD:
+  {
+    "sub": "user_id",
+    "user_type": "customer|driver|merchant|admin",
+    "wallet_id": "uuid",
+    "iat": 1629820800,
+    "exp": 1629907200,
+    "iss": "g-flow-auth"
+  }
+
+AUTH ENDPOINTS:
+  POST /auth/register
+  {
+    "email": "user@example.com",
+    "password": "secret123",
+    "name": "John Doe",
+    "user_type": "customer|driver|merchant"
+  }
+
+  POST /auth/login
+  {
+    "email": "user@example.com",
+    "password": "secret123"
+  }
+  → Returns { access_token, refresh_token, user_id, user_type, wallet_id }
+
+RBAC PERMISSIONS:
+
+  | Role      | Endpoints                               | Restrictions                     |
+  |-----------|-----------------------------------------|----------------------------------|
+  | Customer  | POST /rides/book, /food/orders/create   | Own orders only                  |
+  |           | POST /send/orders/create                |                                  |
+  |           | POST /wallets/topup, /wallets/transfer  | Own wallet only                  |
+  | Driver    | GET /rides/available                    | All available orders             |
+  |           | POST /rides/{id}/accept                 | Any SEARCHING_DRIVER order       |
+  |           | PATCH /rides/{id}/status                | Own accepted orders only         |
+  | Merchant  | POST /merchants/catalog                 | Own merchant only                |
+  |           | GET /food/orders                        | Own merchant orders only         |
+  |           | PATCH /food/orders/{id}/status          | Own merchant orders only         |
+  | Admin     | GET /admin/ledger/audit                 | All data (read-only)             |
+  |           | PATCH /admin/users/{id}/freeze          | All users                        |
+  |           | GET /admin/audit-trail                  | All data                         |
+
+MIDDLEWARE:
+  func AuthMiddleware(c *gin.Context) {
+    token := c.GetHeader("Authorization")
+    claims := validateJWT(token)
+    if claims == nil {
+      c.JSON(401, "Unauthorized")
+      return
+    }
+    c.Set("user_id", claims.Sub)
+    c.Set("user_type", claims.UserType)
+    c.Set("wallet_id", claims.WalletId)
+    c.Next()
+  }
+
+  func RequireRole(requiredRoles ...string) gin.HandlerFunc {
+    return func(c *gin.Context) {
+      userType := c.GetString("user_type")
+      for _, role := range requiredRoles {
+        if userType == role { c.Next(); return }
+      }
+      c.JSON(403, "Forbidden")
+    }
+  }
+
+
+F013: Core Admin Audit Trail & Dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Admin dapat memonitor semua aktivitas dan integritas ledger.
+
+ADMIN ENDPOINTS:
+  GET /admin/ledger/audit
+  Query: { user_id, date_from, date_to, type, limit, offset }
+  Headers: Authorization: Bearer {admin_token}
+  Output:
+  {
+    "entries": [...],
+    "total_debit": 15000000,
+    "total_credit": 15000000,
+    "is_balanced": true,
+    "page": 1,
+    "total_pages": 10
+  }
+
+  GET /admin/ledger/verify
+  Output:
+  {
+    "total_debits": 15000000,
+    "total_credits": 15000000,
+    "difference": 0,
+    "verified": true,
+    "last_checked": "ISO-8601"
+  }
+
+  POST /admin/users/{user_id}/freeze
+  Input: { reason: "Suspicious activity" }
+  Output: { user_id, status: "FROZEN", frozen_at, reason }
+
+  POST /admin/users/{user_id}/unfreeze
+  Output: { user_id, status: "ACTIVE", unfrozen_at }
+
+  GET /admin/orders/disputes
+  Output: { orders: [...] } // Orders with status CANCELLED or REJECTED
+
+  POST /admin/orders/{order_id}/refund
+  Input: { reason: "Driver no-show" }
+  Process: Execute reversal ledger entries (DEBIT Escrow → CREDIT Customer)
+  Output: { order_id, refund_amount, status: "REFUNDED" }
+
+
+F014: Core Observability (Logging & Metrics)
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Sistem monitoring untuk tracking performance dan error.
+
+LOGGING (Structured — JSON format):
+  - Menggunakan library Zap (uber-go/zap) untuk structured logging
+  - Log level: DEBUG, INFO, WARN, ERROR, FATAL
+  - Setiap request log: { timestamp, level, endpoint, method, status, latency, user_id, error }
+  - Error log include stack trace
+  - Log output ke stdout (captured by Render/Koyeb)
+
+METRICS ENDPOINT (/metrics):
+  - HTTP request count per endpoint
+  - HTTP request latency (p50, p95, p99)
+  - Active database connections
+  - Goroutine count
+  - Memory usage (heap, stack)
+  - Ledger balance check result (PASS/FAIL) — check setiap 1 jam
+
+HEALTH CHECK (/health):
+  - Database connectivity check
+  - Status: OK / DEGRADED / DOWN
+
+
+F015-F017: Mobile App (Flutter/React Native) — Customer, Driver, Merchant
+────────────────────────────────────────────────────────────────────────────────
+
+DESCRIPTION: Aplikasi mobile native untuk 3 role berbeda.
+
+TECHNOLOGY STACK:
+  - Framework: Flutter 3.0+ (Rekomendasi) atau React Native
+  - State Management: Riverpod (Flutter) atau Redux Toolkit (RN)
+  - HTTP Client: Dio (Flutter) atau Axios (RN)
+  - Local Storage: SharedPreferences / SecureStorage
+  - Map: Google Maps SDK / Mapbox
+  - Push Notification: Firebase Cloud Messaging (FCM)
+
+PLATFORM SUPPORT:
+  - Minimum Android: 7.0 (API level 24)
+  - Minimum iOS: 12.0 (jika iOS support)
+  - Build: APK / AAB untuk Google Play Store
+
+MOBILE HTTP CONFIGURATION (KRITIKAL — FIXED PER GEMINI REVIEW):
+  - Connect Timeout: Set ke 60 detik (khusus request pertama/handshake) untuk mentoleransi Render Cold Start (30-60 detik).
+  - UI State Management: Tampilkan animasi "Menghubungkan ke Server..." jika response > 3 detik, agar aplikasi tidak dianggap hang/freeze oleh sistem operasi atau user.
+  - Dio/Axios Config:
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 60),
+      receiveTimeout: const Duration(seconds: 30),
+    ));
+
+SCREENS PER ROLE:
+
+CUSTOMER APP:
+  1. Splash Screen (2 detik)
+  2. Login / Register
+  3. Home Screen (4 service icons: Ride, Food, Send, Top-Up)
+  4. Ride Booking Screen (Map + pickup/dropoff input)
+  5. Food Catalog Screen (Merchant list, categories, search)
+  6. Food Cart Screen (Items, quantity, checkout)
+  7. Send Package Screen (Form: weight, dimensions, addresses)
+  8. Order Tracking Screen (Status timeline, driver info, map)
+  9. Wallet Screen (Balance, transaction history, top-up button)
+  10. Profile Screen (Name, email, logout)
+
+DRIVER APP:
+  1. Login / Register
+  2. Dashboard (Online/Offline toggle, earnings today)
+  3. Available Orders List (SEARCHING_DRIVER orders with distance)
+  4. Accept Order Screen (Order detail, countdown, accept button)
+  5. Active Order Screen (Pickup address, customer info, navigation)
+  6. Status Update Buttons: ARRIVED → PICKED_UP → DELIVERED
+  7. Earnings Screen (Daily/weekly earnings, withdrawal button)
+
+MERCHANT APP:
+  1. Login / Register
+  2. Dashboard (Today's orders count, revenue, new orders)
+  3. Order List (All orders with status badges)
+  4. Order Detail Screen (Items, customer info, delivery address)
+  5. Status Update Buttons: CONFIRMED → PREPARING → READY_FOR_PICKUP
+  6. Catalog Management (Add/edit/delete menu items)
+  7. Sales Analytics (Daily/weekly revenue chart)
+
+API INTEGRATION:
+  - Base URL: https://g-flow-api.onrender.com (Render deployment)
+  - All API calls require JWT token in Authorization header
+  - Idempotency-Key header for all POST requests
+  - Error handling: Display user-friendly messages for 4xx/5xx
+  - Offline handling: Queue requests when offline, retry when online
+
+================================================================================
+⚙️ NON-FUNCTIONAL REQUIREMENTS
+================================================================================
+
+PERFORMANCE (NFR-P)
+
+| Requirement                 | Target                  | Validation                          |
+|-----------------------------|-------------------------|-------------------------------------|
+| API Latency (p95)           | < 200ms                 | k6 load test 500 RPS for 10 min    |
+| Database Query (avg)        | < 50ms                  | PostgreSQL EXPLAIN ANALYZE          |
+| Wallet Transfer TTL         | < 100ms                 | Benchmark: 1000 concurrent transfers|
+| Order Creation TTL          | < 150ms                 | Benchmark: POST /rides/book         |
+| Memory Usage (idle)         | < 100 MB                | ps aux on deployed binary           |
+| Memory Usage (load)         | < 200 MB                | During 500 RPS sustained            |
+| CPU Usage (load)            | < 80%                   | top during peak load                |
+| Mobile App Launch Time      | < 3 seconds             | Cold start on Android mid-range     |
+| Mobile Screen Transition    | < 300ms                 | Flutter/RN performance profiling    |
+| Mobile Connect Timeout      | 60 seconds              | Dio/Axios config (toleration)       |
+
+
+RELIABILITY & DATA INTEGRITY (NFR-R)
+
+| Requirement                 | Implementation                                    |
+|-----------------------------|---------------------------------------------------|
+| ACID Transactions           | PostgreSQL native ACID + pgx transaction handling |
+| Ledger Invariant            | SUM(DEBIT) = SUM(CREDIT) verified every 1 hour   |
+| No Balance Drift            | CONSTRAINT: CHECK (balance >= 0) at DB level     |
+| Audit Trail                 | Every mutation logged (user, timestamp, state)   |
+| Backup                      | Supabase Daily Automatic Snapshot (Free Tier)    |
+| Data Recovery RTO           | < 1 hour (restore from latest snapshot)          |
+| Data Recovery RPO           | < 24 hours (daily snapshots)                     |
+| Mobile App Crash Rate       | < 1% per session                                 |
+
+
+SECURITY (NFR-S)
+
+| Requirement                 | Implementation                                    |
+|-----------------------------|---------------------------------------------------|
+| Authentication              | JWT (HS256 with 256-bit secret key)              |
+| Authorization               | RBAC middleware on all protected endpoints        |
+| Encryption in Transit       | TLS 1.3 / HTTPS enforced (Render auto HTTPS)     |
+| Encryption at Rest          | Supabase automatic encryption                     |
+| SQL Injection Prevention    | Parameterized queries (pgx prepared statements)   |
+| Password Hashing            | bcrypt (cost=12) via Supabase Auth                |
+| Rate Limiting               | 100 req/min per IP on public endpoints            |
+| Input Validation            | JSON schema validation + type checking            |
+| JWT Expiry                  | Access token: 1 hour, Refresh token: 30 days      |
+| X-Idempotency-Key Header    | Required for all POST mutations                   |
+
+
+USABILITY (NFR-U)
+
+| Requirement                 | Target                                            |
+|-----------------------------|---------------------------------------------------|
+| Mobile Responsive           | Support Android 7.0+ (API 24) and iOS 12+        |
+| Accessibility               | WCAG 2.1 Level AA (color contrast, font size)    |
+| Language                    | Bahasa Indonesia (primary), English (secondary)  |
+| Loading States              | All async operations show loading indicator       |
+| Error Messages              | User-friendly, actionable (not technical)         |
+| Offline Support             | Queue requests, retry when online                 |
+
+
+OBSERVABILITY (NFR-O)
+
+| Requirement                 | Implementation                                    |
+|-----------------------------|---------------------------------------------------|
+| Structured Logging          | JSON format via uber-go/zap                       |
+| Metrics Endpoint            | /metrics with Prometheus-style data               |
+| Health Check                | /health returns DB connectivity status            |
+| Error Tracking              | Sentry / Firebase Crashlytics (mobile)            |
+| Alerting                    | Console warning when ledger imbalance detected    |
+
+================================================================================
+🔗 INTEGRATION & DEPENDENCIES
+================================================================================
+
+EXTERNAL SERVICES
+
+| Service          | Purpose                               | Provider    | Criticality |
+|------------------|---------------------------------------|-------------|-------------|
+| Supabase         | PostgreSQL Database + Auth            | Supabase    | Critical    |
+| Render.com       | Golang Backend Hosting                | Render      | Critical    |
+| Google Maps SDK  | Map display & geocoding (mobile)      | Google      | Important   |
+| Firebase FCM     | Push notifications (mobile)           | Google      | Important   |
+| Sentry           | Error tracking (optional)             | Sentry      | Optional    |
+| GitHub           | Version control & CI/CD               | GitHub      | Important   |
+
+INTERNAL DEPENDENCIES
+
+- Supabase Auth digunakan untuk user management (register/login)
+- Wallet (F001) adalah prerequisite untuk semua service (Ride, Food, Send)
+- Ledger (F002) adalah prerequisite untuk semua financial transaction
+- Matching Engine (F005) digunakan bersama oleh G-Ride, G-Food, dan G-Send
+- Settlement Engine (F006) digunakan bersama oleh semua service
+
+TECHNOLOGY CONSTRAINTS
+
+- Backend: Golang 1.22+ (minimum)
+- Database: PostgreSQL 14+ (Supabase managed)
+- Mobile Framework: Flutter 3.0+ atau React Native 0.72+
+- Database Driver: pgx v5 (native, no ORM)
+- HTTP Router: Gin v1.9+ (atau Echo)
+- Deployment: Render.com (Web Service) + Supabase (DB)
+- No Docker required (Render supports native Go)
+
+================================================================================
+⚠️ ASSUMPTIONS & CONSTRAINTS
+================================================================================
+
+ASSUMPTIONS
+
+- ✅ Golang v1.22+ tersedia di Render.com (default)
+- ✅ Supabase PostgreSQL Free Tier cukup untuk MVP (500MB storage)
+- ✅ Solo developer memiliki 15-20 jam/minggu untuk development
+- ✅ Network connectivity stable untuk semua users (Indonesia)
+- ✅ Mobile users memiliki Android 7.0+ atau iOS 12+
+- ✅ Tidak perlu real-time GPS tracking di V1.0 (polling REST cukup)
+- ✅ Simulated payment internal (tidak integrasi bank/credit card)
+- ✅ Admin menggunakan web dashboard (bisa diakses dari browser)
+- ✅ Semua data demo (seed data) bisa di-reset kapan saja via admin
+
+CONSTRAINTS
+
+- ⚠️ Timeline: Tidak ada deadline — dikerjakan dengan kecepatan santai
+- ⚠️ Budget: Rp 0 (Free Tier infrastructure only — Render + Supabase)
+- ⚠️ Team: Solo developer (M. Arif Aulia) — maintainability adalah prioritas
+- ⚠️ Mobile: Flutter/React Native dikerjakan setelah backend stabil
+- ⚠️ 3rd-party integrations: Semua simulated di V1.0 (no Stripe, GCash, etc.)
+- ⚠️ Supabase Free Tier: 500MB storage, 50K active users/month, 200 connections
+- ⚠️ Render Free Tier: Web service sleeps after 15 min idle (cold start 30-60s). Kuota: 750 jam/bulan.
+- ⚠️ Render PostgreSQL: Tidak digunakan (Supabase sebagai primary DB)
+
+================================================================================
+🚨 RISKS & MITIGATION STRATEGY
+================================================================================
+
+| #  | Risk                                        | Likelihood | Impact | Mitigation                                                                 |
+|----|---------------------------------------------|------------|--------|----------------------------------------------------------------------------|
+| R1 | Concurrent order claims → multiple drivers  | High       | Crit   | SELECT FOR UPDATE + state validation + statement_timeout (3s)              |
+| R2 | Connection pool exhaustion (Supabase 200)   | Medium     | High   | MaxConns=15, MinConns=2, retry with backoff, context timeout 5s           |
+| R3 | Ledger imbalance due to partial rollback    | Low        | Crit   | Audit every 1 hour, CHECK balance >= 0, atomic transactions               |
+| R4 | Duplicate charges from network retries      | Medium     | High   | Mandatory X-Idempotency-Key header + 24hr cache                          |
+| R5 | JWT token forgery / tampering               | Low        | Crit   | HS256 strong secret, token validation on every request                   |
+| R6 | Render cold start (30-60s) ruins demo       | High       | Med    | ⚠️ KRITIKAL: Render Free Tier memberikan 750 jam/bulan. Menggunakan uptime robot 24/7 menghabiskan 744 jam, menyisakan hanya 6 jam untuk deploy atau service lain, yang akan mematikan instance. SOLUSI: Jadwalkan Uptime Robot hanya pada jam 08:00-22:00 WIB (420 jam/bulan, aman), atau lakukan pre-warm manual 2 menit sebelum demo dengan mengakses endpoint /health. |
+| R7 | Supabase free tier storage exceeded (500MB) | Low        | High   | Monitor weekly, archive old audit logs to cold storage (JSON export)     |
+| R8 | Mobile app crashes on specific Android      | Medium     | Med    | Firebase Crashlytics, test on emulator + real devices (3+ variants)       |
+| R9 | Memory leak in goroutines                   | Low        | Medium | Goroutine profiling, context cancellation, no unbounded goroutines       |
+| R10| Cancellation/refund logic bug               | Medium     | High   | Extensive unit tests for reversal entries, manual QA on all cancellation path |
+| R11| Database migration downtime                 | Medium     | Medium | Test migrations on Supabase staging, zero-downtime patterns             |
+| R12| Mobile API backward compatibility           | Medium     | Med    | Versioned API (/v1/...), never remove fields, only add                   |
+
+MITIGATION DETAILS
+
+R1 — Locking Strategy with Timeout:
+  BEGIN TRANSACTION;
+    SET LOCAL statement_timeout = '3000ms';  -- Prevent hanging connections
+    SELECT * FROM ride_orders WHERE id = $1 FOR UPDATE;
+    -- ... process
+  COMMIT;
+
+R2 — Connection Pool Config:
+  config := pgxpool.Config{
+    MaxConns:     15,
+    MinConns:     2,
+    MaxConnIdleTime: 5 * time.Minute,
+    MaxConnLifetime: 30 * time.Minute,
+  }
+  // + Retry with exponential backoff on connection errors
+
+R4 — Idempotency Guard:
+  cached := idempotencyCache.Get(key)
+  if cached != nil { return cached.Response, 200 }
+  result := transfer()
+  idempotencyCache.Set(key, result, 24*time.Hour)
+  return result, 200
+
+R6 — Render Cold Start & Free Tier Quota (FIXED):
+  - ⚠️ JANGAN gunakan Uptime Robot 24/7. Ini akan menghabiskan 744 dari 750 jam gratis, mematikan instance.
+  - SOLUSI 1: Jadwalkan Uptime Robot hanya pada jam 08:00 - 22:00 WIB (menggunakan cron job atau scheduling tool) = ~420 jam/bulan, aman.
+  - SOLUSI 2: Lakukan pre-warm manual dengan mengakses endpoint /health 2 menit sebelum demo dimulai.
+  - Dokumentasikan strategi ini di DEPLOYMENT.md agar tidak terlupakan.
+
+R8 — Mobile Testing:
+  - Test pada Android emulators: Pixel 4, Samsung Galaxy S10, Xiaomi Redmi
+  - Minimum API level 24 (Android 7.0)
+  - Gunakan Firebase Test Lab untuk automated testing
+
+================================================================================
+📚 DOCUMENT REFERENCES (PIPELINE)
+================================================================================
+
+Berdasarkan SUSUNAN DOKUMEN.txt, setelah PRD ini disetujui, dokumen berikutnya adalah:
+
+| Order | Document                 | Status      | Owner         |
+|-------|--------------------------|-------------|---------------|
+| 1     | PRD.md (THIS FILE)       | ✅ APPROVED | M. Arif Aulia |
+| 2     | DATABASE_SCHEMA.md       | ⏳ PENDING  | M. Arif Aulia |
+| 3     | LOGIC_FLOW.md            | ⏳ PENDING  | M. Arif Aulia |
+| 4     | HALAMAN (Wireframes)     | ⏳ PENDING  | M. Arif Aulia |
+| 5     | DESIGN.md (Visual)       | ⏳ PENDING  | M. Arif Aulia |
+| 6     | DESIGN_MOBILE.md         | ⏳ PENDING  | M. Arif Aulia |
+| 7     | DESIGN_WEB.md            | ⏳ PENDING  | M. Arif Aulia |
+| 8     | TDD.md (Technical Design)| ⏳ PENDING  | M. Arif Aulia |
+| 9     | API_CONTRACT.md          | ⏳ PENDING  | M. Arif Aulia |
+| 10    | SECURITY_SPEC.md         | ⏳ PENDING  | M. Arif Aulia |
+| 11    | DRP.md (Disaster Recovery)| ⏳ PENDING | M. Arif Aulia |
+| 12    | STP.md (System Test Plan)| ⏳ PENDING  | M. Arif Aulia |
+| 13    | ROADMAP.md               | ⏳ PENDING  | M. Arif Aulia |
+
+Link ke dokumen terkait yang sudah dibuat:
+- PRD PLAN.md (Template) — ✅ Available
+- SUSUNAN DOKUMEN.txt — ✅ Available
+
+================================================================================
+📊 ACCEPTANCE & SIGN-OFF
+================================================================================
+
+| Role                 | Name            | Date       | Signature |
+|----------------------|-----------------|------------|-----------|
+| Product Manager      | M. Arif Aulia   | 2026-08-14 | ✅        |
+| Technical Architect  | M. Arif Aulia   | 2026-08-14 | ✅        |
+| Quality Assurance    | Gemini          | 2026-08-14 | ✅ (Fixed) |
+| Quality Assurance    | Deepseek        | TBD        | ⏳        |
+
+NOTES FROM REVIEW (Gemini):
+- ✅ G-Food Settlement Math — FIXED (Delivery Fee now correctly routed to Driver).
+- ✅ Render Free Tier Uptime Robot — FIXED (Schedule limited hours / manual pre-warm).
+- ✅ G-Send Capacity Check — ADDED (Max 3 active orders per driver).
+- ✅ Mobile Cold Start Timeout — ADDED (60s connect timeout + UI feedback).
+- PRD sekarang 100% solid untuk lanjut ke DATABASE_SCHEMA.md.
+
+================================================================================
+📝 APPENDIX: GLOSSARY
+================================================================================
+
+| Term                      | Definition                                                                 |
+|---------------------------|----------------------------------------------------------------------------|
+| PayPulse                  | Digital wallet & ledger engine. Central payment method untuk semua service |
+| Double-Entry Bookkeeping  | Financial system dimana setiap transaction menciptakan Debit & Credit entry |
+| Pessimistic Locking       | Database row-level lock (SELECT FOR UPDATE) untuk prevent race condition   |
+| G-Ride                    | Ride-hailing service dengan driver dispatch matching                       |
+| G-Food                    | Food delivery service dengan merchant catalog & order management           |
+| G-Send                    | Instant logistics service untuk package delivery                           |
+| Modular Monolith          | Architecture dimana semua modul dalam 1 binary Golang tapi terisolasi      |
+| RBAC                      | Role-Based Access Control — permission system berbasis user type           |
+| Idempotency               | Guarantee bahwa request yang sama 5x menghasilkan response sama            |
+| State Drift               | Bug dimana server state berbeda dari client                                |
+| Settlement                | Proses finalisasi pembayaran setelah order selesai                         |
+| Reversal / Refund         | Proses pembalikan transaksi (DEBIT Escrow → CREDIT Customer)               |
+| Escrow                    | Akun penampung sementara sebelum uang didistribusikan ke merchant/driver   |
+| Haversine Formula         | Formula untuk menghitung jarak antara 2 titik koordinat (lat/lng)          |
+| Seed Data                 | Data awal (dummy) untuk testing dan demo                                  |
+| Cold Start                | Waktu yang dibutuhkan Render untuk menghidupkan instance setelah sleep     |
+
+================================================================================
+📌 VERSION HISTORY
+================================================================================
+
+| Version | Date       | Author          | Changes                                                                 |
+|---------|------------|-----------------|-------------------------------------------------------------------------|
+| 1.0     | 2026-08-14 | M. Arif Aulia   | Initial draft (Claude) — terlalu teknis, gabung TDD+DB+API             |
+| 2.0     | 2026-08-14 | M. Arif Aulia   | Revisi berdasarkan feedback — restrukturisasi, tambah refund, observability |
+| 3.0     | 2026-08-14 | M. Arif Aulia   | FINAL — Semua fitur di V1.0, Mobile App included, sesuai template       |
+| 4.0     | 2026-08-14 | M. Arif Aulia   | FIXED — 4 critical gaps identified by Gemini: (1) G-Food settlement math, (2) Render uptime quota strategy, (3) G-Send capacity check, (4) Mobile cold-start timeout & UI feedback. |
+
+================================================================================
+🎓 USAGE NOTES FOR SOLO DEVELOPER
+================================================================================
+
+1. PRD ini adalah KITAB UTAMA — baca dari awal sampai akhir sebelum koding.
+2. JANGAN mulai koding sebelum PRD ini disetujui (oleh diri sendiri + review Gemini).
+3. Setelah PRD approved, lanjut ke DATABASE_SCHEMA.md (jangan langsung koding).
+4. PRD ini mencakup SEMUA fitur di V1.0 — tidak ada yang ditunda ke V1.1+.
+5. Mobile App adalah bagian INTEGRAL dari V1.0 — tidak boleh diabaikan.
+6. Infrastruktur: Render.com (backend) + Supabase (database) — both FREE.
+7. Kalo ada perubahan scope besar, update PRD ini dan version-increment.
+8. PERHATIKAN R6: Jangan pake Uptime Robot 24/7 — kuota Render habis!
+
+GOLDEN RULE: If you can't explain the feature in 2-3 sentences, you're not ready to code it.
+
+================================================================================
+END OF PRD v4.0-FIXED
+================================================================================

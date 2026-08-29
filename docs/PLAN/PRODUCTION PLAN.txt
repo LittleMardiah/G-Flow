@@ -1,0 +1,82 @@
+========================================
+PRODUCTION READINESS CHECKLIST
+Untuk Solo Developer
+========================================
+Gunakan checklist ini sebelum aplikasi live ke publik.
+
+A. KODE & VERSION CONTROL
+   [ ] Semua kode sudah di-commit dan di-push ke repository (branch main/production)
+   [ ] Tidak ada debug code (fmt.Println, console.log) yang tertinggal
+   [ ] Semantic version sudah di-tag (misal: v1.0.0)
+   [ ] File .gitignore sudah benar (tidak ada file rahasia yang ikut commit)
+
+B. ENVIRONMENT & KONFIGURASI
+   [ ] Semua environment variables terdefinisi di production:
+        - DATABASE_URL (read/write)
+        - JWT_SECRET (strong, minimal 32 karakter)
+        - API_KEYS (untuk layanan eksternal: Pusher, Cloudinary, dll)
+        - PORT (biasanya 8080 atau sesuai)
+   [ ] Tidak ada hardcoded secret di kode (semua pakai env)
+   [ ] Konfigurasi untuk production berbeda dengan development (CORS, log level, dll)
+
+C. KEAMANAN
+   [ ] HTTPS aktif (SSL certificate valid & auto-renewal via Certbot)
+   [ ] HTTP redirect ke HTTPS (setting di Nginx)
+   [ ] Firewall hanya membuka port 22, 80, 443
+   [ ] Password login ke server (SSH) menggunakan key, bukan password
+   [ ] Rate limiting aktif (baik di Nginx atau aplikasi)
+   [ ] SQL injection & XSS protection sudah diuji (minimal pakai parameterized query)
+
+D. DATABASE
+   [ ] Migration terakhir sudah dijalankan di production database
+   [ ] Backup otomatis aktif (misal: daily backup via Neon.tech atau pg_dump cron)
+   [ ] Database user production memiliki hak akses minimal (bukan superuser)
+   [ ] Index untuk kolom yang sering di-query sudah dibuat
+
+E. MONITORING & LOGGING
+   [ ] Health check endpoint (/health, /ping) responsif (return 200)
+   [ ] Uptime monitoring aktif (UptimeRobot atau sejenis) dengan notifikasi
+   [ ] Error tracking aktif (Sentry atau log file dengan monitoring)
+   [ ] Log ditulis ke file atau stdout (pastikan ada log rotation)
+
+F. PERFORMANCE & LOAD (minimal)
+   [ ] API response time < 500ms untuk endpoint kritis (diuji dengan staging)
+   [ ] Halaman frontend memiliki Lighthouse score minimal 80 (Performance & Best Practices)
+   [ ] Tidak ada memory leak yang terdeteksi saat diuji dengan load kecil
+
+G. BACKUP & RECOVERY
+   [ ] Backup database tersedia (simpan minimal 7 hari terakhir)
+   [ ] Prosedur restore dari backup sudah didokumentasikan (bisa di RUNBOOK.md)
+   [ ] Kode aplikasi bisa di-rollback ke versi sebelumnya dengan mudah
+
+H. USER & SUPPORT
+   [ ] Kontak/support channel tersedia (misal: email atau link WhatsApp)
+   [ ] FAQ atau panduan singkat untuk user (opsional tapi direkomendasikan)
+   [ ] Tidak ada bug blocker yang diketahui (critical issues sudah diperbaiki)
+
+I. LEGAL & ADMIN (jika perlu)
+   [ ] Privacy policy dan terms of service tersedia (terutama jika mengumpulkan data pribadi)
+   [ ] Cookie consent banner (jika menggunakan cookie tracking)
+
+J. FINAL VERIFICATION MANUAL (Uji Petik)
+   [ ] Lakukan registrasi user baru (end-to-end)
+   [ ] Lakukan login
+   [ ] Jalankan 1 fitur utama (sesuai PRD)
+   [ ] Cek error log tidak ada yang aneh
+   [ ] Cek health check endpoint via browser/curl
+
+========================================
+SETELAH CHECKLIST TERPENUHI, LAKUKAN:
+========================================
+1. Deploy versi production untuk terakhir kalinya
+2. Pantau log selama 1 jam pertama
+3. Beri notifikasi ke user (jika ada) bahwa aplikasi sudah live
+4. Simpan checklist ini sebagai tanda bahwa go-live sudah siap
+
+========================================
+CATATAN UNTUK SOLO DEVELOPER
+========================================
+- Jangan tergesa-gesa. Satu bug di production bisa merusak kepercayaan user.
+- Checklist ini bisa diulang setiap kali ada rilis besar (v1.1, v2.0, dll).
+- Simpan di /docs/PRODUCTION_READINESS.md.
+========================================

@@ -1,0 +1,1534 @@
+================================================================================
+HALAMAN: G-Flow Super-App UI/UX Wireframes (v2.0-FINAL)
+================================================================================
+
+Version:         2.0-FINAL
+Last Updated:    2026-08-14
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — SYNCHRONIZED WITH BACKEND
+
+================================================================================
+📌 BISMILLAH — FINAL VERSION
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📌 OVERVIEW
+================================================================================
+
+Dokumen ini berisi **wireframe (blue-print) UI** untuk semua user roles dalam G-Flow:
+- 🧑 **Customer** — Memesan ride, food, package
+- 🚗 **Driver** — Accept orders, complete delivery
+- 🍴 **Merchant** — Manage catalog, process orders
+- 👨‍💼 **Admin** — Monitor ledger, manage disputes
+
+**Design Principles:**
+- ✅ Mobile-first (responsive design, min-width 360px)
+- ✅ Accessibility (WCAG 2.1 AA standard)
+- ✅ Dark mode support (optional for V1.1)
+- ✅ Offline capability (cache critical flows)
+- ✅ Performance: Cold start < 3s, interactions < 300ms
+- ✅ 100% SYNCHRONIZED WITH BACKEND: All UI components map to API endpoints and database schema
+
+**Platform:** Flutter (cross-platform native) + React Web (admin panel)
+
+FIXES APPLIED (v2.0-FINAL — Based on Gemini Review v1.0):
+  1. ✅ G-Send Multi-Stop Fare Breakdown: Added allocated_fare per stop
+  2. ✅ G-Send Return-to-Sender UI: Added RETURN_REQUIRED and RETURNED_TO_SENDER flows
+  3. ✅ G-Food Multi-Group Variant Options: Added merchant_item_option_groups UI
+  4. ✅ G-Food Menu Versioning Fallback: Added version mismatch warning modal
+  5. ✅ Driver KYC Validation: Added SIM, license expiry, plate, min_balance_threshold
+  6. ✅ Merchant Status Transition: Added PENDING_VERIFICATION to ACTIVE indicator
+
+================================================================================
+🧭 NAVIGATION STRUCTURE
+================================================================================
+
+G-FLOW APP HIERARCHY:
+
+┌─ AUTHENTICATION
+│  ├─ Login/Register Screen
+│  ├─ OTP Verification
+│  ├─ Profile Completion
+│  └─ KYC Upload (Driver: SIM, License, Vehicle)
+│
+├─ CUSTOMER APP (Role: customer)
+│  ├─ Home/Dashboard
+│  │  ├─ Ride Tab
+│  │  │  ├─ Book Ride
+│  │  │  ├─ Active Ride Details
+│  │  │  ├─ Ride History
+│  │  │  └─ Driver Rating
+│  │  ├─ Food Tab
+│  │  │  ├─ Merchant List (map/list)
+│  │  │  ├─ Merchant Detail & Menu
+│  │  │  │  └─ Multi-Group Variant Options (FIXED)
+│  │  │  │  └─ Menu Versioning Warning (FIXED)
+│  │  │  ├─ Food Cart
+│  │  │  ├─ Checkout
+│  │  │  └─ Food Order Tracking
+│  │  ├─ Send Tab
+│  │  │  ├─ Create Send Order (with multi-stop fare breakdown) (FIXED)
+│  │  │  ├─ Send History
+│  │  │  └─ Tracking (with RTS status) (FIXED)
+│  │  └─ Wallet Tab
+│  │     ├─ Balance Display
+│  │     ├─ Top-Up
+│  │     ├─ Transaction History
+│  │     └─ Withdrawal
+│  ├─ Profile
+│  │  ├─ Edit Personal Data
+│  │  ├─ Saved Addresses
+│  │  ├─ Payment Methods
+│  │  └─ Settings
+│  └─ Help & Support
+│
+├─ DRIVER APP (Role: driver)
+│  ├─ Dashboard/Home
+│  │  ├─ Available Orders (map view)
+│  │  ├─ Accept Order (G-Ride, G-Food, G-Send)
+│  │  ├─ Active Order Details
+│  │  │  ├─ Multi-Stop Fare Breakdown (FIXED)
+│  │  │  └─ RTS Flow (RETURN_REQUIRED / RETURNED_TO_SENDER) (FIXED)
+│  │  ├─ Navigation (map + directions)
+│  │  ├─ Proof of Delivery (photo)
+│  │  └─ Earnings Summary
+│  ├─ Order History
+│  ├─ Earnings
+│  │  ├─ Daily Summary
+│  │  ├─ Weekly/Monthly Reports
+│  │  └─ Withdrawal
+│  ├─ Vehicle Management
+│  │  ├─ Vehicle Info (SIM, License, Plate) (FIXED)
+│  │  ├─ License Upload
+│  │  ├─ Insurance Info
+│  │  └─ min_balance_threshold indicator (FIXED)
+│  ├─ Profile & Settings
+│  └─ Performance Rating
+│
+├─ MERCHANT APP (Role: merchant)
+│  ├─ Dashboard/Home
+│  │  ├─ Pending Orders
+│  │  ├─ Real-time Notifications
+│  │  ├─ Today's Summary
+│  │  └─ Verification Status Indicator (FIXED)
+│  ├─ Order Management
+│  │  ├─ Incoming Orders
+│  │  ├─ Order Details
+│  │  ├─ Update Status (Confirm, Preparing, Ready)
+│  │  ├─ Rejected Orders
+│  │  └─ Order History
+│  ├─ Catalog Management
+│  │  ├─ Menu Sections
+│  │  ├─ Add/Edit Items
+│  │  ├─ Item Availability
+│  │  ├─ Pricing
+│  │  └─ Multi-Group Variant Options (FIXED)
+│  ├─ Analytics & Earnings
+│  │  ├─ Daily Sales
+│  │  ├─ Revenue Report
+│  │  ├─ Top Items
+│  │  └─ Withdrawal
+│  ├─ Merchant Profile
+│  │  ├─ Store Info
+│  │  ├─ Location & Hours
+│  │  └─ Settings
+│  └─ Help & Support
+│
+└─ ADMIN WEB PANEL (Role: admin)
+   ├─ Dashboard
+   │  ├─ KPIs (Total Revenue, Active Orders, Users)
+   │  ├─ Real-time Metrics
+   │  └─ Alerts
+   ├─ Ledger & Finance
+   │  ├─ Ledger Audit Trail
+   │  ├─ Balance Verification
+   │  ├─ Settlement Reports
+   │  └─ Dispute Management
+   ├─ User Management
+   │  ├─ User List (filter by role)
+   │  ├─ Suspend/Freeze User
+   │  ├─ KYC Verification
+   │  └─ Blacklist Management
+   ├─ Order Management
+   │  ├─ All Orders (filter by status)
+   │  ├─ Dispute Resolution
+   │  ├─ Refund Processing
+   │  └─ Cancellation Handling
+   ├─ Merchant Verification
+   │  ├─ Pending Merchants
+   │  ├─ Document Verification
+   │  └─ Store Suspension
+   └─ Reports & Analytics
+      ├─ Revenue by Service
+      ├─ User Activity
+      └─ Performance Metrics
+
+================================================================================
+📱 CUSTOMER APP WIREFRAMES
+================================================================================
+
+1️⃣ AUTHENTICATION & ONBOARDING
+────────────────────────────────────────────────────────────────────────────────
+
+1.1 LOGIN SCREEN
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│          G-FLOW              │
+│    Super-App Ecosystem       │
+│                              │
+│  📧 Email/Phone              │
+│  ┌──────────────────────────┐│
+│  │ your@email.com          ││
+│  └──────────────────────────┘│
+│                              │
+│  🔐 Password                 │
+│  ┌──────────────────────────┐│
+│  │ ••••••••••              ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │   LOGIN                 ││
+│  └──────────────────────────┘│
+│                              │
+│  Forgot password?            │
+│  Don't have account? Sign up │
+└──────────────────────────────┘
+
+Components:
+  - Input: email (validation: RFC 5322)
+  - Input: password (minLength: 8)
+  - Button: Login (disabled if form invalid)
+  - Link: Forgot Password
+  - Link: Sign Up (navigate to registration)
+
+Data Binding:
+  - POST /auth/login
+  - Response: { access_token, refresh_token, user_id, user_type }
+
+-------------------------------------------------------------------------------
+
+1.2 REGISTRATION SCREEN — FIXED: Driver KYC validation
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│      Create Account          │
+│                              │
+│  👤 Full Name                │
+│  ┌──────────────────────────┐│
+│  │ Budi Santoso            ││
+│  └──────────────────────────┘│
+│                              │
+│  📧 Email                    │
+│  ┌──────────────────────────┐│
+│  │ budi@email.com          ││
+│  └──────────────────────────┘│
+│                              │
+│  📱 Phone (+62)              │
+│  ┌──────────────────────────┐│
+│  │ 81234567890             ││
+│  └──────────────────────────┘│
+│                              │
+│  🔐 Password                 │
+│  ┌──────────────────────────┐│
+│  │ ••••••••••              ││
+│  └──────────────────────────┘│
+│                              │
+│  👥 I am a:                  │
+│  ◉ Customer  ◯ Driver ◯ Merchant
+│                              │
+│  ─── IF DRIVER SELECTED ─── │
+│  🚗 Vehicle Type             │
+│  ┌──────────────────────────┐│
+│  │ Motorcycle / Car / Van  ││
+│  └──────────────────────────┘│
+│                              │
+│  🪪 License Number           │
+│  ┌──────────────────────────┐│
+│  │ 1234-5678-9012          ││
+│  └──────────────────────────┘│
+│                              │
+│  📅 License Expiry           │
+│  ┌──────────────────────────┐│
+│  │ 2025-12-31              ││
+│  └──────────────────────────┘│
+│                              │
+│  🚘 Vehicle Plate            │
+│  ┌──────────────────────────┐│
+│  │ B 1234 XYZ              ││
+│  └──────────────────────────┘│
+│                              │
+│  ⚠️ KYC DOCUMENTS REQUIRED  │
+│  (Driver must upload later)  │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   SIGN UP               ││
+│  └──────────────────────────┘│
+│                              │
+│  Already have account? Login │
+└──────────────────────────────┘
+
+Components:
+  - Input: fullName (minLength: 3)
+  - Input: email (unique, validation)
+  - Input: phone (Indonesia format +62)
+  - Input: password (minLength: 8, strength indicator)
+  - Select: userType (customer, driver, merchant)
+  - Conditional Fields (Driver):
+    - Select: vehicleType (motorcycle, car, van)
+    - Input: licenseNumber (required, validation)
+    - Date: licenseExpiry (must be > NOW())
+    - Input: vehiclePlate (required)
+  - Validation: All driver fields required before signup
+  - Button: Sign Up
+
+Data Binding:
+  - POST /auth/signup
+  - Creates users table entry with driver fields
+  - Auto-creates wallets table entry
+  - Sets driver status = 'PENDING_VERIFICATION' (KYC in progress)
+  - Sends OTP verification SMS
+
+-------------------------------------------------------------------------------
+
+1.3 OTP VERIFICATION SCREEN
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│    Verify Your Phone         │
+│                              │
+│  We sent a code to:          │
+│  +62 812 345 67890           │
+│                              │
+│  🔐 Enter 6-digit code       │
+│  ┌────┐┌────┐┌────┐         │
+│  │ _  ││ _  ││ _  │         │
+│  └────┘└────┘└────┘         │
+│  ┌────┐┌────┐┌────┐         │
+│  │ _  ││ _  ││ _  │         │
+│  └────┘└────┘└────┘         │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   VERIFY                ││
+│  └──────────────────────────┘│
+│                              │
+│  Didn't receive? Resend      │
+│  Wrong number? Change        │
+└──────────────────────────────┘
+
+Components:
+  - 6 digit OTP input fields (auto-focus next)
+  - Button: Verify
+  - Link: Resend (60s cooldown)
+  - Link: Change Phone
+
+Data Binding:
+  - POST /auth/verify-otp
+  - Validates SMS code
+  - Sets users.status = 'ACTIVE'
+  - Returns access_token
+
+================================================================================
+2️⃣ CUSTOMER APP — HOME/DASHBOARD
+================================================================================
+
+2.1 HOME SCREEN (TAB NAVIGATION)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ G-FLOW     🔔    👤         │  ← Header
+├──────────────────────────────┤
+│                              │
+│  👋 Hello, Budi!             │
+│  Balance: Rp 500,000 💰      │
+│  ┌──────────────────────────┐│
+│  │ [Top-Up]   [Withdraw]   ││
+│  └──────────────────────────┘│
+│                              │
+│  📌 Quick Actions            │
+│  ┌────────┬────────┬────────┐│
+│  │ 🚗 Ride│🍔 Food │📦 Send ││
+│  └────────┴────────┴────────┘│
+│                              │
+│  🔄 Recent Activity          │
+│  ┌──────────────────────────┐│
+│  │ Order #12345 (Completed) ││
+│  │ Ride: Jl. Sudirman → ... ││
+│  │ Completed at 14:30       ││
+│  │ Rp 85,000                ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Order #12344 (Pending)   ││
+│  │ Food: Warung Mak Surti   ││
+│  │ Estimated: 20 mins       ││
+│  │ Rp 48,000                ││
+│  └──────────────────────────┘│
+│                              │
+├─ RIDE ─ FOOD ─ SEND ─ WALLET ┤ ← Tab Bar
+└──────────────────────────────┘
+
+Components:
+  - Header: Logo, Notification bell, Profile icon
+  - Greeting: "Hello, {name}!"
+  - Wallet: Display current balance
+  - Quick Actions: Top-Up, Withdraw buttons
+  - Quick Action Icons: Ride, Food, Send
+  - Recent Orders: List of last 5 orders
+  - Tab Navigation: 5 tabs (Ride, Food, Send, Wallet, More)
+
+Data Binding:
+  - GET /wallets/{wallet_id}/balance → Display balance
+  - GET /customers/{customer_id}/orders?limit=5 → Recent orders
+
+================================================================================
+3️⃣ CUSTOMER APP — RIDE TAB
+================================================================================
+
+3.1 RIDE TAB (CUSTOMER)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│                              │
+│  🚗 Ride Hailing             │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ [BOOK A RIDE]           ││
+│  └──────────────────────────┘│
+│                              │
+│  📍 Pickup Location          │
+│  ┌──────────────────────────┐│
+│  │ Jl. Sudirman No. 99     ││
+│  │ (Current location)       ││
+│  └──────────────────────────┘│
+│                              │
+│  📍 Drop-off Location        │
+│  ┌──────────────────────────┐│
+│  │ Tap to select...        ││
+│  └──────────────────────────┘│
+│                              │
+│  🚗 Ride Type                │
+│  ◉ Economy (Rp 15,000)       │
+│  ◯ Premium (Rp 25,000)       │
+│                              │
+│  💰 Estimated Fare          │
+│  Rp 85,000 (5.2 km)          │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   CONFIRM BOOKING       ││
+│  └──────────────────────────┘│
+│                              │
+│  ✓ Recent Rides              │
+│  - Ride #12344 (Jun 20)      │
+│  - Ride #12343 (Jun 18)      │
+└──────────────────────────────┘
+
+Components:
+  - Button: "Book A Ride" (prominent CTA)
+  - Map: Display current location
+  - Input: Pickup location (autocomplete)
+  - Input: Drop-off location (autocomplete)
+  - Select: Ride type (Economy, Premium)
+  - Display: Estimated fare (calculated via Haversine)
+  - Button: Confirm Booking
+  - List: Recent rides
+
+Data Binding:
+  - GET /locations/nearby-drivers → Show driver availability
+  - POST /rides/book → Create ride order
+  - GET /rides/{ride_id} → Track active ride
+
+-------------------------------------------------------------------------------
+
+3.2 BOOK RIDE (DETAILED)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← CANCEL        BOOK RIDE    │  ← Header
+├──────────────────────────────┤
+│                              │
+│  [MAP VIEW - Full screen]    │
+│  - Pickup pin (green)        │
+│  - Dropoff pin (red)         │
+│  - Available drivers nearby  │
+│                              │
+│  ┌──────────────────────────┐│ ← Bottom sheet
+│  │ Pickup: Jl. Sudirman 99 ││
+│  │ Dropoff: Jl. Gatot ... ││
+│  │                          ││
+│  │ Distance: 5.2 km         ││
+│  │ Estimated Time: 15 mins  ││
+│  │ Fare: Rp 85,000         ││
+│  │                          ││
+│  │ 🚗 Ride Type: Economy    ││
+│  │ ◯ Premium (+Rp 10K)      ││
+│  │                          ││
+│  │ 👥 Passengers: 1         ││
+│  │ 🛄 Luggage: None         ││
+│  │                          ││
+│  │ ┌──────────────────────┐ ││
+│  │ │  CONFIRM & BOOK     │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+State Flow:
+  1. Pickup location selected
+  2. Dropoff location selected
+  3. Fare calculated (show estimate)
+  4. Driver assignment (SEARCHING_DRIVER state)
+  5. Driver found (DRIVER_ASSIGNED state)
+  6. Driver arriving (DRIVER_ARRIVED state)
+  7. Trip in progress (TRIP_STARTED state)
+  8. Completed (COMPLETED state)
+  9. Rating screen (before settlement)
+  10. Settlement executed (SETTLED state)
+
+-------------------------------------------------------------------------------
+
+3.3 ACTIVE RIDE TRACKING
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK              RIDE #12345
+├──────────────────────────────┤
+│                              │
+│  [MAP - Live Driver Location]│
+│  - Driver pin (moving)       │
+│  - Destination pin          │
+│  - ETA display              │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 🚗 Driver: Ahmad Dedi    ││
+│  │ ⭐ 4.8 (342 reviews)     ││
+│  │ 📞 Call  📱 Message      ││
+│  └──────────────────────────┘│
+│                              │
+│  Status: [Heading to pickup] │
+│  ETA: 3 minutes away         │
+│  📍 Distance: 0.8 km         │
+│                              │
+│  Pickup: Jl. Sudirman 99     │
+│  Dropoff: Jl. Gatot Subroto  │
+│  Fare: Rp 85,000            │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   [CANCEL RIDE]         ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+Components:
+  - Live map with driver location
+  - Driver card (name, rating, actions)
+  - Status message (text + estimated time)
+  - Order details (pickup, dropoff, fare)
+  - Action buttons: Call, Message, Cancel
+
+Data Binding:
+  - GET /rides/{ride_id}/status → Live updates
+  - WebSocket or polling for driver location
+  - PUT /rides/{ride_id}/cancel → Cancel ride
+
+================================================================================
+4️⃣ CUSTOMER APP — FOOD TAB (G-Food)
+================================================================================
+
+4.1 MERCHANT LIST (MAP VIEW)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ G-FLOW     🔔    👤         │
+├──────────────────────────────┤
+│                              │
+│  🍔 Food Delivery            │
+│                              │
+│  🔍 Search restaurants...    │
+│  📍 Distance: 5 km          │
+│                              │
+│  [MAP - Merchant Pins]       │
+│  - Pin 1: Warung Mak Surti   │
+│    ⭐ 4.7  • Rp 15K min     │
+│  - Pin 2: Kafe Kopi          │
+│    ⭐ 4.5  • Rp 25K min     │
+│  - Pin 3: Pizzeria Jaya      │
+│    ⭐ 4.9  • Rp 35K min     │
+│                              │
+│  ┌─ WARUNG MAK SURTI ────────┐│
+│  │ ⭐ 4.7 (1.2 km)          ││
+│  │ 🕐 Delivery: 20-30 mins  ││
+│  │ 💰 Min order: Rp 15,000  ││
+│  │                          ││
+│  │ 🍜 Nasi Kuning Spesial   ││
+│  │ 🍗 Ayam Goreng           ││
+│  │                          ││
+│  │ ┌────────────────────────┐│
+│  │ │  VIEW MENU             │ │
+│  │ └────────────────────────┘│
+│  └────────────────────────────┘│
+│                              │
+│  View as: ◉ Map  ◯ List    │
+├─ RIDE ─ FOOD ─ SEND ─ WALLET ┤
+└──────────────────────────────┘
+
+Components:
+  - Search: Merchant name/cuisine filter
+  - Map: Show nearby merchants with pins
+  - List: Merchant cards (name, rating, distance, delivery time)
+  - Toggle: Map/List view
+
+Data Binding:
+  - GET /merchants?nearby=true&lat={}&lng={} → Merchant list
+  - GET /merchants/{merchant_id}/info → Merchant details
+
+-------------------------------------------------------------------------------
+
+4.2 MERCHANT DETAIL & MENU — FIXED: Multi-Group Variant Options + Versioning
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      WARUNG MAK SURTI  │
+├──────────────────────────────┤
+│                              │
+│  [Merchant Banner Photo]     │
+│  ⭐ 4.7 (342 reviews)        │
+│  🕐 Open (closes 22:00)      │
+│  📍 1.2 km away              │
+│  🚚 20-30 mins delivery      │
+│                              │
+│  ☎️ 021-XXXX-XXXX  🌐 Website│
+│                              │
+│  📍 Jl. Sudirman No. 99      │
+│  Cuisine: Indonesian/Asian   │
+│  Min order: Rp 15,000        │
+│                              │
+│  🔍 Search menu...           │
+│                              │
+│  🍜 NASI & MIE               │
+│  ┌──────────────────────────┐│
+│  │ 🍜 Nasi Kuning Spesial  ││
+│  │ Rp 15,000                ││
+│  │ 3.5/5 ⭐ (245 reviews)   ││
+│  │                          ││
+│  │ ─── VARIANTS (FIXED) ─── ││
+│  │ Level Pedas: ◉ 1 ◯ 2 ◯ 3││
+│  │ Extra Topping:           ││
+│  │   ☐ Cheese (+Rp 5,000)   ││
+│  │   ☐ Egg (+Rp 3,000)     ││
+│  │                          ││
+│  │ [ADD TO CART]            ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🍝 Nasi Goreng Biasa    ││
+│  │ Rp 12,000                ││
+│  │ [ADD TO CART]            ││
+│  └──────────────────────────┘│
+│                              │
+│  🍗 PROTEIN DISHES           │
+│  ┌──────────────────────────┐│
+│  │ 🍗 Ayam Goreng           ││
+│  │ Rp 25,000                ││
+│  │ [ADD TO CART]            ││
+│  └──────────────────────────┘│
+│                              │
+│  🛒 Cart (3 items) → [CHECKOUT] │
+└──────────────────────────────┘
+
+Components:
+  - Merchant header: Photo, rating, distance, delivery time
+  - Contact info: Phone, website
+  - Address
+  - Search: Menu search
+  - Menu sections: Nasi, Mie, Protein, Minuman, Dessert
+  - Menu items with VARIANT OPTIONS (FIXED):
+    - Multi-group options (selection_type: SINGLE/MULTIPLE)
+    - Price adjustment per option
+    - Group: Level Pedas (radio buttons)
+    - Group: Extra Topping (checkboxes)
+  - Sticky cart button: Show item count
+
+Data Binding:
+  - GET /merchants/{merchant_id}/menus → Menu structure
+  - GET /merchants/{merchant_id}/items → All items with options
+  - GET /merchants/{merchant_id}/item-options → Variant options from merchant_item_option_groups
+  - POST /carts/{customer_id}/items → Add item with selected options
+
+-------------------------------------------------------------------------------
+
+4.3 FOOD CART — FIXED: Menu Versioning Warning
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      YOUR CART (3)     │
+├──────────────────────────────┤
+│                              │
+│  🍜 Nasi Kuning Spesial     │
+│  Rp 15,000  Qty: [1] [-][+]  │
+│  Notes: Tidak terlalu pedas   │
+│  ✏️ Edit   ✕ Remove          │
+│  ─────────────────────────────│
+│  🍗 Ayam Goreng (2x)          │
+│  Rp 25,000 x2 = Rp 50,000    │
+│  Qty: [2] [-][+]             │
+│  ✏️ Edit   ✕ Remove          │
+│  ─────────────────────────────│
+│  🥤 Teh Icing                │
+│  Rp 5,000   Qty: [1] [-][+]  │
+│  ✏️ Edit   ✕ Remove          │
+│                              │
+│  ─────────────────────────────│
+│  Subtotal: Rp 70,000         │
+│  Delivery Fee: Rp 8,000      │
+│  Platform Fee: Rp 3,500      │
+│  ─────────────────────────────│
+│  Total: Rp 81,500            │
+│                              │
+│  💳 Payment Method           │
+│  ◉ PayPulse Wallet (Rp 500K) │
+│  ◯ Cash on Delivery          │
+│                              │
+│  📝 Special Instructions     │
+│  ┌──────────────────────────┐│
+│  │ Masukan catatan khusus.. ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │   CONFIRM & CHECKOUT    ││
+│  └──────────────────────────┘│
+│                              │
+│  ⚠️ MENU VERSION WARNING     │
+│  (FIXED — version mismatch)  │
+│  "Price has changed. Confirm?"│
+└──────────────────────────────┘
+
+Components:
+  - Cart items: Product, price, quantity, edit/remove buttons
+  - Notes: Special instructions per item
+  - Subtotal, Delivery fee, Platform fee breakdown
+  - Total amount
+  - Payment method selection: Wallet, Cash
+  - Special instructions textarea
+  - Checkout button
+  - MENU VERSIONING WARNING MODAL (FIXED):
+    - Shows when menu price changed after adding to cart
+    - Display old price vs new price
+    - Buttons: "Accept New Price" or "Remove Item"
+
+Data Binding:
+  - GET /carts/{customer_id}/items → Fetch cart
+  - PUT /carts/{customer_id}/items/{item_id} → Update quantity
+  - DELETE /carts/{customer_id}/items/{item_id} → Remove item
+  - POST /food-orders → Create order
+  - Check menu version: GET /merchants/items/{item_id}/version
+
+-------------------------------------------------------------------------------
+
+4.4 FOOD ORDER TRACKING
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      ORDER #12344      │
+├──────────────────────────────┤
+│                              │
+│  [STEPPER - Order Status]    │
+│  ✓ Confirmed ─ 14:10         │
+│  ⟳ Preparing ─ 14:15 (ETA)   │
+│  ○ Ready for Pickup          │
+│  ○ In Transit                │
+│  ○ Delivered                 │
+│                              │
+│  🍜 2x Nasi Kuning           │
+│  🍗 1x Ayam Goreng           │
+│  🥤 1x Teh Icing             │
+│                              │
+│  Merchant: Warung Mak Surti  │
+│  ✓ Confirmed your order      │
+│  ⟳ Preparing... (~10 mins)   │
+│                              │
+│  Estimated arrival: 14:35    │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ 🚗 Waiting for driver    ││
+│  │ [Will show when ready]   ││
+│  └──────────────────────────┘│
+│                              │
+│  💳 Rp 81,500 (PayPulse)     │
+│  📞 Contact Restaurant       │
+│                              │
+├──────────────────────────────┤
+│  ⏮️ Back to Home  👍 Need Help?│
+└──────────────────────────────┘
+
+Components:
+  - Stepper: Order status timeline
+  - Items: List of ordered items
+  - Merchant message: Current status & ETA
+  - Driver section: Shows when order ready
+  - Total amount & payment method
+  - Help link
+
+Data Binding:
+  - GET /food-orders/{order_id} → Fetch order details
+  - WebSocket: Real-time status updates
+
+================================================================================
+5️⃣ CUSTOMER APP — SEND TAB (G-Send) — FIXED
+================================================================================
+
+5.1 CREATE SEND ORDER — FIXED: Multi-Stop Fare Breakdown
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      CREATE SEND      │
+├──────────────────────────────┤
+│                              │
+│  📦 Package Details          │
+│  ┌──────────────────────────┐│
+│  │ Package Name: Buku       ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Weight: 2.0 kg           ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Package Type: STANDARD  ││
+│  └──────────────────────────┘│
+│                              │
+│  📍 Pickup Location (Stop 0) │
+│  ┌──────────────────────────┐│
+│  │ Jl. Sudirman No. 99     ││
+│  └──────────────────────────┘│
+│                              │
+│  📍 Delivery Stops           │
+│  ┌──────────────────────────┐│
+│  │ Stop 1: Customer B       ││
+│  │ Jl. Thamrin No. 10      ││
+│  │ Distance: 3.2 km         ││
+│  │ Fare: Rp 18,000          ││
+│  │ [EDIT] [REMOVE]          ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Stop 2: Customer C       ││
+│  │ Jl. Gatot Subroto No. 20││
+│  │ Distance: 2.5 km         ││
+│  │ Fare: Rp 14,000          ││
+│  │ [EDIT] [REMOVE]          ││
+│  └──────────────────────────┘│
+│                              │
+│  ┌──────────────────────────┐│
+│  │ [+ ADD DELIVERY STOP]   ││
+│  └──────────────────────────┘│
+│                              │
+│  📊 FARE BREAKDOWN           │
+│  ┌──────────────────────────┐│
+│  │ Stop 1: Rp 18,000       ││
+│  │ Stop 2: Rp 14,000       ││
+│  │ Platform Fee: Rp 2,000  ││
+│  │ ─────────────────────────││
+│  │ Total: Rp 34,000        ││
+│  └──────────────────────────┘│
+│                              │
+│  💳 Payment Method           │
+│  ◉ PayPulse Wallet          │
+│  ◯ Cash on Delivery          │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   CONFIRM & SEND        ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+Components:
+  - Package details: Name, weight, type
+  - Pickup location (Stop 0)
+  - Delivery stops: Each stop with recipient, address, distance, allocated_fare
+  - Add stop button
+  - Fare breakdown: Per-stop allocated_fare + total
+  - Payment method selection
+  - Confirm button
+
+Data Binding:
+  - POST /send/orders/create → Create send order
+  - Allocated_fare calculated from distance proportion
+  - send_order_stops table populated with each stop
+
+-------------------------------------------------------------------------------
+
+5.2 SEND ORDER TRACKING — FIXED: RTS Status (RETURN_REQUIRED / RETURNED_TO_SENDER)
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      SEND #12345      │
+├──────────────────────────────┤
+│                              │
+│  📦 Package: Buku (2.0 kg)   │
+│  Status: [IN_TRANSIT]        │
+│                              │
+│  [STEPPER - Delivery Status] │
+│  ✓ Picked Up ─ 14:00         │
+│  ⟳ In Transit ─ 14:15       │
+│  ○ Stop 1: Customer B       │
+│  ○ Stop 2: Customer C       │
+│                              │
+│  📍 Current Location         │
+│  [MAP - Driver Location]     │
+│  En route to Stop 1         │
+│                              │
+│  📊 STOP STATUS              │
+│  ┌──────────────────────────┐│
+│  │ ✅ Stop 1: Customer B   ││
+│  │   DELIVERED (14:30)     ││
+│  │   Fare: Rp 18,000       ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ ⏳ Stop 2: Customer C   ││
+│  │   IN_PROGRESS           ││
+│  │   Fare: Rp 14,000       ││
+│  └──────────────────────────┘│
+│                              │
+│  ─── RTS STATUS (FIXED) ─── │
+│  (Shown when RETURN_REQUIRED)│
+│  ⚠️ Return Required          │
+│  Stop 2: Recipient absent   │
+│  Driver returning to pickup │
+│  🚚 RTS Fee: Rp 5,000      │
+│                              │
+│  ─── RETURNED_TO_SENDER ─── │
+│  ✅ Package returned         │
+│  Refund: Rp 14,000 (skipped)│
+│  RTS Fee paid: Rp 5,000     │
+│                              │
+│  💳 Total: Rp 34,000         │
+│  📞 Contact Driver           │
+│                              │
+├──────────────────────────────┤
+│  ⏮️ Back to Home  👍 Need Help?│
+└──────────────────────────────┘
+
+Components:
+  - Package details
+  - Stepper: Delivery status timeline
+  - Current location map
+  - Stop status: DELIVERED, IN_PROGRESS, SKIPPED
+  - RTS Status (FIXED):
+    - RETURN_REQUIRED: Warning, driver returning to pickup
+    - RETURNED_TO_SENDER: Package returned, refund processed
+  - Refund amount for skipped stops
+  - RTS fee display
+
+Data Binding:
+  - GET /send/orders/{order_id} → Order details with stops
+  - WebSocket: Real-time stop status updates
+  - RTS status from send_order_stops.status
+
+================================================================================
+6️⃣ CUSTOMER APP — WALLET TAB
+================================================================================
+
+6.1 WALLET OVERVIEW
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│                              │
+│  💰 Your PayPulse Wallet     │
+│                              │
+│  Available Balance           │
+│  ╔══════════════════════════╗│
+│  ║    Rp 500,000            ║│
+│  ╚══════════════════════════╝│
+│                              │
+│  ┌────────────┬────────────┐ │
+│  │  TOP-UP    │  WITHDRAW  │ │
+│  └────────────┴────────────┘ │
+│                              │
+│  Account Status              │
+│  ✅ Verified (KYC Passed)    │
+│  Limit: Rp 20,000,000        │
+│  Verification: Valid until Q4│
+│                              │
+│  📋 Recent Transactions      │
+│  ┌──────────────────────────┐│
+│  │ 🟢 Top-Up                ││
+│  │ +Rp 500,000 • Jun 20 14:20
+│  │ PayPulse Simulasi        ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🔴 Ride Payment          ││
+│  │ -Rp 85,000 • Jun 19 18:45││
+│  │ Ride Order #12344        ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🟢 Ride Earning          ││
+│  │ +Rp 90,000 • Jun 19 19:00││
+│  │ Ride Order #12344 (Driver)││
+│  └──────────────────────────┘│
+│                              │
+│  [VIEW ALL TRANSACTIONS]    │
+│                              │
+├─ RIDE ─ FOOD ─ SEND ─ WALLET ┤
+└──────────────────────────────┘
+
+Components:
+  - Balance display (large, prominent)
+  - Top-Up & Withdraw buttons
+  - Account status badge
+  - Limit information
+  - Transaction list (last 5)
+  - View all transactions link
+
+Data Binding:
+  - GET /wallets/{wallet_id}/balance → Current balance
+  - GET /wallets/{wallet_id}/status → KYC status
+  - GET /ledger?wallet_id=X&limit=5 → Recent transactions
+
+-------------------------------------------------------------------------------
+
+6.2 TOP-UP WALLET
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      TOP-UP WALLET    │
+├──────────────────────────────┤
+│                              │
+│  Current Balance             │
+│  Rp 500,000                  │
+│                              │
+│  Top-Up Amount               │
+│  ┌──────────────────────────┐│
+│  │ Rp                       ││
+│  │ ┌──────────────────────┐ ││
+│  │ │ Enter amount         │ ││
+│  │ └──────────────────────┘ ││
+│  └──────────────────────────┘│
+│                              │
+│  Quick Select:               │
+│  [Rp 50K] [Rp 100K] [Rp 200K]│
+│  [Rp 500K]  [Rp 1M]          │
+│                              │
+│  After Top-Up               │
+│  Rp 500,000 + Rp ___ = Rp ___ │
+│                              │
+│  Payment Method              │
+│  ◉ Simulated Internal (Free) │
+│  ◯ Credit Card (V1.1)        │
+│  ◯ Bank Transfer (V1.1)      │
+│                              │
+│  ⓘ Top-ups are instant       │
+│  No transaction fees         │
+│                              │
+│  ┌──────────────────────────┐│
+│  │   TOP-UP NOW            ││
+│  └──────────────────────────┘│
+└──────────────────────────────┘
+
+Components:
+  - Amount input field (numeric, Rp currency)
+  - Quick select buttons (preset amounts)
+  - New balance preview
+  - Payment method selector
+  - Info message
+  - Top-Up button (disabled if amount 0)
+
+Data Binding:
+  - POST /wallets/{wallet_id}/topup → Create top-up transaction
+  - Idempotency-Key header (required)
+  - Response: { transaction_id, new_balance }
+
+================================================================================
+7️⃣ DRIVER APP WIREFRAMES — FIXED: KYC & Balance Indicators
+================================================================================
+
+7.1 DASHBOARD — WITH MIN_BALANCE_THRESHOLD INDICATOR
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ G-FLOW     🔔   ◉ ONLINE    │ ← Online status
+├──────────────────────────────┤
+│                              │
+│  [MAP - Live Driver Location]│
+│  - My location (blue pin)    │
+│  - Available orders (icons)  │
+│    🚗 Ride orders (red)      │
+│    🍔 Food orders (orange)   │
+│    📦 Send orders (green)    │
+│                              │
+│  📊 Today's Earnings         │
+│  Rp 285,000 (12 orders)      │
+│                              │
+│  🚗 Vehicle Status           │
+│  ✅ Verified (KYC Passed)    │
+│  ⚠️ SIM expires in 30 days   │
+│  💰 Min Balance: Rp 50,000   │
+│     (FIXED — threshold)      │
+│                              │
+│  📋 Available Orders (5)     │
+│  ┌──────────────────────────┐│
+│  │ 🚗 Ride #12351          ││
+│  │ Pickup: Jl. Sudirman    ││
+│  │ Dropoff: Mall Taman      ││
+│  │ 2.5 km • Rp 75,000      ││
+│  │ [ACCEPT]                ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🍔 Food #12350          ││
+│  │ Pickup: Warung Mak S.   ││
+│  │ Delivery: Jl. Gatot     ││
+│  │ 1.2 km • Rp 8,000       ││
+│  │ [ACCEPT]                ││
+│  └──────────────────────────┘│
+│                              │
+├─ ORDERS ─ EARNINGS ─ RATINGS ┤
+└──────────────────────────────┘
+
+Components:
+  - Live map with driver location
+  - Online/Offline status toggle (top-right)
+  - Earnings summary (today)
+  - Vehicle Status: Verification badge, SIM expiry warning
+  - MIN_BALANCE_THRESHOLD indicator (FIXED)
+  - Available orders list (map pins + list)
+  - Accept button for each order
+
+Data Binding:
+  - GET /drivers/{driver_id}/available-orders → Fetch orders
+  - WebSocket: Real-time order updates
+  - POST /orders/{order_id}/accept → Accept order
+  - GET /users/{user_id}/status → KYC & min_balance_threshold
+
+-------------------------------------------------------------------------------
+
+7.2 DRIVER PROFILE / VEHICLE MANAGEMENT — FIXED: KYC Validation
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      DRIVER PROFILE   │
+├──────────────────────────────┤
+│                              │
+│  👤 Ahmad Dedi               │
+│  ⭐ 4.8 (342 reviews)        │
+│  🏍️ Motorcycle               │
+│                              │
+│  📋 KYC Verification         │
+│  ┌──────────────────────────┐│
+│  │ ✅ Identity Verified     ││
+│  │ ✅ SIM Verified          ││
+│  │ ✅ Vehicle Verified      ││
+│  │ 🟡 SIM expires in 30 days││
+│  └──────────────────────────┘│
+│                              │
+│  🚗 Vehicle Information      │
+│  ┌──────────────────────────┐│
+│  │ Type: Motorcycle         ││
+│  │ Plate: B 1234 XYZ       ││
+│  │ SIM: 1234-5678-9012     ││
+│  │ Expiry: 2025-12-31      ││
+│  │ [EDIT]                   ││
+│  └──────────────────────────┘│
+│                              │
+│  💰 Minimum Balance Threshold│
+│  (FIXED — min_balance_threshold)│
+│  ┌──────────────────────────┐│
+│  │ Current: Rp 50,000       ││
+│  │ [UPDATE]                 ││
+│  └──────────────────────────┘│
+│                              │
+│  💳 Bank Account             │
+│  ┌──────────────────────────┐│
+│  │ Bank: BCA                ││
+│  │ Account: 123-456-789     ││
+│  │ Name: Ahmad Dedi         ││
+│  │ [EDIT]                   ││
+│  └──────────────────────────┘│
+│                              │
+│  [SAVE CHANGES]             │
+└──────────────────────────────┘
+
+Components:
+  - Driver info: Name, rating, vehicle type
+  - KYC Verification status: Identity, SIM, Vehicle
+  - SIM expiry warning
+  - Vehicle info: Type, plate, SIM, expiry (editable)
+  - MIN_BALANCE_THRESHOLD (FIXED): Display and update
+  - Bank account info (for withdrawal)
+  - Save changes button
+
+Data Binding:
+  - GET /users/{user_id} → Fetch driver profile
+  - PUT /users/{user_id} → Update profile
+  - GET /users/{user_id}/kyc-status → KYC verification status
+
+================================================================================
+8️⃣ MERCHANT APP WIREFRAMES — FIXED: Verification Status
+================================================================================
+
+8.1 DASHBOARD — WITH VERIFICATION STATUS INDICATOR
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│☰ G-FLOW    📢 3 Notifications│
+├──────────────────────────────┤
+│                              │
+│  🏪 Warung Mak Surti         │
+│  ⏳ Verification: PENDING    │
+│     (FIXED — status indicator)│
+│                              │
+│  📊 Today's Summary          │
+│  Total Orders: 12            │
+│  Completed: 10               │
+│  Revenue: Rp 480,000         │
+│                              │
+│  🔔 Pending Orders (3)       │
+│  ┌──────────────────────────┐│
+│  │ 🔴 ORDER #12345          ││
+│  │ Just now (0 secs ago)    ││
+│  │                          ││
+│  │ Items:                   ││
+│  │ • 2x Nasi Kuning Spesial ││
+│  │ • 1x Ayam Goreng         ││
+│  │ • 1x Teh Icing           ││
+│  │ Total: Rp 45,000         ││
+│  │ Special: Tidak pedas      ││
+│  │                          ││
+│  │ [CONFIRM]  [REJECT]      ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ 🟡 ORDER #12344          ││
+│  │ 2 mins ago               ││
+│  │                          ││
+│  │ Items:                   ││
+│  │ • 1x Gado-Gado           ││
+│  │ Total: Rp 18,000         ││
+│  │                          ││
+│  │ [CONFIRM]  [REJECT]      ││
+│  └──────────────────────────┘│
+│                              │
+│├─ HOME ─ ORDERS ─ CATALOG ─  │
+│ │ EARNINGS ─ SETTINGS        │
+└──────────────────────────────┘
+
+Components:
+  - Merchant header: Name, verification status badge
+  - VERIFICATION STATUS INDICATOR (FIXED):
+    - PENDING_VERIFICATION: Yellow badge, "Waiting for verification"
+    - ACTIVE: Green badge, "Verified"
+    - SUSPENDED: Red badge, "Suspended"
+  - Summary: Today's orders, completed count, revenue
+  - Pending orders section: Red badge for urgent
+  - Order card: Order number, time, items, total, notes
+  - Action buttons: Confirm, Reject
+
+Data Binding:
+  - GET /merchants/{merchant_id}/orders?status=WAITING
+  - GET /merchants/{merchant_id}/analytics?date=today
+  - PATCH /orders/{order_id}/status → Confirm/reject
+  - WebSocket: Real-time order notifications
+  - GET /merchants/{merchant_id}/status → Verification status
+
+-------------------------------------------------------------------------------
+
+8.2 CATALOG MANAGEMENT — FIXED: Multi-Group Variant Options
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐
+│ ← BACK      CATALOG          │
+├──────────────────────────────┤
+│                              │
+│  📝 Manage Menu Items        │
+│                              │
+│  ┌──────────────────────────┐│
+│  │ [+ ADD NEW ITEM]         ││
+│  └──────────────────────────┘│
+│                              │
+│  🍜 Nasi Kuning Spesial     │
+│  Rp 15,000  •  Available    │
+│  ─── VARIANTS (FIXED) ───   │
+│  ┌──────────────────────────┐│
+│  │ Group: Level Pedas       ││
+│  │ Type: Single Selection    ││
+│  │ Options: 1, 2, 3         ││
+│  │ [EDIT]                   ││
+│  └──────────────────────────┘│
+│  ┌──────────────────────────┐│
+│  │ Group: Extra Topping    ││
+│  │ Type: Multiple Selection ││
+│  │ Options: Cheese (+Rp 5K)││
+│  │          Egg (+Rp 3K)   ││
+│  │ [EDIT]                   ││
+│  └──────────────────────────┘│
+│  [EDIT ITEM]  [REMOVE]      │
+│                              │
+│  🍗 Ayam Goreng              │
+│  Rp 25,000  •  Available    │
+│  No variants configured      │
+│  [ADD VARIANTS]             │
+│                              │
+│  🥤 Teh Icing                │
+│  Rp 5,000  •  Available     │
+│  ─── VARIANTS (FIXED) ───   │
+│  Group: Ice Level           │
+│  Type: Single Selection     │
+│  Options: Normal, Less, No  │
+│  [EDIT]                     │
+└──────────────────────────────┘
+
+Components:
+  - Add new item button
+  - Item list: Name, price, availability
+  - VARIANT GROUPS (FIXED):
+    - Group name, selection type (SINGLE/MULTIPLE)
+    - Options with price adjustments
+    - Edit variant button
+  - Add variants button for items without variants
+  - Edit/Remove item buttons
+
+Data Binding:
+  - GET /merchants/{merchant_id}/items → Fetch catalog
+  - GET /merchants/{merchant_id}/item-options → Fetch variants
+  - POST /merchants/{merchant_id}/items → Add item
+  - PUT /merchants/{merchant_id}/items/{item_id} → Update item
+  - POST /merchants/{merchant_id}/item-options → Add variant group
+  - PUT /merchants/{merchant_id}/item-options/{group_id} → Update variant
+
+================================================================================
+9️⃣ ADMIN WEB PANEL WIREFRAMES
+================================================================================
+
+9.1 MAIN DASHBOARD
+────────────────────────────────────────────────────────────────────────────────
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ G-FLOW ADMIN          🔔 3 Alerts  👤 Admin                               │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  📊 KEY PERFORMANCE INDICATORS                                                │
+│  ┌──────────────┬──────────────┬──────────────┬──────────────┐               │
+│  │ Total        │ Active       │ Daily        │ Active       │               │
+│  │ Revenue      │ Orders       │ Transactions │ Users        │               │
+│  │ Rp 5.2M      │ 47           │ 1,243        │ 8,345        │               │
+│  │ ↑ 12% MoM    │              │              │ ↑ 5.2%       │               │
+│  └──────────────┴──────────────┴──────────────┴──────────────┘               │
+│                                                                                │
+│  🚨 ALERTS & ISSUES                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────┐│
+│  │ 🔴 High Error Rate: /wallets/transfer (2%)                               ││
+│  │ 🟡 Ledger Imbalance Detected: Rp 15,000                                 ││
+│  │ 🟡 Driver #1234 Suspension Pending Review                              ││
+│  └────────────────────────────────────────────────────────────────────────────┘│
+│                                                                                │
+│  📈 REVENUE TREND (Last 30 days)                                             │
+│  [Line Chart - Daily Revenue]                                                │
+│  Peak: Rp 180K (Jun 15)  Avg: Rp 140K/day                                  │
+│                                                                                │
+│  🔄 ORDER STATUS DISTRIBUTION                                                │
+│  Completed: 85%  Cancelled: 10%  Pending: 5%                                │
+│                                                                                │
+│  📋 RECENT DISPUTES (5)                                                      │
+│  1. Order #12345 - Missing Items (Pending)                                  │
+│  2. Order #12340 - Wrong Item (Resolved)                                    │
+│  3. Ride #12339 - High Fare (Investigating)                                 │
+│                                                                                │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+Sidebar Navigation:
+  📊 Dashboard (current)
+  💰 Ledger & Finance
+  👥 User Management
+  📦 Orders
+  🏪 Merchants
+  📈 Reports
+  ⚙️ Settings
+
+-------------------------------------------------------------------------------
+
+9.2 LEDGER AUDIT TRAIL
+────────────────────────────────────────────────────────────────────────────────
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ G-FLOW ADMIN > LEDGER & FINANCE                                               │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  💰 Wallet Ledger Audit Trail                                                │
+│                                                                                │
+│  Filters:                                                                     │
+│  Date: [Jun 1 - Jun 30]  [Apply]                                             │
+│  User: [Search...]                                                            │
+│  Type: [All ▼] Debit, Credit, Transfer                                      │
+│  Reference: [All ▼]                                                          │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │ Date       │ User       │ Type   │ Amount  │ Status                     ││
+│  ├──────────────────────────────────────────────────────────────────────────┤│
+│  │ Jun 30 14:30│ Budi S.    │ CREDIT │ +50K    │ ✅ Settled                 ││
+│  │ Jun 30 13:15│ Ahmad D.   │ CREDIT │ +90K    │ ✅ Settled                 ││
+│  │ Jun 30 12:45│ Budi S.    │ DEBIT  │ -85K    │ ✅ Settled                 ││
+│  │ Jun 30 12:10│ Warung MS  │ CREDIT │ +38K    │ ✅ Settled                 ││
+│  │ ...         │ ...        │ ...    │ ...     │ ...                       ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+│                                                                                │
+│  ✅ Ledger Balance Verification                                              │
+│  Total Debits:  Rp 1,250,000                                                │
+│  Total Credits: Rp 1,250,000                                                │
+│  Status: ✅ BALANCED (100% matched)                                         │
+│                                                                                │
+│  [Export CSV]  [Export PDF]                                                  │
+│                                                                                │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+Components:
+  - Filters: Date range, user, type, reference
+  - Ledger table: Date, user, type, amount, status
+  - Verification summary: Total debit, credit, status
+  - Export buttons: CSV, PDF
+
+Data Binding:
+  - GET /admin/ledger/audit?date_from=&date_to=&...
+  - GET /admin/ledger/balance-check → Verify balance
+
+================================================================================
+🔟 RESPONSIVE DESIGN NOTES
+================================================================================
+
+MOBILE-FIRST APPROACH (360px+)
+────────────────────────────────────────────────────────────────────────────────
+
+Breakpoints:
+  - Mobile: 320px - 767px
+    • Single column layout
+    • Full-width inputs/buttons
+    • Bottom sheet for modals
+    • 44px minimum touch target
+
+  - Tablet: 768px - 1023px
+    • 2 column layout (partially)
+    • Larger font sizes
+
+  - Desktop: 1024px+
+    • Multi-column layouts
+    • Admin dashboard with sidebar
+    • Detailed tables
+
+OFFLINE CAPABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+Critical flows cached:
+  - Recent orders (last 20)
+  - Menu catalog
+  - Wallet balance
+  - User profile
+
+Sync when online:
+  - Real-time order updates
+  - Ledger transactions
+  - Driver location
+
+================================================================================
+📱 COMPONENT LIBRARY SPECIFICATION
+================================================================================
+
+BUTTON VARIANTS
+────────────────────────────────────────────────────────────────────────────────
+
+Primary Button:
+  Background: #2E7D32 (Green)
+  Text: White
+  Padding: 12px 24px
+  Border-radius: 8px
+  Font-weight: 600
+  Min height: 44px (touch target)
+
+Secondary Button:
+  Background: #F5F5F5
+  Text: #212121
+  Border: 1px solid #BDBDBD
+
+Danger Button:
+  Background: #C62828 (Red)
+  Text: White
+
+Disabled:
+  Opacity: 0.5
+  Cursor: not-allowed
+
+INPUT FIELDS
+────────────────────────────────────────────────────────────────────────────────
+
+Text Input:
+  Background: #FAFAFA
+  Border: 1px solid #E0E0E0
+  Border-radius: 6px
+  Padding: 12px 16px
+  Font-size: 14px
+  On focus: Border #2E7D32
+
+Error State:
+  Border-color: #C62828
+  Error message: Red, 12px
+
+CARDS
+────────────────────────────────────────────────────────────────────────────────
+
+Card:
+  Background: White
+  Border-radius: 8px
+  Padding: 16px
+  Box-shadow: 0 1px 3px rgba(0,0,0,0.12)
+  Margin-bottom: 12px
+
+================================================================================
+🎯 SCREEN INVENTORY SUMMARY
+================================================================================
+
+| Module | Screen | Purpose | Key Components | Backend Sync |
+|--------|--------|---------|----------------|--------------|
+| **Auth** | Login | Sign in | Email, password | POST /auth/login |
+| **Auth** | Register | Create account | Name, email, phone, role, driver KYC | POST /auth/signup |
+| **Auth** | OTP | Verify phone | 6-digit OTP | POST /auth/verify-otp |
+| **Customer** | Home | Dashboard | Balance, quick actions, recent orders | GET /wallets/{id}/balance |
+| **Customer** | Book Ride | Ride booking | Location inputs, fare estimate | POST /rides/book |
+| **Customer** | Ride Tracking | Live tracking | Map, driver info, status | GET /rides/{id}/status |
+| **Customer** | Food List | Browse merchants | Map/list view, filters | GET /merchants?nearby=true |
+| **Customer** | Food Detail | Menu | Items, variants, cart | GET /merchants/{id}/menus |
+| **Customer** | Cart | Checkout | Items, payment, version warning | POST /food-orders |
+| **Customer** | Send Create | Multi-stop | Stops with allocated_fare | POST /send/orders/create |
+| **Customer** | Send Tracking | RTS status | Stop status, RTS flow | GET /send/orders/{id} |
+| **Customer** | Wallet | Balance & History | Top-up, withdraw, transactions | GET /ledger?limit=5 |
+| **Driver** | Home | Available orders | Map, orders list, earnings | GET /drivers/{id}/available-orders |
+| **Driver** | Profile | KYC & Vehicle | SIM, license, plate, min_balance | GET /users/{id} |
+| **Merchant** | Dashboard | Pending orders | Order list, verification status | GET /merchants/{id}/orders |
+| **Merchant** | Catalog | Manage menu | Items, variant groups | GET /merchants/{id}/items |
+| **Admin** | Dashboard | Metrics | KPIs, alerts, charts | GET /admin/dashboard |
+| **Admin** | Ledger | Audit trail | Transactions, verification | GET /admin/ledger/audit |
+
+================================================================================
+📌 STATUS CHECKLIST (FINAL — 6 UI FIXES APPLIED)
+================================================================================
+
+- ✅ G-Send Multi-Stop Fare Breakdown: allocated_fare per stop displayed
+- ✅ G-Send Return-to-Sender UI: RETURN_REQUIRED and RETURNED_TO_SENDER statuses
+- ✅ G-Food Multi-Group Variant Options: item_option_groups UI with selection_type
+- ✅ G-Food Menu Versioning Fallback: Version mismatch warning modal
+- ✅ Driver KYC Validation: SIM, license expiry, plate, min_balance_threshold
+- ✅ Merchant Status Transition: PENDING_VERIFICATION to ACTIVE indicator
+- ✅ 100% synchronized with DATABASE SCHEMA v10.4-FINAL
+- ✅ 100% synchronized with LOGIC FLOW v6.1-FINAL
+
+================================================================================
+END OF HALAMAN v2.0-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — LOCKED
+✅ All Gemini Review items addressed
+✅ Synchronized with DATABASE SCHEMA v10.4-FINAL
+✅ Synchronized with LOGIC FLOW v6.1-FINAL
+✅ Ready for Flutter/React Native implementation
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+Last Updated: 2026-08-14 by M. Arif Aulia
+Bismillah — Final Version.

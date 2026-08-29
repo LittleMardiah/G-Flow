@@ -1,0 +1,1249 @@
+================================================================================
+DISASTER RECOVERY PLAN (DRP): G-Flow Super-App Ecosystem (v1.0-FINAL)
+================================================================================
+
+Version:         1.0-FINAL
+Last Updated:    2026-08-14
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — LOCKED FOR DEPLOYMENT
+Next Review:     2026-11-14 (Quarterly)
+
+================================================================================
+📌 BISMILLAH — DRP FINAL VERSION
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+### 1.1 Project Information
+- **Project Name**: G-Flow Super-App Ecosystem
+- **Owner/Team**: M. Arif Aulia (Solo Developer + Cloud Infrastructure)
+- **Last Updated**: 2026-08-14
+- **Next Review Date**: 2026-11-14
+- **Version**: 1.0-FINAL
+
+### 1.2 DRP Objectives
+✅ Minimize downtime (<1 hour critical, <4 hours high-impact)
+✅ Protect financial data integrity (zero ledger loss)
+✅ Ensure business continuity (customer orders not lost)
+✅ Establish clear recovery procedures (step-by-step playbooks)
+✅ Define roles & escalation (solo dev + cloud provider support)
+
+### 1.3 Key Metrics
+
+| Metric | Value | Justification |
+|--------|-------|---------------|
+| **RTO (Critical)** | 1 hour | Financial system unavailability unacceptable |
+| **RTO (High)** | 4 hours | Service degradation acceptable short-term |
+| **RTO (Medium)** | 24 hours | Non-critical operations, manual workaround |
+| **RPO (Financial)** | 0 minutes | Ledger entries immutable, zero loss |
+| **RPO (Orders)** | 5 minutes | Supabase auto-backup every 5min |
+| **RPO (Configs)** | 1 hour | Git-tracked, version-controlled |
+| **Backup Frequency** | Hourly automated + daily manual (Supabase) | High-transaction environment |
+| **Retention Period** | 30 days (Supabase), 90 days (logs) | Regulatory + incident investigation |
+
+================================================================================
+2. SCOPE & SYSTEMS INVENTORY
+================================================================================
+
+### 2.1 In Scope
+
+✅ **Database Layer**
+  - Primary: Supabase PostgreSQL 15+
+  - Schema: 25 tables (users, wallets, orders, ledger_entries, etc.)
+  - Backup: Supabase automated + manual snapshots
+
+✅ **Application Layer**
+  - Backend: Golang binary (single modular monolith)
+  - Hosting: Render.com (free tier)
+  - Deployment: Docker container + graceful shutdown
+
+✅ **API Services**
+  - RESTful API (5 modules: wallet, ride, food, send, admin)
+  - Rate limiting via Redis
+  - Idempotency cache (Redis-backed)
+
+✅ **Data Layer**
+  - Cache: Redis 7+ (Render or Upstash)
+  - Persistent ledger (PostgreSQL)
+  - Session storage (Redis)
+
+✅ **Authentication & Authorization**
+  - Supabase Auth (JWT RS256)
+  - RLS policies (PostgreSQL)
+  - RBAC enforcement
+
+✅ **Mobile & Web**
+  - Mobile app: Flutter (native iOS/Android)
+  - Admin web: React (Next.js)
+  - Hosting: Firebase (mobile), Vercel (web)
+
+### 2.2 Out of Scope (V1.0)
+
+❌ **Third-Party Gateways**
+  - Reason: V1.0 uses internal SIMULATED payment (no real Stripe/GCash)
+  - Recovery: Payment simulation can be reset via database
+
+❌ **Real-Time WebSocket**
+  - Reason: Uses REST polling instead (acceptable for MVP)
+  - Recovery: Fallback to polling is automatic
+
+❌ **Push Notifications (FCM/APNS)**
+  - Reason: Out of scope for V1.0
+  - Recovery: Not critical for core functionality
+
+❌ **Advanced ML/Surge Pricing**
+  - Reason: Static fare calculation only
+  - Recovery: Hardcoded formulas (no external dependencies)
+
+### 2.3 Infrastructure Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CUSTOMER / DRIVER / MERCHANT                 │
+│                    (Mobile: Flutter + Web: React)               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                ┌──────────▼──────────┐
+                │  HTTPS / TLS 1.3    │
+                └──────────┬──────────┘
+                           │
+        ┌──────────────────┴──────────────────┐
+        │                                     │
+  ┌─────▼──────┐                      ┌──────▼──────┐
+  │  Render.com│                      │  Supabase   │
+  │ (Go Binary)│                      │ (PostgreSQL)│
+  │   Port 80  │                      │             │
+  └─────┬──────┘                      └──────┬──────┘
+        │                                     │
+    ┌───▼────────────────────────────────────▼──┐
+    │  Gin Router (HTTP)                       │
+    │  - /wallets, /rides, /food, /send        │
+    │  - /admin, /auth, /health                │
+    └───┬────────────────────────────────────┬──┘
+        │                                    │
+   ┌────▼─────┐                       ┌─────▼────┐
+   │ Redis    │                       │ pgxpool  │
+   │ (Cache + │◄──────────────────────│(15 conns)│
+   │ Locks)   │                       │          │
+   └──────────┘                       └──────────┘
+        ▲
+        │
+        └─ Upstash (Managed Redis on Render)
+```
+
+**Components:**
+- Web Layer: Render.com (single instance, graceful shutdown)
+- Database: Supabase PostgreSQL (auto-backup hourly)
+- Cache: Redis (Upstash managed or local)
+- Application Server: Gin Gonic (single binary)
+- Load Balancer: Render native (simple routing)
+- DNS: Render domain or custom (failover via IP change)
+
+================================================================================
+3. DISASTER SCENARIOS & RISK ASSESSMENT
+================================================================================
+
+### 3.1 Disaster Scenario Matrix
+
+| # | Scenario | Severity | RTO | RPO | Likelihood | Business Impact |
+|---|----------|----------|-----|-----|------------|-----------------|
+| 1 | Database corruption (ledger) | CRITICAL | 1h | 0m | Low | Complete financial data loss |
+| 2 | Primary DB complete failure | CRITICAL | 1h | 5m | Medium | Service unavailable + data loss |
+| 3 | Ledger imbalance detected | CRITICAL | 30m | 0m | Low | Financial audit failure |
+| 4 | Backend binary crash | HIGH | 2h | 5m | Medium | Service unavailable (stateless) |
+| 5 | Redis down (cache/locks) | HIGH | 30m | N/A | Medium | Degraded performance, no deadlock protection |
+| 6 | Render instance out of memory | HIGH | 1h | N/A | Medium | OOM kill, restart |
+| 7 | Race condition exploit (10 drivers 1 order) | CRITICAL | 30m | 1m | Low | Double assignment, refund needed |
+| 8 | API rate limiting bypass (DDoS) | HIGH | 1h | N/A | Medium | Service degradation |
+| 9 | Data breach (PII exposure) | CRITICAL | Immediate | N/A | Low | Legal/compliance breach |
+| 10 | Accidental data deletion (human error) | HIGH | 2h | 5m | Low | Data recovery from backup |
+
+### 3.2 Severity Levels Definition
+
+**CRITICAL** (RTO: < 1 hour, RPO: 0 data loss)
+- Primary database complete failure / data corruption
+- Ledger entries inconsistency (SUM DEBIT ≠ SUM CREDIT)
+- Race condition causing double-spending
+- Data breach (customer PII exposed)
+- Authentication system unavailable
+- All user balances incorrect
+
+**HIGH** (RTO: 2-4 hours, RPO: ≤ 5 minutes)
+- Backend service crash (recoverable)
+- Redis down (cache layer, fallback available)
+- Read replica failure (if applicable)
+- API response time degradation (> 5s)
+- Partial data corruption (one table)
+
+**MEDIUM** (RTO: 4-24 hours, RPO: ≤ 1 hour)
+- Admin portal unavailable (non-customer-facing)
+- Analytics service down
+- Non-critical microservice failure
+- Configuration management issues
+
+**LOW** (RTO: > 24 hours, RPO: ≤ 1 day)
+- Development/staging environment down
+- Documentation unavailable
+- Cosmetic UI issues
+
+================================================================================
+4. BACKUP & REDUNDANCY STRATEGY
+================================================================================
+
+### 4.1 Backup Architecture
+
+#### 4.1.1 Database Backups (Supabase PostgreSQL)
+
+```
+Strategy: Automated Snapshots (Primary) + Manual Backup (Secondary)
+
+Frequency:
+  - Automatic: Hourly (Supabase native)
+  - Manual: Daily (developer initiated, CLI)
+  - Point-in-time: 7-day restore window (Supabase Pro feature)
+
+Retention:
+  - Automatic: 7 days (Supabase default)
+  - Manual: 30 days (developer responsibility)
+
+Storage:
+  - Primary: Supabase managed storage (AWS S3)
+  - Secondary: Developer GitHub repo (schema DDL only, not data)
+  - Backup Verification: Weekly restore test (staging environment)
+
+RPO: 5 minutes (hourly snapshots guarantee no more than 1 hour loss)
+RTO: 15 minutes (restore from snapshot)
+```
+
+**Backup Implementation:**
+
+```bash
+# Automatic (Supabase handles):
+- Hourly snapshots via Supabase dashboard
+- Retention: 7 days (rolling)
+
+# Manual Backup (Daily):
+pg_dump -h db.supabase.co -U postgres -d g_flow_prod > backup_$(date +%Y%m%d).sql
+
+# Point-in-Time Recovery (within 7 days):
+- Via Supabase dashboard: Create backup from timestamp
+- Or CLI: supabase db push --db-url postgresql://...
+
+# Restore Procedure:
+psql -h restore-instance.supabase.co -U postgres -d g_flow_restored < backup_20260814.sql
+```
+
+#### 4.1.2 Application & Code Backups
+
+```
+Version Control: GitHub (public repo — no secrets)
+  - Repository: https://github.com/[user]/g-flow-backend
+  - Backup Frequency: Real-time (every git push)
+  - Mirror: GitHub native redundancy (3 geographies)
+
+Configuration Files:
+  - Backend config: Render environment variables (backed up via docs)
+  - Database schema: DATABASE_SCHEMA.sql (version-controlled in Git)
+  - API contract: API_CONTRACT.md (version-controlled in Git)
+
+Secrets Management:
+  - DATABASE_URL: Render Secret (encrypted)
+  - REDIS_URL: Render Secret (encrypted)
+  - JWT_SECRET: Render Secret (encrypted)
+  - Backup: Encrypted vault (developer local only, never committed)
+
+Recovery: Clone from GitHub + set Render environment vars
+```
+
+#### 4.1.3 Ledger Entries Backup (Immutable)
+
+```
+Strategy: Continuous Archival (Postgres native)
+
+Frequency: Real-time (every transaction)
+  - Ledger entries appended only (INSERT, never UPDATE except is_reversed)
+  - is_reversed flag immutable after reversal
+
+Retention:
+  - Active ledger: Indefinitely in main table
+  - Archive: 90-day snapshot dump (for audit trail)
+
+Verification: Nightly job
+  SELECT SUM(amount) FROM ledger_entries WHERE entry_type='DEBIT' as debit,
+         SUM(amount) FROM ledger_entries WHERE entry_type='CREDIT' as credit;
+  IF debit != credit THEN ALERT "Ledger Imbalance"
+
+Recovery: Immutable ledger = no recovery needed (integrity guaranteed)
+```
+
+### 4.2 Redundancy & High Availability
+
+| Component | Redundancy Type | Implementation | Failover Time |
+|-----------|-----------------|-----------------|---------------|
+| Database | Single (Auto-failover via Supabase) | Primary + automated backups | 15 min |
+| Application | Single (No multi-region V1.0) | Graceful restart on crash | 5 min |
+| Redis Cache | Single (Optional failover via Upstash) | Managed service + AOF persistence | 2 min |
+| API Health Check | Auto-restart on failure | Render health check + restart policy | 30 sec |
+| DNS | Render native | Automatic IP routing | Instant |
+
+**Failover Mechanisms:**
+
+1. **Database Failover (Supabase):**
+   - Supabase manages replication (async)
+   - On primary failure: Failover to replica (automatic)
+   - RTO: 15 minutes
+   - Data loss: ≤ 5 minutes (RPO)
+
+2. **Application Failover (Render):**
+   - Health check: GET /health every 60s
+   - On failure: Automatic container restart
+   - RTO: 2 minutes (cold start)
+   - Stateless → no data loss
+
+3. **Redis Failover (Upstash):**
+   - Managed service (provider handles failover)
+   - AOF persistence enabled
+   - RTO: < 2 minutes
+   - Data loss: Minimal (persisted to disk)
+
+4. **DNS Failover (Manual):**
+   - If Render completely down:
+     * Change DNS A record to backup IP
+     * Or switch to GitHub Pages static fallback
+   - RTO: 10 minutes (DNS TTL 300s + propagation)
+
+### 4.3 Geographic Distribution
+
+```
+Primary Region: US-East (Render.com / AWS Virginia)
+  - Backend: render.com auto-scaling (shared free tier)
+  - Database: Supabase PostgreSQL (AWS US-EAST-1)
+  - Cache: Upstash Redis (AWS US-EAST-1)
+  - Synchronization: Real-time (same region)
+
+Secondary Region: N/A (V1.0 single region)
+  - Roadmap for V1.1: Add secondary region backup
+  - Option: Supabase read replica (EU region)
+  - RTO if Primary Fails: 1 hour (restore from backup)
+
+Data Residency: US (GDPR not applicable, Indonesia data OK)
+Backup Locations: AWS multi-region (Supabase native)
+```
+
+================================================================================
+5. DISASTER RESPONSE PLAYBOOKS
+================================================================================
+
+### 5.1 SCENARIO 1: DATABASE COMPLETE FAILURE / CORRUPTION
+
+**Severity**: CRITICAL | **RTO**: 1 hour | **RPO**: 5 minutes
+
+**Symptoms / Detection:**
+- Alert: Database connection refused (pgx timeout)
+- Monitoring: /health endpoint returns database error
+- Threshold: No successful queries for 30 seconds
+
+**Impact Assessment:**
+- Affected Systems: All (wallet, rides, food, send, auth)
+- User Impact: Complete service unavailability
+- Business Impact: Revenue loss, user trust damage, SLA breach
+
+**Immediate Actions (First 15 minutes):**
+1. **Acknowledge Alert:**
+   - PagerDuty/Slack alert fired
+   - Incident Commander opens incident ticket
+   - Severity: P0 (all hands)
+
+2. **Confirm Issue:**
+   ```bash
+   # Test database connectivity
+   psql -h db.supabase.co -U postgres -c "SELECT 1"
+   
+   # Check Supabase status dashboard
+   # https://supabase-status.com
+   
+   # Verify error in application logs
+   # Render dashboard → Logs tab
+   ```
+
+3. **Notify Team:**
+   - Post to #incidents Slack channel
+   - Message: "P0 Database Failure - Starting recovery"
+
+**Recovery Steps:**
+
+1. **Preparation Phase (5 minutes):**
+   - [ ] Verify backup integrity (most recent snapshot)
+   - [ ] Check Supabase restore point (within 7 days)
+   - [ ] Stop application servers (Render)
+   - [ ] Allocate new database instance (if needed)
+
+2. **Execution Phase (15 minutes):**
+   
+   ```bash
+   # Step 1: Identify latest backup
+   # Via Supabase dashboard:
+   # Settings → Backups → List (select hourly snapshot)
+   
+   # Step 2: Create new restore instance
+   supabase db restore --backup-id <backup-id> --restore-to <new-db-instance>
+   
+   # Step 3: Validate restore
+   psql -h <new-instance>.supabase.co -U postgres -d g_flow \
+     -c "SELECT COUNT(*) FROM ledger_entries"
+   
+   # Step 4: Verify ledger balance
+   psql -h <new-instance>.supabase.co -U postgres -d g_flow << EOF
+   SELECT
+     SUM(CASE WHEN entry_type='DEBIT' THEN amount ELSE 0 END) as total_debit,
+     SUM(CASE WHEN entry_type='CREDIT' THEN amount ELSE 0 END) as total_credit
+   FROM ledger_entries;
+   EOF
+   
+   # Step 5: Update APPLICATION connection string
+   # Via Render dashboard: Environment → DATABASE_URL
+   # Set to: postgresql://user:pass@<new-instance>.supabase.co/g_flow
+   
+   # Step 6: Restart application
+   # Via Render dashboard: Deploy → Restart
+   ```
+
+3. **Validation Phase (10 minutes):**
+   - [ ] /health endpoint returns 200 OK
+   - [ ] GET /wallets/{id}/balance returns correct balance
+   - [ ] Verify ledger (sum debit = sum credit)
+   - [ ] Run smoke tests (login, book order, create wallet)
+   - [ ] Monitor error rate < 0.1%
+
+4. **Post-Recovery:**
+   - [ ] Verify data integrity (row counts match backup)
+   - [ ] Check recent transactions (last 10 orders)
+   - [ ] Monitor metrics for 30 minutes (latency, errors)
+   - [ ] Notify customers (if > 1 hour downtime)
+   - [ ] Document incident in #incidents
+   - [ ] RCA due within 24 hours
+
+**Rollback Plan:**
+- Condition: Restored database has data corruption
+- Action: Restore from earlier backup (7-day window)
+- Impact: Data loss ≤ 1 hour
+
+**Expected RTO**: 1 hour | **Expected RPO**: 5 minutes
+
+---
+
+### 5.2 SCENARIO 2: LEDGER IMBALANCE DETECTED (SUM DEBIT ≠ SUM CREDIT)
+
+**Severity**: CRITICAL | **RTO**: 30 minutes | **RPO**: 0 minutes
+
+**Symptoms / Detection:**
+- Alert: Nightly ledger verification job fails
+- Error: "Ledger imbalance detected: debit=X, credit=Y"
+- Monitoring: Audit trail inconsistency
+- Threshold: Any discrepancy > Rp 0
+
+**Impact Assessment:**
+- Affected Systems: Financial ledger (all transactions)
+- User Impact: Wallet balances potentially incorrect
+- Business Impact: Audit failure, regulatory breach, loss of customer trust
+
+**Immediate Actions (First 15 minutes):**
+1. Incident Commander notified
+2. Check error logs for root cause
+3. Query ledger_entries for orphaned entries
+4. Freeze account modifications (stop accepting orders) — optional
+
+**Recovery Steps:**
+
+1. **Diagnosis (10 minutes):**
+   
+   ```sql
+   -- Query 1: Identify imbalance
+   SELECT
+     (SELECT SUM(amount) FROM ledger_entries WHERE entry_type='DEBIT') as total_debit,
+     (SELECT SUM(amount) FROM ledger_entries WHERE entry_type='CREDIT') as total_credit,
+     (SELECT SUM(amount) FROM ledger_entries WHERE entry_type='DEBIT') -
+     (SELECT SUM(amount) FROM ledger_entries WHERE entry_type='CREDIT') as difference;
+   
+   -- Query 2: Find orphaned DEBIT entries (no matching CREDIT)
+   SELECT * FROM ledger_entries
+   WHERE entry_type='DEBIT'
+   AND reference_id NOT IN (
+     SELECT reference_id FROM ledger_entries WHERE entry_type='CREDIT'
+   );
+   
+   -- Query 3: Find orphaned CREDIT entries
+   SELECT * FROM ledger_entries
+   WHERE entry_type='CREDIT'
+   AND reference_id NOT IN (
+     SELECT reference_id FROM ledger_entries WHERE entry_type='DEBIT'
+   );
+   
+   -- Query 4: Check for duplicate entries
+   SELECT reference_id, entry_type, COUNT(*) as count
+   FROM ledger_entries
+   GROUP BY reference_id, entry_type
+   HAVING COUNT(*) > 1;
+   ```
+
+2. **Identify Root Cause:**
+   - Missing ledger entry (incomplete transaction)
+   - Duplicate entry (idempotency cache missed)
+   - Corrupted data (manual database edit)
+   - Bug in settlement trigger (check recent deployments)
+
+3. **Execution Phase (15 minutes):**
+
+   **Case A: Missing CREDIT entry**
+   ```sql
+   -- Insert missing CREDIT
+   INSERT INTO ledger_entries (
+     wallet_id, entry_type, amount, reference_type, reference_id, created_at
+   ) VALUES (
+     'uuid-wallet-123', 'CREDIT', 500000, 'RIDE_SETTLEMENT', 'order-id-456', NOW()
+   );
+   ```
+
+   **Case B: Duplicate entry (remove)**
+   ```sql
+   -- Soft delete (mark as reversed)
+   UPDATE ledger_entries
+   SET is_reversed = TRUE
+   WHERE id = 'uuid-duplicate-entry'
+   AND entry_type = 'CREDIT';
+   ```
+
+   **Case C: Transaction in wrong direction**
+   ```sql
+   -- Create reversal entry
+   INSERT INTO ledger_entries (
+     wallet_id, entry_type, amount, reference_type, reference_id, is_reversed
+   ) VALUES (
+     'uuid-wallet-123', 'DEBIT', 500000, 'CORRECTION', 'ref-123', FALSE
+   );
+   ```
+
+4. **Validation Phase (5 minutes):**
+   - [ ] Rerun ledger balance query (must equal 0)
+   - [ ] Verify affected wallets (balance_after correct)
+   - [ ] Check transaction receipt (amount matches)
+   - [ ] Document correction in admin_actions table
+
+5. **Post-Recovery:**
+   - [ ] Admin audit of changes (who, what, when)
+   - [ ] Customer notification (if > Rp 10,000 affected)
+   - [ ] Investigate code bug (update LOGIC_FLOW.md if needed)
+   - [ ] Run nightly job again (verify no new imbalances)
+
+**Rollback Plan:**
+- Condition: Correction created another imbalance
+- Action: Reverse the correction, investigate deeper
+- Escalate to CTO/auditor
+
+**Expected RTO**: 30 minutes | **Expected RPO**: 0 minutes (immutable ledger)
+
+---
+
+### 5.3 SCENARIO 3: RACE CONDITION — 10 DRIVERS ACCEPT 1 ORDER
+
+**Severity**: CRITICAL | **RTO**: 30 minutes | **RPO**: 1 minute
+
+**Symptoms / Detection:**
+- Alert: Order assigned to multiple drivers
+- Monitoring: ride_orders.driver_id field updated multiple times
+- Error: "Multiple drivers assigned to order"
+- User Report: 2 drivers showing up
+
+**Impact Assessment:**
+- Affected Systems: Ride matching engine
+- User Impact: Confusion, both drivers navigating to pickup
+- Business Impact: Cancellation fees, customer refund, trust loss
+
+**Immediate Actions (First 15 minutes):**
+1. Incident Commander + Ride service owner notified
+2. Query affected order details
+3. Identify which driver completed delivery (or both did nothing)
+4. Calculate refund amount
+
+**Recovery Steps:**
+
+1. **Diagnosis (5 minutes):**
+   
+   ```sql
+   -- Find order with multiple drivers
+   SELECT * FROM ride_orders WHERE status = 'DRIVER_ASSIGNED'
+   AND driver_id IN (SELECT driver_id FROM ride_orders GROUP BY driver_id HAVING COUNT(*) > 1);
+   
+   -- Check ride_order_events for multiple assignment attempts
+   SELECT * FROM ride_order_events
+   WHERE order_id = 'uuid-order-123'
+   AND event_type = 'DRIVER_ASSIGNED'
+   ORDER BY created_at;
+   ```
+
+2. **Identify Actual Driver (10 minutes):**
+   - Query: Which driver has location updates after assignment?
+   - Query: Which driver completed delivery (status=COMPLETED)?
+   - If both: Check payment settlement (who received earnings?)
+   - If neither: Cancel both, refund customer
+
+3. **Execution Phase (10 minutes):**
+
+   **Case A: One driver completed delivery (correct)**
+   ```sql
+   -- Keep this driver, refund other driver's fee
+   UPDATE ride_orders SET driver_id = 'uuid-driver-correct' WHERE id = 'order-uuid';
+   
+   -- Refund incorrect driver's cancellation fee
+   INSERT INTO ledger_entries (wallet_id, entry_type, amount, reference_type, reference_id)
+   VALUES ('uuid-driver-wrong-wallet', 'CREDIT', 5000, 'RACE_CORRECTION', 'order-uuid');
+   INSERT INTO ledger_entries (wallet_id, entry_type, amount, reference_type, reference_id)
+   VALUES ('uuid-platform-wallet', 'DEBIT', 5000, 'RACE_CORRECTION', 'order-uuid');
+   ```
+
+   **Case B: Both drivers showed up (partial delivery)**
+   ```sql
+   -- Cancel order, refund all fees
+   UPDATE ride_orders SET status = 'CANCELLED' WHERE id = 'order-uuid';
+   
+   -- Refund escrow amount + driver fees
+   INSERT INTO ledger_entries (wallet_id, entry_type, amount, reference_type)
+   VALUES ('uuid-customer-wallet', 'CREDIT', 60000, 'RACE_CANCEL_REFUND');
+   INSERT INTO ledger_entries (wallet_id, entry_type, amount, reference_type)
+   VALUES ('uuid-system-escrow', 'DEBIT', 60000, 'RACE_CANCEL_REFUND');
+   ```
+
+4. **Validation Phase (5 minutes):**
+   - [ ] Driver count = 1 per order
+   - [ ] Ledger entries balanced
+   - [ ] Customer notified of resolution
+   - [ ] Ledger entries match cancellation fee rules
+
+5. **Post-Recovery:**
+   - [ ] Investigate pessimistic lock failure (why 2 drivers got assignment?)
+   - [ ] Check statement_timeout (3000ms still applied?)
+   - [ ] Verify deadlock retry logic
+   - [ ] Run concurrent driver test (k6 script with 10 drivers)
+   - [ ] Update DRP.md with findings
+
+**Rollback Plan:**
+- If refund creates new imbalance: Reverse refund, escalate to auditor
+- If multiple drivers still showing: Manual database correction by DBA
+
+**Expected RTO**: 30 minutes | **Expected RPO**: 1 minute (audit trail preserved)
+
+---
+
+### 5.4 SCENARIO 4: REDIS CACHE DOWN (LOCKS / IDEMPOTENCY UNAVAILABLE)
+
+**Severity**: HIGH | **RTO**: 30 minutes | **RPO**: N/A (cache, not persistent)
+
+**Symptoms / Detection:**
+- Alert: Redis connection refused
+- Monitoring: idempotency_cache operations failing
+- Error: "Cannot acquire distributed lock"
+- Performance: Duplicate requests not detected
+
+**Impact Assessment:**
+- Affected Systems: Idempotency, rate limiting, distributed locks
+- User Impact: Duplicate wallet transfers possible, transfers slow
+- Business Impact: Potential duplicate charges, performance degradation
+
+**Immediate Actions (First 15 minutes):**
+1. Check Redis service status (Upstash dashboard or local)
+2. Verify DATABASE_URL still working (fallback to PostgreSQL for idempotency)
+3. Note: Application can degrade gracefully (idempotency cache optional)
+
+**Recovery Steps:**
+
+1. **Immediate Workaround (2 minutes):**
+   - Redis down → Application continues without distributed locks
+   - Fallback: Store idempotency keys in PostgreSQL (slower, but safe)
+   - Rate limiting degraded (fail-open, allow requests)
+   - Alert users: "Experiencing slow transfers, please don't retry"
+
+2. **Diagnosis (5 minutes):**
+   ```bash
+   # Check if Upstash/Redis is responding
+   redis-cli -h <redis-host> -p 6379 PING
+   
+   # If timeout: Service is down
+   # Check Upstash dashboard for alerts
+   # Check Render logs for connection errors
+   ```
+
+3. **Execution Phase (5 minutes):**
+
+   **Option A: Restart Redis (Upstash managed)**
+   - Via Upstash dashboard: Restart button
+   - Wait 30 seconds for recovery
+   - Test: redis-cli PING → PONG
+
+   **Option B: Reconnect from Application**
+   ```bash
+   # Render: Restart backend service
+   # Via Render dashboard: Deploy → Restart
+   # New Redis connection attempt
+   ```
+
+4. **Validation Phase (5 minutes):**
+   - [ ] Redis PING responds
+   - [ ] Idempotency keys can be stored/retrieved
+   - [ ] Rate limiting responsive
+   - [ ] Transfer operations complete without duplicates
+
+5. **Post-Recovery:**
+   - [ ] Monitor Redis metrics (latency, eviction rate)
+   - [ ] Check PostgreSQL for leaked idempotency entries
+   - [ ] Verify no duplicate transactions during downtime
+   - [ ] Update Redis monitoring alerts
+
+**Rollback Plan:**
+- N/A (cache degradation is acceptable)
+- Fallback: Use PostgreSQL idempotency_cache table
+
+**Expected RTO**: 30 minutes | **Expected RPO**: N/A
+
+---
+
+### 5.5 SCENARIO 5: BACKEND APPLICATION CRASH (OUT OF MEMORY / PANIC)
+
+**Severity**: HIGH | **RTO**: 5 minutes (auto-restart) | **RPO**: N/A
+
+**Symptoms / Detection:**
+- Alert: /health endpoint returns 500 or timeout
+- Monitoring: No HTTP responses for 30 seconds
+- Error: "OOM killer invoked" in Render logs
+- Status: Render shows "Crashed" state
+
+**Impact Assessment:**
+- Affected Systems: API services (all endpoints)
+- User Impact: Cannot book orders, check balance, complete deliveries
+- Business Impact: Order queue backlog, customer frustration
+
+**Immediate Actions (First 5 minutes):**
+1. Render auto-restarts container (30 seconds)
+2. Monitor /health endpoint recovery
+3. Check logs for crash reason
+
+**Recovery Steps:**
+
+1. **Automatic Recovery (30 seconds):**
+   - Render health check: GET /health every 60s
+   - On failure: Automatic container restart
+   - Stateless application → no data loss
+
+2. **If Auto-Restart Fails (5 minutes):**
+   ```bash
+   # Manual restart via Render dashboard
+   Render Dashboard → Services → g-flow-api → Restart
+   
+   # Or via CLI:
+   render restart --service-id <service-id>
+   ```
+
+3. **Diagnosis (10 minutes):**
+   ```bash
+   # Check crash logs
+   Render Dashboard → Logs (search "panic" or "OOM")
+   
+   # Check memory usage history
+   Render Dashboard → Metrics → Memory (peak usage)
+   
+   # Identify cause:
+   - OOM: Increase plan RAM (or optimize code)
+   - Panic: Debug logs for stack trace
+   - Segfault: Go runtime issue (unlikely)
+   ```
+
+4. **Long-Term Fix:**
+   - If OOM: Optimize queries (add indexes), reduce cache size
+   - If panic: Debug panic log, deploy fix
+   - If resource exhausted: Upgrade Render plan (from free to paid)
+
+5. **Validation Phase (5 minutes):**
+   - [ ] /health returns 200 OK
+   - [ ] API responds to requests
+   - [ ] No pending errors in logs
+   - [ ] Error rate normalized
+
+**Rollback Plan:**
+- N/A (stateless service)
+- Fallback: Restart service again
+
+**Expected RTO**: 5 minutes (auto) or 15 minutes (manual) | **Expected RPO**: N/A
+
+---
+
+### 5.6 SCENARIO 6: DATA BREACH (CUSTOMER PII EXPOSED)
+
+**Severity**: CRITICAL | **RTO**: Immediate isolation | **RPO**: N/A
+
+**Symptoms / Detection:**
+- Alert: Unusual database queries (SELECT user.national_id, password_hash)
+- Monitoring: Large data exports detected
+- External: Customer reports receiving phishing emails with leaked data
+- Security: 3rd party reports credit card numbers in dark web
+
+**Impact Assessment:**
+- Affected Systems: Users, wallets, personal data
+- User Impact: Identity theft, financial fraud
+- Business Impact: Legal liability, regulatory fines, shutdown risk
+
+**Immediate Actions (First 15 minutes):**
+1. **Isolation (5 minutes):**
+   - Revoke all API tokens (force re-login)
+   - Freeze all accounts temporarily
+   - Stop accepting new orders
+   - Enable emergency mode (reduced functionality)
+
+2. **Investigation (10 minutes):**
+   ```sql
+   -- Check access logs for unusual queries
+   SELECT * FROM admin_actions WHERE created_at > NOW() - INTERVAL '1 hour'
+   ORDER BY created_at DESC;
+   
+   -- Check for data export attempts
+   SELECT * FROM pg_stat_statements WHERE query LIKE '%SELECT%'
+   ORDER BY mean_time DESC LIMIT 10;
+   ```
+
+3. **Containment (15 minutes):**
+   - Change all database passwords (Supabase)
+   - Revoke all API keys (Render env vars)
+   - Isolate database (firewall rules)
+   - Enable WAF rules to block suspicious IPs
+
+**Recovery Steps:**
+
+1. **Forensic Analysis (1-2 hours):**
+   - Determine breach scope (which PII exposed?)
+   - Identify attack vector (SQL injection? RLS bypass?)
+   - Get timeline of access
+   - Preserve logs for legal discovery
+
+2. **Notification (24 hours):**
+   - GDPR/Local regulations require customer notification
+   - Legal team drafts notification
+   - Customer communication via email + SMS
+   - Status page update
+
+3. **Remediation (1 week):**
+   - Fix vulnerability (patch code, add RLS, improve WAF)
+   - Reset all passwords (force password change)
+   - Rotate encryption keys
+   - Audit all third-party integrations
+
+4. **Validation:**
+   - [ ] No re-breach indicators in logs
+   - [ ] All vulnerabilities patched
+   - [ ] Customer notified with remediation steps
+   - [ ] Compliance review passed
+
+**Escalation:**
+- Immediately contact CTO + Legal team
+- Notify hosting provider (Render, Supabase)
+- Consider contacting law enforcement (high-value breach)
+
+**Expected RTO**: Immediate | **Expected RPO**: N/A (containment)
+
+================================================================================
+6. ROLES, RESPONSIBILITIES & ESCALATION
+================================================================================
+
+### 6.1 Incident Response Team (Solo Dev + Outsourced)
+
+| Role | Name/Contact | Responsibilities | Escalation |
+|------|--------------|------------------|-----------|
+| **Incident Commander** | M. Arif Aulia (Solo Dev) | Coordinate recovery, decision-making | CTO (external) if RTO exceeded |
+| **Database Admin** | Supabase Support (SLA: 1h) | Database recovery, backup restoration | Supabase Premium if P0 |
+| **Infrastructure** | Render Support (SLA: 2h) | Server restarts, scaling, failover | Render escalation queue |
+| **Application Lead** | M. Arif Aulia | Debugging, code rollback, deployment | GitHub CI/CD logs review |
+| **Security Lead** | (External consultant) | Breach response, forensics | Law enforcement if needed |
+| **Communications** | M. Arif Aulia + Business Partner | Customer notifications, status page | Legal team for formal statements |
+
+### 6.2 Escalation Path
+
+```
+Incident Detected
+    ↓
+Level 0 (On-Call: M. Arif Aulia)
+  - Acknowledge alert
+  - Run immediate playbook
+  - RTO < 30 min?
+    ├─ YES → Resolve, document
+    └─ NO → Level 1
+    ↓
+Level 1 (Technical Lead / CTO)
+  - Escalation trigger: RTO exceeded by 15 min
+  - Review playbook execution
+  - Authorize emergency procedures
+    ├─ Database restore from backup?
+    ├─ Rollback to previous version?
+    ├─ Failover to secondary region?
+    └─ Activate Disaster Recovery Team
+    ↓
+Level 2 (Management / Stakeholders)
+  - Escalation trigger: RTO exceeded by 1 hour
+  - Executive decision (cost vs. recovery time)
+  - Customer communication approval
+  - Media/PR handling (if major breach)
+```
+
+**Escalation Triggers:**
+- RTO exceeded by 15 minutes
+- Data loss confirmed (> Rp 10,000)
+- Regulatory/legal issue detected
+- Multiple critical systems affected
+- Customer churn risk > 5%
+
+### 6.3 Communication Plan
+
+**Internal Communications:**
+- Channel: Slack #incidents (critical), Slack #g-flow-team (high), Email (medium)
+- Update Frequency:
+  * P0 (CRITICAL): Every 5 minutes
+  * P1 (HIGH): Every 15 minutes
+  * P2 (MEDIUM): Every 1 hour
+- Template: "[Status] [RTO] [What's broken] [What we're doing] [Next update time]"
+
+Example:
+```
+🚨 [ONGOING] [RTO: 45 min] Database down, restoring from 2026-08-14 11:00 backup.
+Currently in validation phase. Next update: 12:30.
+```
+
+**External Communications:**
+- Customer Notification:
+  * Channel: Email (primary), In-app banner (secondary), SMS (emergencies)
+  * Timing: Within 30 minutes of detection
+  * Frequency: Every 30 minutes during outage
+  * Template: "We're experiencing issues with [service]. We're actively working on recovery. ETA: [time]"
+
+- Status Page:
+  * Tool: Render status (or separate Statuspage.io for V1.1)
+  * Update: Every 15 minutes
+  * Incident: Link to status page in customer emails
+
+- Social Media:
+  * Post to: Twitter, Instagram (if major outage)
+  * Message: Professional, transparent, apologetic
+  * Owner: Business partner + Social media manager
+
+================================================================================
+7. TESTING, VALIDATION & DRILLS
+================================================================================
+
+### 7.1 Testing Strategy
+
+**Backup Restoration Tests:**
+- Frequency: Weekly (Saturday morning)
+- Scope: Full database restore to staging
+- Success Criteria:
+  * Restore time < 30 minutes
+  * Data integrity: Row count matches prod
+  * Ledger balanced (SUM DEBIT = SUM CREDIT)
+  * No corrupted tables
+- Owner: Solo developer
+- Documentation: Test report → #g-flow-team Slack
+
+**Failover Tests:**
+- Frequency: Monthly (first Friday)
+- Scope: Simulate Render server crash, auto-restart
+- Success Criteria:
+  * Failover time < 5 minutes
+  * Zero data loss (stateless)
+  * All orders in correct state
+- Owner: DevOps (Render support)
+- Documentation: Test results → DRP_TEST_LOG.md
+
+**Application Smoke Tests:**
+- Frequency: After every production deployment
+- Scope: Critical user flows (login, book ride, top-up, order food)
+- Success Criteria:
+  * All endpoints respond 200 OK
+  * No error rates > 0.1%
+  * Latency < 1s (p95)
+- Owner: QA + automated tests (GitHub Actions)
+
+### 7.2 Disaster Recovery Drills
+
+**Monthly Drill (30 minutes):**
+- Scenario: One disaster scenario (rotates monthly)
+- Participants: Solo dev + team lead (if available)
+- Environment: Staging (safe to break)
+- Objective: Execute playbook, measure response time
+- No-Impact: Read-only tests, no data deletion
+
+Monthly Schedule:
+```
+Aug: Scenario 1 (Database corruption)
+Sep: Scenario 2 (Ledger imbalance)
+Oct: Scenario 3 (Race condition)
+Nov: Scenario 4 (Redis down)
+Dec: Scenario 5 (Application crash)
+```
+
+**Quarterly Drill (2-4 hours):**
+- Scenario: Full system recovery (multi-failure simulation)
+- Participants: Full incident response team
+- Environment: Staging (production-like scale)
+- Objective: End-to-end recovery testing
+- Measure: Actual RTO/RPO vs. targets
+
+**Annual Review:**
+- Full DRP audit
+- Update based on infrastructure changes
+- Incorporate lessons learned from incidents
+- Update RTO/RPO targets
+- Sign-off by management
+
+### 7.3 Drill Execution Checklist
+
+```
+PRE-DRILL (1 day before):
+[ ] Notify all participants via Slack
+[ ] Reserve staging environment
+[ ] Backup current staging state
+[ ] Set drill start/end times
+[ ] Prepare success criteria checklist
+
+DURING DRILL (Execution):
+[ ] Start drill timer (13:00)
+[ ] Incident Commander opens Slack war room
+[ ] Announce: "DRILL START - Scenario [X]"
+[ ] Execute playbook steps sequentially
+[ ] Log all actions + timestamps
+[ ] Document blockers/issues
+[ ] Stop timer at recovery completion
+
+POST-DRILL (Same day):
+[ ] Verify system recovery (all checks pass)
+[ ] Calculate actual RTO/RPO
+[ ] Compare to target
+[ ] Collect feedback: What went wrong?
+[ ] Create after-action report
+[ ] Update playbook based on findings
+[ ] Share lessons learned
+[ ] Slack announcement: "DRILL COMPLETE - RTO [X] min, RPO [Y] min"
+```
+
+### 7.4 Metrics & KPIs
+
+Track from each drill/incident:
+```
+| Metric | Target | Aug Drill | Sep Incident |
+|--------|--------|----------|--------------|
+| Actual RTO | 1h | 45 min ✓ | 1.5h ✗ → investigate |
+| Actual RPO | 5m | 3 min ✓ | 8m ✗ → improve backup freq |
+| Playbook Accuracy | 95% | 90% ✓ | 85% ✗ → update docs |
+| Team Response | 5m | 6m ✗ | 4m ✓ → improving |
+| Knowledge Gaps | <2 | 1 ✓ | 3 ✗ → training needed |
+```
+
+================================================================================
+8. MAINTENANCE & CONTINUOUS IMPROVEMENT
+================================================================================
+
+### 8.1 Regular Maintenance Tasks
+
+| Task | Frequency | Owner | Notes |
+|------|-----------|-------|-------|
+| Review playbooks | Quarterly | Solo Dev | Update for new features, infrastructure |
+| Test backup restoration | Weekly | Solo Dev | Saturday morning, staging only |
+| Update contact list | Monthly | Team Lead | Verify phone/email current |
+| Review RTO/RPO targets | Semi-annually | CTO | Align with SLA, business needs |
+| Audit backup storage | Monthly | DevOps | Verify size, retention, security |
+| Database health check | Weekly | Admin | Check corruption, performance |
+| Ledger verification | Daily (automated) | Cron job | Alert if imbalance detected |
+
+### 8.2 Post-Incident Review Process
+
+**Within 24 hours:**
+- Document incident timeline (what, when, who)
+- Identify root cause (code bug? Config? External?)
+- Measure actual RTO/RPO (vs. target)
+- Collect team feedback (what went well? what didn't?)
+
+**Within 1 week:**
+- Complete incident report (→ #g-flow-incidents doc)
+- Root cause analysis (5 Why's framework)
+- Identify preventive measures (code fix? monitoring? alert?)
+- Update playbook if needed
+- Share lessons learned with team
+
+**Within 30 days:**
+- Implement preventive measures
+- Run drill based on incident scenario
+- Verify fix works (no regression)
+- Close incident ticket
+- Update RTO/RPO if needed
+
+Example Post-Incident (Ledger Imbalance):
+```
+Title: Ledger Imbalance on 2026-08-14
+
+Root Cause: Topup settlement trigger didn't fire for orders placed after 23:30
+
+Preventive Measure:
+  - Add data validation on topup_transaction status
+  - Implement retry logic (3x exponential backoff)
+  - Add monitoring alert if pending transactions > 1 hour
+
+Fix PR: #234 (Merged, tested, deployed)
+
+Drill: 2026-08-20 (simulated imbalance recovery)
+
+Status: RESOLVED ✓
+```
+
+### 8.3 Version Control & Change Log
+
+| Version | Date | Changes | Author |
+|---------|------|---------|--------|
+| 1.0 | 2026-08-14 | Initial DRP creation, 6 scenarios | M. Arif Aulia |
+| 1.1 | TBD | Add multi-region failover (V1.1) | TBD |
+| 1.2 | TBD | Add push notification recovery | TBD |
+
+================================================================================
+9. APPENDIX
+================================================================================
+
+### 9.1 Glossary
+
+- **RTO (Recovery Time Objective)**: Max time system can be down (1h = unacceptable, 4h = acceptable)
+- **RPO (Recovery Point Objective)**: Max data loss acceptable (5m = hourly backup, 0m = real-time replication)
+- **Backup**: Copy of data for recovery (database snapshots, file archives)
+- **Failover**: Switch from primary to standby system (automatic or manual)
+- **Disaster**: Event causing system/data unavailable (crash, corruption, breach, hacker, natural disaster)
+- **Ledger**: Immutable transaction log (DEBIT/CREDIT entries, never updated)
+- **Settlement**: Financial transaction completion (order → driver paid)
+- **Escrow**: Temporary fund hold (released after order complete)
+
+### 9.2 Related Documents
+
+- ✅ PRD.md (project requirements, RTO/RPO goals)
+- ✅ DATABASE_SCHEMA.md (25 tables, RLS, constraints)
+- ✅ SECURITY_SPEC.md (backup encryption, audit trail)
+- ✅ API_CONTRACT.md (idempotency, error responses)
+- ✅ TDD.md (Render deployment, connection pooling)
+
+### 9.3 Tools & Resources
+
+| Tool/Resource | Purpose | Access |
+|---------------|---------|--------|
+| Supabase Dashboard | Database backup/restore | https://supabase.com/dashboard |
+| Render Dashboard | Server monitoring/restart | https://render.com/dashboard |
+| Upstash Redis | Cache & idempotency | https://console.upstash.com |
+| GitHub | Source code backup | https://github.com/[user]/g-flow-backend |
+| Slack #incidents | War room communication | Slack workspace |
+| Monitoring (TBD) | Prometheus/Grafana for metrics | On-prem or cloud |
+
+### 9.4 Recovery Commands Reference
+
+**Database Recovery (Supabase):**
+```bash
+# List available backups
+supabase db backups list
+
+# Restore from backup
+supabase db restore --backup-id <backup-id> --restore-to <new-instance>
+
+# Verify restore
+psql -h <new-instance>.supabase.co -U postgres -d g_flow -c "SELECT COUNT(*) FROM wallets"
+
+# Check ledger balance
+psql -h <new-instance>.supabase.co -U postgres -d g_flow << 'EOF'
+SELECT SUM(amount) FROM ledger_entries WHERE entry_type='DEBIT' as debit,
+       SUM(amount) FROM ledger_entries WHERE entry_type='CREDIT' as credit;
+EOF
+```
+
+**Application Failover (Render):**
+```bash
+# Check service status
+curl https://api.g-flow.com/health
+
+# Restart service
+render restart --service-id <service-id>
+
+# View logs
+render logs --service-id <service-id> --lines 100
+
+# Update environment variable
+render env set --service-id <service-id> DATABASE_URL=<new-url>
+```
+
+**Redis Recovery (Upstash):**
+```bash
+# Test connection
+redis-cli -h <redis-host> -p 6379 PING
+
+# Clear idempotency cache (if needed)
+redis-cli -h <redis-host> -p 6379 FLUSHDB
+
+# Restart Upstash (via dashboard)
+# Console → Restart
+```
+
+### 9.5 Incident Response Checklist (Printable)
+
+```
+[ ] 1. Alert received (confirm alert is real)
+[ ] 2. Open Slack #incidents channel
+[ ] 3. Identify scenario (use disaster matrix)
+[ ] 4. Notify Incident Commander + team
+[ ] 5. Open playbook for scenario
+[ ] 6. Follow immediate actions (first 15 min)
+[ ] 7. Start recovery steps (preparation → execution → validation)
+[ ] 8. Monitor metrics during recovery
+[ ] 9. Notify customers if RTO > 30 min
+[ ] 10. Validate resolution (smoke tests pass)
+[ ] 11. Document incident in war room
+[ ] 12. Start post-incident review (within 24h)
+```
+
+================================================================================
+Document Sign-Off
+================================================================================
+
+| Role | Name | Date | Status |
+|------|------|------|--------|
+| DRP Owner | M. Arif Aulia | 2026-08-14 | ✅ APPROVED |
+| Engineering Lead | M. Arif Aulia | 2026-08-14 | ✅ APPROVED |
+| IT/Infrastructure | Render Support | TBD | ⏳ Acknowledged |
+| Management Approval | Business Partner | TBD | ⏳ Pending |
+
+---
+
+**Last Updated**: 2026-08-14 by M. Arif Aulia  
+**Next Review**: 2026-11-14 (Quarterly)  
+**Status**: 🟢 APPROVED FOR PRODUCTION DEPLOYMENT  
+
+**Quarterly Review Schedule:**
+- 2026-11-14: Q4 Review + drill
+- 2027-02-14: Q1 Review + drill
+- 2027-05-14: Q2 Review + drill
+- 2027-08-14: Q3 Review + drill (Annual audit)
+
+================================================================================
+END OF DRP.md v1.0-FINAL
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+**100% PRODUCTION-READY — SYNCHRONIZED WITH ALL DOCUMENTS**
+
+================================================================================

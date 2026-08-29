@@ -1,0 +1,1835 @@
+================================================================================
+ROADMAP PHASE 1: WALLET & AUTHENTICATION (G-Flow Super-App) v1.1-FINAL
+================================================================================
+
+Version:         1.1-FINAL
+Phase:           1 of 4
+Estimated Effort: 359 jam (~24 minggu @ 15 jam/minggu)
+Last Updated:    2026-08-15
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — LOCKED (REVISED v1.1)
+
+================================================================================
+📌 BISMILLAH — PHASE 1: REVISED WITH 5 CRITICAL FIXES
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 REVISION HISTORY (v1.0 → v1.1)
+================================================================================
+
+| # | Area | Fix Applied |
+|---|------|-------------|
+| 1 | Wallet Transfer (1.1) | Deadlock-free lock hierarchy: ORDER BY id ASC for SELECT FOR UPDATE |
+| 2 | Idempotency (1.1) | L1 Redis + L2 PostgreSQL dual-layer persistence with unique constraint |
+| 3 | Webhook Top-Up (1.1) | Atomic state check: UPDATE WHERE status = 'PENDING', rows_affected guard |
+| 4 | Auth Security (1.2) | Redis Token Blacklist for logout/suspend (jti storage) |
+| 5 | Effort Breakdown | Corrected total: 359 jam (Backend 130, Mobile 157, Testing 72) |
+
+================================================================================
+📋 EXECUTIVE SUMMARY
+================================================================================
+
+Phase 1 adalah **foundation layer** untuk keseluruhan G-Flow ecosystem. Fokus utama:
+- **Backend:** PayPulse (Wallet + Double-Entry Ledger) + JWT Authentication + RBAC + Token Blacklist
+- **Mobile:** Customer App dengan Auth Screens + Wallet UI
+- **Observability:** Logging, Metrics, Health Checks
+
+**Milestone Akhir Phase 1:**
+> Customer bisa login ke HP, melihat wallet balance, melakukan top-up, dan melihat transaction history.
+
+**Total Effort:** 359 jam (~24 minggu @ 15 jam/minggu)
+
+================================================================================
+🎯 OBJECTIVES
+================================================================================
+
+1. ✅ Build production-grade wallet engine dengan double-entry bookkeeping
+2. ✅ Implement JWT authentication + RBAC (customer, driver, merchant, admin)
+3. ✅ Create immutable ledger untuk financial accuracy (SUM debit = SUM credit)
+4. ✅ Ensure idempotency pada top-up & transfer (max 1 ledger entry per request)
+5. ✅ Build Flutter Customer App dengan auth flows & wallet screens
+6. ✅ Setup database schema v10.4-FINAL di Supabase
+7. ✅ Achieve 85% code coverage pada wallet/ module
+8. ✅ Validate system bisa berjalan di abnormal scenarios
+
+================================================================================
+📋 BACKEND DELIVERABLES (Golang)
+================================================================================
+
+1.1 PAYMENTPULSE WALLET ENGINE (F001-F003)
+────────────────────────────────────────────────────────────────────────────────
+
+#### Database Setup
+- ✅ Create PostgreSQL schema (DATABASE_SCHEMA v10.4-FINAL)
+- ✅ Initialize 5 core tables:
+  - `users` (core identity)
+  - `wallets` (balance per user)
+  - `ledger_entries` (double-entry bookkeeping)
+  - `topup_transactions` (intermediary state)
+  - `idempotency_cache` (duplicate prevention — L2 persistence)
+- ✅ Create required indexes:
+  - `idx_wallets_user_type` (fast balance lookup)
+  - `idx_ledger_entries_wallet_reference` (audit trail)
+  - `idx_idempotency_cache_key` (unique constraint on key + user_id) — FIXED
+- ✅ Enable Row-Level Security (RLS) on all tables
+- ✅ Create SYSTEM_ESCROW & SYSTEM_PLATFORM wallet accounts (seeding)
+
+**Status Tracking:**
+[ ] Database schema migrated to Supabase
+[ ] All 5 tables created & verified
+[ ] Indexes created & tested (query performance < 100ms)
+[ ] RLS policies enabled
+[ ] System wallets created via seed script
+
+text
+
+**Effort:** ~20 jam
+
+---
+
+#### Wallet Lifecycle Service (F001)
+**File:** `internal/wallet/service.go` + `internal/wallet/repository.go`
+
+**Features:**
+- Create wallet for new user (ACTIVE by default)
+- Get wallet balance (cached in Redis)
+- Suspend wallet (balance frozen, no transactions)
+- Freeze wallet (investigation in progress)
+- Soft-delete wallet (30-day grace period)
+
+**Key Methods:**
+```golang
+func (s *WalletService) CreateWallet(ctx context.Context, userID uuid.UUID, walletType string) (*Wallet, error)
+func (s *WalletService) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
+func (s *WalletService) SuspendWallet(ctx context.Context, walletID uuid.UUID, reason string) error
+func (s *WalletService) FreezeWallet(ctx context.Context, walletID uuid.UUID, reason string) error
+Input Validation:
+
+userID: Valid UUID format
+
+walletType: ENUM validation (CUSTOMER, DRIVER, MERCHANT, SYSTEM_ESCROW, SYSTEM_PLATFORM)
+
+Reject duplicate wallet creation for same user (UNIQUE constraint)
+
+Error Handling:
+
+400: Invalid wallet type
+
+409: Wallet already exists for user
+
+500: Database error
+
+Database Operations:
+
+INSERT into wallets table with initial balance = 0
+
+Validate user exists via FK constraint
+
+Create system audit log entry
+
+Status Tracking:
+
+text
+[ ] Service layer implemented
+[ ] Repository layer implemented (CRUD operations)
+[ ] Unit tests (85% coverage)
+[ ] Integration tests (create → get → suspend flow)
+Effort: ~15 jam
+
+Double-Entry Ledger System (F002)
+File: internal/wallet/ledger.go
+
+Key Principle:
+
+Setiap transaksi finansial menciptakan 2 entries: DEBIT dan CREDIT dengan amount yang identik.
+Invariant: SUM(debit) = SUM(credit) untuk setiap reference_id.
+
+Ledger Entries Structure:
+
+golang
+type LedgerEntry struct {
+    ID              uuid.UUID         // Primary key
+    WalletID        uuid.UUID         // Wallet yang berpengaruh
+    EntryType       string            // ENUM: DEBIT | CREDIT
+    Amount          decimal.Decimal   // Financial precision (2 decimals)
+    BalanceAfter    decimal.Decimal   // Snapshot balance setelah entry
+    ReferenceID     uuid.UUID         // Link ke transaction (topup_id, transfer_id)
+    ReferenceType   string            // WALLET_TOPUP | WALLET_TRANSFER | RIDE_SETTLEMENT
+    Description     string            // Human-readable (e.g., "Top-up via simulated payment")
+    IsReversed      bool              // Flag untuk reversal (tidak delete)
+    CreatedAt       time.Time         // Immutable timestamp
+}
+Double-Entry Logic:
+
+golang
+func (s *LedgerService) CreateLedgerEntry(ctx context.Context, req *CreateLedgerReq) error {
+    // Validasi: amount > 0
+    // Buat DEBIT entry (source wallet)
+    // Buat CREDIT entry (destination wallet)
+    // Verifikasi: DEBIT amount = CREDIT amount
+    // Atomic transaction: both or neither
+    // Update wallets.balance via trigger
+}
+Trigger: sync_wallet_balance
+
+AFTER INSERT on ledger_entries
+
+Increment wallet.balance untuk CREDIT entries
+
+Decrement wallet.balance untuk DEBIT entries (allow negative untuk cash settlement)
+
+Update wallet.updated_at timestamp
+
+Audit Trail:
+
+Setiap ledger entry immutable (INSERT-only, never UPDATE/DELETE)
+
+Reversals: Flag is_reversed=TRUE, buat compensating entry
+
+Query: SELECT * FROM ledger_entries WHERE reference_id = $1 ORDER BY created_at
+
+Status Tracking:
+
+text
+[ ] LedgerEntry struct & model defined
+[ ] CreateLedgerEntry service implemented
+[ ] Double-entry validation logic
+[ ] Trigger sync_wallet_balance created & tested
+[ ] Reversal logic implemented (is_reversed flag)
+[ ] Unit tests (85% coverage)
+[ ] Integration tests (ledger balance verification)
+Effort: ~25 jam
+
+Top-Up, Transfer & Idempotency (F003) — FIXED (Deadlock, Idempotency Dual-Layer, Webhook Atomic)
+Files: internal/wallet/handler.go, internal/wallet/service.go
+
+Endpoints:
+
+POST /api/v1/wallets/{wallet_id}/topup
+
+Request:
+
+json
+{
+  "amount": 500000,
+  "payment_method": "SIMULATED",
+  "description": "Top-up balance"
+}
+Required Header: X-Idempotency-Key: <uuid>
+
+Response (201):
+
+json
+{
+  "success": true,
+  "data": {
+    "transaction_id": "uuid-txn-123",
+    "wallet_id": "uuid-wallet-456",
+    "amount": 500000,
+    "status": "PENDING",
+    "requested_at": "2026-08-14T10:30:45Z"
+  }
+}
+Top-Up Flow:
+
+Validate request (amount >= 1000, amount <= 50000000)
+
+Check KYC limit (Bug #25):
+
+Unverified: max balance = Rp 2,000,000
+
+Verified: max balance = Rp 20,000,000
+
+Return 422 if (current + amount) > limit
+
+Idempotency Check — DUAL LAYER (FIXED):
+
+L1 (Redis): Fast lookup cache with 24h TTL
+
+golang
+cached, err := redis.Get("idempotency:" + idempotencyKey)
+if err == nil { return cached, 200 }
+L2 (PostgreSQL): Persistent storage with unique constraint
+
+golang
+_, err := db.Exec(`
+  INSERT INTO idempotency_cache (key, user_id, response, status_code, created_at, expires_at)
+  VALUES ($1, $2, $3, $4, NOW(), NOW() + INTERVAL '24 hours')
+`, key, userID, response, 201)
+if err != nil { // duplicate key violation → cache hit
+  // Query and return cached response
+}
+Fallback: If Redis down, PostgreSQL L2 still prevents duplicates
+
+Create topup_transactions entry (status='PENDING')
+
+Return transaction_id to client
+
+Webhook processing — ATOMIC STATE CHECK (FIXED):
+
+golang
+// FIXED: Atomic status transition check prevents double credit
+res, err := db.Exec(`
+  UPDATE topup_transactions
+  SET status = 'COMPLETED', completed_at = NOW()
+  WHERE id = $1 AND status = 'PENDING'
+`, transactionID)
+
+if rowsAffected == 0 {
+  // Transaction already processed or not PENDING
+  logger.Warn("Webhook ignored: transaction already processed", "txn_id", transactionID)
+  return nil // Skip ledger execution
+}
+
+// Only executed if rowsAffected == 1
+// Execute ledger mutations (SYSTEM_BANK_GATEWAY DEBIT, Customer CREDIT)
+// Update wallet.balance (via trigger)
+POST /api/v1/wallets/{wallet_id}/transfer — FIXED (Deadlock Prevention)
+
+Request:
+
+json
+{
+  "to_wallet_id": "uuid-target",
+  "amount": 100000,
+  "description": "Money transfer"
+}
+Required Header: X-Idempotency-Key: <uuid>
+
+Validations:
+
+Both wallets active (status = 'ACTIVE')
+
+Source wallet has sufficient balance
+
+Amount > 0
+
+Deadlock-Free Lock Hierarchy (FIXED):
+
+golang
+// FIXED: ORDER BY id ASC prevents deadlock on concurrent transfers
+walletIDs := []uuid.UUID{fromWalletID, toWalletID}
+sort.Slice(walletIDs, func(i, j int) bool {
+  return walletIDs[i].String() < walletIDs[j].String()
+})
+
+rows, err := tx.QueryContext(ctx, `
+  SELECT id, balance FROM wallets
+  WHERE id = ANY($1)
+  ORDER BY id ASC   -- Critical: prevents deadlock
+  FOR UPDATE
+`, pq.Array(walletIDs))
+Ledger entries:
+
+DEBIT from source wallet
+
+CREDIT to target wallet
+
+Return: Transaction details + new balance
+
+Transfer Edge Cases:
+
+❌ Insufficient balance → 422 + error response
+
+❌ Wallet suspended/frozen → 403 "Wallet is not active"
+
+❌ Same source & destination → 422 "Cannot transfer to same wallet"
+
+❌ Deadlock scenario: Concurrent A→B and B→A → ORDER BY id prevents deadlock
+
+✅ Duplicate request (same idempotency key) → 200 + same response (idempotent)
+
+Idempotency Storage — DUAL LAYER ARCHITECTURE:
+
+text
+┌─────────────────────────────────────────────────────────────┐
+│                     IDEMPOTENCY CHECK FLOW                   │
+├─────────────────────────────────────────────────────────────┤
+│  1. Client sends request with X-Idempotency-Key             │
+│  2. L1: Redis GET "idempotency:{key}" (fast, 24h TTL)      │
+│     ├─ Hit → Return cached response (200 OK)               │
+│     └─ Miss → Continue                                     │
+│  3. L2: PostgreSQL INSERT INTO idempotency_cache           │
+│     ├─ Unique constraint OK → First request (PROCESSING)   │
+│     └─ Unique constraint violation → Cache hit             │
+│         └─ Query cached response → Return (200 OK)         │
+│  4. Execute transaction → Store response in Redis + PG     │
+│  5. Redis TTL: 24 hours, PG TTL: 24 hours                  │
+└─────────────────────────────────────────────────────────────┘
+Status Tracking:
+
+text
+[ ] POST /wallets/{id}/topup implemented
+[ ] POST /wallets/{id}/transfer implemented (with ORDER BY id)
+[ ] X-Idempotency-Key header validation
+[ ] L1 Redis cache integration
+[ ] L2 PostgreSQL idempotency_cache with unique constraint
+[ ] Webhook atomic state check (WHERE status = 'PENDING')
+[ ] KYC limit validation (Bug #25)
+[ ] Overdue debt auto-deduction (Bug #47) — if applicable
+[ ] Unit tests (85% coverage)
+[ ] Integration tests (idempotency verification)
+[ ] Concurrency test (5 requests same idempotency key → 1 ledger entry)
+[ ] Deadlock test (concurrent A→B and B→A)
+Effort: ~32 jam (tambah 2 jam untuk dual-layer + deadlock fix)
+
+1.2 AUTHENTICATION & RBAC (F012) — FIXED (Token Blacklist)
+────────────────────────────────────────────────────────────────────────────────
+
+JWT Authentication Service
+File: internal/auth/jwt.go
+
+Features:
+
+Generate JWT access & refresh tokens (RS256, Supabase signing key)
+
+Validate token signature & expiration
+
+Extract claims (sub, email, user_type, phone)
+
+Refresh token rotation
+
+Token Blacklist (FIXED): Invalidate tokens on logout/suspend
+
+JWT Payload:
+
+golang
+type Claims struct {
+    Sub      string `json:"sub"`         // user_id (UUID)
+    Email    string `json:"email"`
+    UserType string `json:"user_type"`   // customer|driver|merchant|admin|system
+    Phone    string `json:"phone"`
+    Jti      string `json:"jti"`         // JWT ID (unique per token) — NEW
+    Iat      int64  `json:"iat"`
+    Exp      int64  `json:"exp"`
+    Iss      string `json:"iss"`         // Supabase issuer URL
+}
+Token Blacklist Service — FIXED:
+
+golang
+type TokenBlacklistService struct {
+    redis *redis.Client
+}
+
+// Blacklist token on logout or suspend
+func (s *TokenBlacklistService) BlacklistToken(ctx context.Context, jti string, exp int64) error {
+    ttl := time.Until(time.Unix(exp, 0))
+    if ttl <= 0 {
+        return nil // Already expired
+    }
+    return s.redis.SetEX(ctx, "blacklist:"+jti, "true", ttl).Err()
+}
+
+// Validate token against blacklist
+func (s *TokenBlacklistService) IsTokenBlacklisted(ctx context.Context, jti string) (bool, error) {
+    val, err := s.redis.Get(ctx, "blacklist:"+jti).Result()
+    if err == redis.Nil {
+        return false, nil
+    }
+    if err != nil {
+        // Redis down → log warning, but allow (degraded mode)
+        logger.Warn("Redis unavailable for token blacklist check", "jti", jti)
+        return false, nil
+    }
+    return val == "true", nil
+}
+Middleware: AuthMiddleware (with Blacklist Check)
+
+golang
+func AuthMiddleware(blacklist *TokenBlacklistService) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        token := c.GetHeader("Authorization")
+        if token == "" { c.JSON(401, "UNAUTHORIZED"); return }
+        
+        claims, err := jwtService.ValidateToken(token)
+        if err != nil { c.JSON(401, "UNAUTHORIZED"); return }
+        
+        // Check blacklist
+        blacklisted, err := blacklist.IsTokenBlacklisted(c.Request.Context(), claims.Jti)
+        if err == nil && blacklisted {
+            c.JSON(401, "UNAUTHORIZED: Token invalidated")
+            return
+        }
+        
+        c.Set("user_id", claims.Sub)
+        c.Set("user_type", claims.UserType)
+        c.Next()
+    }
+}
+Token Lifecycle:
+
+Access token: 1 hour
+
+Refresh token: 7 days
+
+Stored in mobile secure storage (iOS Keychain, Android Keystore)
+
+Logout: Blacklist all user's tokens (delete family or add to blacklist)
+
+Status Tracking:
+
+text
+[ ] JWT generation (RS256) with jti claim
+[ ] Token validation & signature verification
+[ ] Claims extraction
+[ ] TokenBlacklistService (Redis)
+[ ] AuthMiddleware with blacklist check
+[ ] Token refresh handler
+[ ] Logout handler (blacklist token)
+[ ] Suspend handler (blacklist all user tokens)
+[ ] Unit tests (85% coverage)
+[ ] Integration tests (auth flow + blacklist)
+Effort: ~14 jam (tambah 2 jam untuk token blacklist)
+
+Role-Based Access Control (RBAC)
+File: internal/auth/rbac.go
+
+Roles & Permissions:
+
+text
+CUSTOMER:
+  - GET /wallets/{id}/balance
+  - POST /wallets/{id}/topup
+  - POST /wallets/{id}/transfer
+  - GET /wallets/{id}/history
+  - (Other: ride booking, food ordering, send)
+
+DRIVER:
+  - GET /wallets/{id}/balance
+  - GET /wallets/{id}/history
+  - POST /wallets/{id}/withdraw
+  - (Other: accept orders, update location)
+
+MERCHANT:
+  - GET /wallets/{id}/balance
+  - GET /wallets/{id}/history
+  - POST /wallets/{id}/withdraw
+  - (Other: manage catalog, process orders)
+
+ADMIN:
+  - GET /admin/ledger
+  - POST /admin/freeze-user
+  - POST /admin/reverse-transaction
+  - (All read permissions)
+
+SYSTEM:
+  - Internal only (settlement processor, cron jobs)
+  - No public API access
+Permission Check Function:
+
+golang
+func RBACMiddleware(allowedRoles ...string) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        userType, _ := c.Get("user_type")
+        allowed := false
+        for _, role := range allowedRoles {
+            if userType == role { allowed = true; break }
+        }
+        if !allowed { c.JSON(403, "FORBIDDEN"); return }
+        c.Next()
+    }
+}
+
+// Usage:
+router.GET("/wallets/:id/balance", 
+    AuthMiddleware(blacklist), 
+    RBACMiddleware("customer", "driver", "merchant"), 
+    walletHandler.GetBalance,
+)
+Row-Level Security (RLS):
+
+Users can only access own data (wallets, transactions)
+
+Admins can query all via database RLS policies
+
+Queries auto-filtered by user_id in WHERE clause
+
+Status Tracking:
+
+text
+[ ] RBAC matrix defined
+[ ] Permission check middleware
+[ ] RLS policies in database
+[ ] Unit tests (85% coverage)
+[ ] Integration tests (access control verification)
+Effort: ~10 jam
+
+1.3 OBSERVABILITY & HEALTH (F014)
+────────────────────────────────────────────────────────────────────────────────
+
+Structured Logging
+File: internal/middleware/logger.go
+
+Requirements:
+
+Log every API request (method, path, duration, status)
+
+Log database queries (slow query detection: > 100ms)
+
+Log errors with stack trace
+
+JSON format for parsing (structured logging)
+
+Request ID tracking (X-Request-ID header)
+
+Example Log Entry:
+
+json
+{
+  "timestamp": "2026-08-14T10:30:45.123Z",
+  "level": "INFO",
+  "request_id": "uuid-req-123",
+  "method": "POST",
+  "path": "/api/v1/wallets/uuid-wallet/topup",
+  "status": 201,
+  "duration_ms": 250,
+  "user_id": "uuid-user-456",
+  "message": "Top-up transaction created"
+}
+Implementation:
+
+Use Go standard library + JSON marshaling
+
+Output to stdout (Docker container logging)
+
+Structured fields: timestamp, level, request_id, user_id, message
+
+Status Tracking:
+
+text
+[ ] Logger middleware implemented
+[ ] Request ID propagation
+[ ] Slow query logging (> 100ms threshold)
+[ ] Error logging with stack trace
+[ ] Unit tests (logging output verification)
+Effort: ~8 jam
+
+Health & Readiness Checks
+File: internal/health/handler.go
+
+Endpoints:
+
+GET /health (Kubernetes liveness probe)
+
+Response: 200 OK
+
+Purpose: Is the app running?
+
+GET /ready (Kubernetes readiness probe)
+
+Check database connectivity
+
+Check Redis connectivity
+
+Return 200 if all OK, 503 if any failure
+
+Response:
+
+json
+{
+  "status": "ready",
+  "checks": {
+    "database": "ok",
+    "redis": "ok",
+    "timestamp": "2026-08-14T10:30:45Z"
+  }
+}
+Status Tracking:
+
+text
+[ ] /health endpoint
+[ ] /ready endpoint with dependency checks
+[ ] Database ping test
+[ ] Redis ping test
+[ ] Unit tests
+Effort: ~6 jam
+
+1.4 ERROR HANDLING & VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+
+Centralized Error Response:
+
+golang
+type ErrorResponse struct {
+    Success bool `json:"success"`
+    Error   struct {
+        Code    string      `json:"code"`
+        Message string      `json:"message"`
+        Details interface{} `json:"details,omitempty"`
+    } `json:"error"`
+    Meta Metadata `json:"meta"`
+}
+Status Tracking:
+
+text
+[ ] Error response struct
+[ ] HTTP status mapping
+[ ] Error code standardization
+[ ] Input validation rules
+Effort: ~8 jam
+
+1.5 SEEDING & FIXTURES
+────────────────────────────────────────────────────────────────────────────────
+
+File: internal/db/fixtures.go + migrations/seed.sql
+
+Seed Data:
+
+3 test customers (customer1@test.com, customer2@test.com, customer3@test.com)
+
+3 test drivers (driver1@test.com, driver2@test.com, driver3@test.com)
+
+1 admin user (admin@test.com)
+
+System wallets (SYSTEM_ESCROW, SYSTEM_PLATFORM)
+
+10 ledger entries (test transactions)
+
+Status Tracking:
+
+text
+[ ] Seed script created
+[ ] Test data generation
+[ ] System wallet initialization
+Effort: ~6 jam
+
+📱 MOBILE DELIVERABLES (Flutter - Customer App)
+2.1 PROJECT SETUP
+Stack:
+
+Framework: Flutter 3.16+
+
+State Management: Riverpod (pod-based)
+
+API Client: Dio (with retry, timeout, offline queue)
+
+Local Storage: Hive (encrypted for sensitive data)
+
+Navigation: GoRouter
+
+Monorepo Structure:
+
+text
+g-flow-monorepo/
+├── packages/
+│   └── core/
+│       ├── lib/
+│       │   ├── models/
+│       │   ├── services/
+│       │   ├── utils/
+│       │   └── widgets/
+│       └── pubspec.yaml
+├── apps/
+│   └── customer_app/
+│       ├── lib/
+│       │   ├── main.dart
+│       │   ├── screens/
+│       │   │   ├── auth/
+│       │   │   │   ├── login_screen.dart
+│       │   │   │   ├── register_screen.dart
+│       │   │   │   ├── otp_screen.dart
+│       │   │   │   └── password_reset_screen.dart
+│       │   │   ├── wallet/
+│       │   │   │   ├── wallet_screen.dart
+│       │   │   │   ├── topup_screen.dart
+│       │   │   │   ├── transfer_screen.dart
+│       │   │   │   └── transaction_history_screen.dart
+│       │   │   └── home/
+│       │   │       └── home_screen.dart (Tab view)
+│       │   ├── providers/
+│       │   │   ├── auth_provider.dart
+│       │   │   └── wallet_provider.dart
+│       │   ├── config/
+│       │   │   ├── router.dart
+│       │   │   ├── app_config.dart
+│       │   │   └── constants.dart
+│       │   └── utils/
+│       │       ├── validators.dart
+│       │       └── error_handler.dart
+│       ├── test/
+│       └── pubspec.yaml
+└── pubspec.yaml (workspace)
+Setup Steps:
+
+✅ Initialize Melos monorepo
+
+✅ Create packages/core package (shared components)
+
+✅ Create apps/customer_app
+
+✅ Add dependencies (Riverpod, Dio, Hive, GoRouter, etc.)
+
+✅ Setup build configuration (separate iOS/Android signing)
+
+Status Tracking:
+
+text
+[ ] Melos monorepo initialized
+[ ] Folder structure created
+[ ] pubspec.yaml files updated
+[ ] Dependencies added
+[ ] Build configuration (iOS/Android)
+Effort: ~10 jam
+
+2.2 AUTHENTICATION SCREENS
+Login Screen (lib/screens/auth/login_screen.dart)
+Purpose: User memilih login via email/phone, masuk password, dapat JWT token
+
+UI Elements:
+
+Logo + App name
+
+Email/Phone input field
+
+Password input field (masked)
+
+"Login" button (disabled until valid input)
+
+"Forgot password?" link
+
+"Don't have account? Register" link
+
+Flows:
+
+User enters email/phone + password
+
+Tap LOGIN → POST /api/v1/auth/login
+
+Response: access_token, refresh_token, user data
+
+Store tokens in secure storage (Keychain/Keystore)
+
+Navigate to Home screen (wallet dashboard)
+
+Error Handling:
+
+❌ Empty email/phone → "Email is required" (inline validation)
+
+❌ Invalid email format → "Invalid email format"
+
+❌ Empty password → "Password is required"
+
+❌ 401 unauthorized → "Invalid credentials"
+
+❌ 503 server error → "Server unavailable, please try again"
+
+Implementation:
+
+dart
+class LoginScreen extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final emailController = TextEditingController();
+    final passwordController = TextEditingController();
+    
+    return Scaffold(
+      body: Center(
+        child: Column(
+          children: [
+            // Logo
+            // Email field
+            // Password field
+            // Login button
+            ElevatedButton(
+              onPressed: () async {
+                final result = await ref.read(authProvider.notifier)
+                    .login(emailController.text, passwordController.text);
+                if (result.success) {
+                  // Navigate to home
+                } else {
+                  // Show error
+                }
+              },
+              child: Text("LOGIN"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+Status Tracking:
+
+text
+[ ] UI layout & styling
+[ ] Text input fields with validation
+[ ] Login button with loading state
+[ ] Error message display
+[ ] Secure token storage integration
+[ ] Navigation after login success
+[ ] Unit tests (widget testing)
+[ ] Integration tests (login flow)
+Effort: ~15 jam
+
+Register Screen (lib/screens/auth/register_screen.dart)
+Purpose: User membuat akun baru, pilih role (customer/driver), set password
+
+UI Elements:
+
+Name input field
+
+Email input field
+
+Phone input field
+
+Password input field (with strength meter)
+
+Confirm password field
+
+User type radio buttons (Customer, Driver)
+
+"Terms & Conditions" checkbox
+
+"Register" button
+
+Flow:
+
+User fills form (all required fields)
+
+Tap REGISTER → POST /api/v1/auth/register
+
+Response: user_id, email verification pending
+
+Show OTP screen (next step)
+
+Validation:
+
+✅ Name: min 3 chars, max 100 chars
+
+✅ Email: valid RFC 5322 format
+
+✅ Phone: +62 prefix optional, 10-15 digits
+
+✅ Password: min 8 chars, 1 uppercase, 1 number, 1 special char
+
+✅ Terms: must be checked
+
+Status Tracking:
+
+text
+[ ] UI layout & styling
+[ ] Form input fields
+[ ] Real-time validation
+[ ] Password strength meter
+[ ] Submit handler
+[ ] API integration
+[ ] Unit tests
+[ ] Integration tests
+Effort: ~15 jam
+
+OTP Verification Screen (lib/screens/auth/otp_screen.dart)
+Purpose: Verify email via OTP sent to user email
+
+UI Elements:
+
+Email display (read-only)
+
+6-digit OTP input (numeric keyboard)
+
+"Verify" button
+
+"Resend OTP" button (with cooldown timer)
+
+Flow:
+
+Show OTP screen after registration
+
+User receives OTP email
+
+User enters 6-digit OTP
+
+Tap VERIFY → POST /api/v1/auth/verify-otp
+
+Response: verification successful
+
+Navigate to home screen (auto login with JWT)
+
+Error Handling:
+
+❌ Invalid OTP → "Incorrect OTP"
+
+❌ OTP expired → "OTP expired, please request new one"
+
+✅ Resend OTP (5s cooldown)
+
+Status Tracking:
+
+text
+[ ] OTP input field (6-digit)
+[ ] Verify handler
+[ ] Resend OTP with cooldown
+[ ] Timer display
+[ ] Navigation after verification
+[ ] Unit tests
+Effort: ~10 jam
+
+2.3 WALLET SCREENS
+Wallet Balance Screen (lib/screens/wallet/wallet_screen.dart)
+Purpose: Display wallet balance, recent transactions, quick actions
+
+UI Elements:
+
+Balance display (large, prominent)
+
+Wallet status indicator (ACTIVE/SUSPENDED/FROZEN)
+
+3 action buttons: Top-Up | Transfer | History
+
+Recent transaction list (last 5 transactions)
+
+Date + time
+
+Description (Top-up, Transfer out/in, Ride payment)
+
+Amount (green for credit, red for debit)
+
+Status badge
+
+State Management (Riverpod Provider):
+
+dart
+final walletProvider = FutureProvider.autoDispose((ref) async {
+  final walletService = ref.watch(walletServiceProvider);
+  return walletService.getBalance();
+});
+
+final transactionHistoryProvider = FutureProvider.autoDispose((ref) async {
+  final walletService = ref.watch(walletServiceProvider);
+  return walletService.getTransactionHistory(limit: 5);
+});
+Refresh Logic:
+
+Pull-to-refresh: Refresh balance + history
+
+Auto-refresh on screen focus: Every 10 seconds
+
+Error Handling:
+
+❌ Network error → "Unable to fetch balance, please try again"
+
+❌ Wallet frozen → Show warning banner "Wallet is frozen, contact support"
+
+❌ Wallet suspended → Show warning banner "Wallet is suspended"
+
+Status Tracking:
+
+text
+[ ] UI layout & styling (Material Design 3)
+[ ] Balance display with formatting
+[ ] Action buttons
+[ ] Transaction list
+[ ] Pull-to-refresh
+[ ] Auto-refresh on focus
+[ ] Empty state (no transactions)
+[ ] Loading & error states
+[ ] Unit tests
+[ ] Widget tests
+Effort: ~20 jam
+
+Top-Up Screen (lib/screens/wallet/topup_screen.dart)
+Purpose: User memasukkan amount, simulasi payment, verify balance updated
+
+UI Elements:
+
+Amount input field (numeric, Rp format)
+
+Quick amount buttons (Rp 100K, Rp 250K, Rp 500K)
+
+Balance limit info (show max allowed)
+
+Payment method selector (SIMULATED only for MVP)
+
+"Top-Up" button (disabled until valid amount)
+
+Success confirmation screen
+
+Flow:
+
+User enters amount (e.g., 500000)
+
+Validate against KYC limit (Bug #25)
+
+Tap TOP-UP → POST /api/v1/wallets/{id}/topup
+
+Show "Processing..." (polling every 2s)
+
+Call Webhook simulation → ledger mutation
+
+Balance updates, show success screen
+
+Navigation back to wallet screen
+
+Validation:
+
+Amount >= 1000 (minimum)
+
+Amount <= 50000000 (maximum)
+
+(current_balance + amount) <= KYC_limit
+
+Amount matches current_balance + amount calculation (verify via backend)
+
+Error Handling:
+
+❌ Invalid amount → "Amount must be between Rp1,000 - Rp50,000,000"
+
+❌ Limit exceeded → "Amount exceeds KYC limit. Please verify identity first."
+
+❌ Network error → "Unable to process top-up. Please try again."
+
+❌ Status=EXPIRED → "Top-up expired, please try again"
+
+Implementation:
+
+dart
+class TopUpScreen extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final amountController = TextEditingController();
+    
+    return Scaffold(
+      appBar: AppBar(title: Text("Top-Up")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: amountController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: "Amount (Rp)",
+                prefix: Text("Rp "),
+              ),
+              onChanged: (value) {
+                // Real-time validation
+              },
+            ),
+            SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                QuickAmountButton(100000, amountController),
+                QuickAmountButton(250000, amountController),
+                QuickAmountButton(500000, amountController),
+              ],
+            ),
+            SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: () async {
+                final result = await ref.read(walletProvider.notifier)
+                    .topUp(int.parse(amountController.text));
+                if (result.success) {
+                  // Show success, navigate
+                } else {
+                  // Show error
+                }
+              },
+              child: Text("TOP-UP"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+Status Tracking:
+
+text
+[ ] Amount input field with formatting
+[ ] Quick amount buttons
+[ ] KYC limit validation
+[ ] Top-up handler (POST /wallets/{id}/topup)
+[ ] Polling for transaction status
+[ ] Success screen
+[ ] Error handling & messages
+[ ] Unit tests
+[ ] Widget tests
+[ ] Integration tests (full flow)
+Effort: ~20 jam
+
+Transaction History Screen (lib/screens/wallet/transaction_history_screen.dart)
+Purpose: Show all transactions untuk user, dengan pagination & filters
+
+UI Elements:
+
+List of all transactions (with pagination, 20 per page)
+
+Filter buttons: All | Debit | Credit | Top-up | Transfer
+
+Search by date range
+
+Each transaction item:
+
+Date + time
+
+Type icon (top-up, transfer, payment)
+
+Description
+
+Amount
+
+Wallet balance after transaction
+
+Implementation:
+
+dart
+class TransactionHistoryScreen extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final transactions = ref.watch(transactionHistoryProvider);
+    
+    return Scaffold(
+      appBar: AppBar(title: Text("Transaction History")),
+      body: transactions.when(
+        loading: () => Center(child: CircularProgressIndicator()),
+        error: (err, st) => Center(child: Text("Error: $err")),
+        data: (data) => ListView.builder(
+          itemCount: data.length,
+          itemBuilder: (context, index) {
+            final txn = data[index];
+            return ListTile(
+              leading: Icon(txn.type == 'DEBIT' ? Icons.arrow_upward : Icons.arrow_downward),
+              title: Text(txn.description),
+              subtitle: Text(txn.createdAt.toString()),
+              trailing: Text(
+                "Rp ${txn.amount}",
+                style: TextStyle(
+                  color: txn.type == 'DEBIT' ? Colors.red : Colors.green,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+Status Tracking:
+
+text
+[ ] Transaction list UI
+[ ] Pagination (load more)
+[ ] Filter implementation
+[ ] Search by date range
+[ ] Transaction detail drill-down
+[ ] Loading & error states
+[ ] Unit tests
+[ ] Widget tests
+Effort: ~15 jam
+
+2.4 CORE PROVIDERS & SERVICES
+Auth Provider (lib/providers/auth_provider.dart)
+Purpose: Manage authentication state across app (login, logout, token refresh)
+
+dart
+final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
+  return AuthNotifier(ref.watch(apiClientProvider));
+});
+
+class AuthNotifier extends StateNotifier<AuthState> {
+  AuthNotifier(this.apiClient) : super(const AuthState());
+  
+  Future<void> login(String email, String password) async {
+    state = const AuthState(isLoading: true);
+    try {
+      final response = await apiClient.post('/auth/login', data: {
+        'email': email,
+        'password': password,
+      });
+      final token = response.data['data']['access_token'];
+      await secureStorage.write(key: 'access_token', value: token);
+      state = AuthState(isLoading: false, user: response.data['data']['user']);
+    } catch (e) {
+      state = AuthState(isLoading: false, error: e.toString());
+    }
+  }
+  
+  Future<void> logout() async {
+    // Call backend blacklist endpoint
+    await apiClient.post('/auth/logout');
+    await secureStorage.delete(key: 'access_token');
+    state = const AuthState();
+  }
+}
+Status Tracking:
+
+text
+[ ] AuthState model
+[ ] AuthNotifier implementation
+[ ] Secure token storage
+[ ] Token refresh logic
+[ ] Logout handler with blacklist
+[ ] Unit tests (Riverpod testing)
+Effort: ~12 jam
+
+Wallet Provider (lib/providers/wallet_provider.dart)
+Purpose: Manage wallet state (balance, transactions, top-up)
+
+dart
+final walletProvider = FutureProvider.autoDispose<Wallet>((ref) async {
+  final apiClient = ref.watch(apiClientProvider);
+  final response = await apiClient.get('/wallets/me');
+  return Wallet.fromJson(response.data['data']);
+});
+
+final topUpProvider = FutureProvider.autoDispose.family<TopUpResponse, int>(
+  (ref, amount) async {
+    final apiClient = ref.watch(apiClientProvider);
+    final idempotencyKey = const Uuid().v4();
+    final response = await apiClient.post(
+      '/wallets/me/topup',
+      data: {'amount': amount},
+      options: Options(headers: {'X-Idempotency-Key': idempotencyKey}),
+    );
+    return TopUpResponse.fromJson(response.data['data']);
+  },
+);
+Status Tracking:
+
+text
+[ ] Wallet model & JSON serialization
+[ ] WalletProvider implementation
+[ ] Transaction history provider
+[ ] Top-up provider with idempotency
+[ ] API error handling
+[ ] Unit tests
+Effort: ~10 jam
+
+2.5 API CLIENT & CONFIGURATION
+Dio HTTP Client Setup (lib/services/api_client.dart)
+Purpose: Configure HTTP client dengan retry, timeout, interceptors
+
+dart
+final apiClientProvider = Provider((ref) {
+  final dio = Dio(BaseOptions(
+    baseUrl: 'https://api.g-flow.com',
+    connectTimeout: const Duration(seconds: 60),
+    receiveTimeout: const Duration(seconds: 60),
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'G-Flow/mobile/1.0',
+    },
+  ));
+  
+  // Add auth interceptor
+  dio.interceptors.add(AuthInterceptor());
+  
+  // Add retry interceptor (exponential backoff)
+  dio.interceptors.add(RetryInterceptor(dio: dio));
+  
+  // Add logging interceptor (dev only)
+  if (kDebugMode) {
+    dio.interceptors.add(LoggingInterceptor());
+  }
+  
+  return dio;
+});
+Features:
+
+✅ 60s connection timeout
+
+✅ 60s receive timeout
+
+✅ Retry on network error (3x, exponential backoff)
+
+✅ Add Authorization header from secure storage
+
+✅ Handle 401 → refresh token → retry
+
+✅ JSON logging (debug mode only)
+
+Status Tracking:
+
+text
+[ ] Dio configuration
+[ ] Auth interceptor
+[ ] Retry interceptor (exponential backoff)
+[ ] Logging interceptor
+[ ] Error handling interceptor
+[ ] Unit tests
+Effort: ~10 jam
+
+🧪 TESTING STRATEGY
+3.1 UNIT TESTS (Backend - Golang)
+Target Coverage: 85% pada wallet/, auth/
+
+Test Cases (Core):
+
+Test Case	Module	Description
+TC-W001	wallet	Create wallet: valid input → wallet created
+TC-W002	wallet	Create wallet: duplicate → error 409
+TC-W003	wallet	Get balance: valid wallet → return balance
+TC-W004	wallet	Double-entry ledger: DEBIT = CREDIT verified
+TC-W005	wallet	Top-up: valid amount → PENDING transaction created
+TC-W006	wallet	Top-up: KYC limit exceeded → error 422 (Bug #25)
+TC-W007	wallet	Top-up: idempotency key duplicate → same response (L1+L2)
+TC-W008	wallet	Transfer: sufficient balance → transaction created
+TC-W009	wallet	Transfer: insufficient balance → error 422
+TC-W010	wallet	Transfer: concurrent A→B and B→A → no deadlock (ORDER BY id)
+TC-W011	wallet	Webhook: duplicate webhook → rows_affected=0 → skip ledger
+TC-A001	auth	JWT generation: valid claims → token created
+TC-A002	auth	JWT validation: valid token → claims extracted
+TC-A003	auth	JWT validation: expired token → error 401
+TC-A004	auth	Token blacklist: logout → token invalidated
+TC-A005	auth	RBAC: customer accessing admin endpoint → error 403
+Testing Tools:
+
+Go testing (built-in)
+
+testify/assert
+
+testify/mock (for mocking repositories)
+
+dockertest (for PostgreSQL test container)
+
+Example Test (Webhook Atomic Check):
+
+golang
+func TestWebhook_Duplicate_IgnoresSecond(t *testing.T) {
+    // Arrange: Create PENDING transaction
+    txn := createPendingTopUp(t, userID, 500000)
+    
+    // Act: First webhook (successful)
+    err := walletService.ConfirmTopUp(ctx, txn.ID, "COMPLETED")
+    assert.NoError(t, err)
+    
+    // Act: Second webhook (duplicate)
+    err = walletService.ConfirmTopUp(ctx, txn.ID, "COMPLETED")
+    assert.NoError(t, err) // Should not error
+    
+    // Assert: Only 2 ledger entries (debit + credit)
+    entries := getAllLedgerEntries(t, txn.ID)
+    assert.Equal(t, 2, len(entries)) // Not 4
+}
+Status Tracking:
+
+text
+[ ] Unit tests written (all 15+ test cases)
+[ ] Mocking setup
+[ ] Test data fixtures
+[ ] Coverage report generation
+[ ] CI pipeline integration
+Effort: ~25 jam
+
+3.2 INTEGRATION TESTS (Backend - Golang)
+Test Cases (End-to-End Flows):
+
+Test Case	Description
+TC-INT-001	User registration → create wallet → get balance
+TC-INT-002	Top-up flow: create transaction → webhook → ledger entries → balance updated
+TC-INT-003	Double-entry verification: 10 top-ups → SUM(debit) = SUM(credit)
+TC-INT-004	Idempotency verification: 5 identical requests → 1 ledger entry, 5 identical responses
+TC-INT-005	Concurrency test: 10 concurrent top-ups → all succeed, no race condition
+TC-INT-006	Transfer flow: customer A → customer B → both wallets updated correctly
+TC-INT-007	KYC limit: unverified user tries top-up > Rp 2M → error 422
+TC-INT-008	Overdue debt: customer has debt → top-up auto-deducts debt first (Bug #47)
+TC-INT-009	Deadlock prevention: 10 concurrent transfers A↔B → no deadlock
+TC-INT-010	Webhook idempotency: duplicate webhook → no double credit
+TC-INT-011	Token blacklist: logout → token invalid, can't use
+Testing Environment:
+
+PostgreSQL 15 in Docker (testcontainers)
+
+Redis in Docker
+
+Separate test database (auto-cleanup per test)
+
+Seed data: 10 test users, 10 wallets
+
+Status Tracking:
+
+text
+[ ] Integration tests written (11 test cases)
+[ ] Test database setup & cleanup
+[ ] Seed data generation
+[ ] Concurrent request simulation
+[ ] Ledger verification queries
+[ ] CI pipeline integration
+Effort: ~22 jam
+
+3.3 API TESTS (End-to-End)
+Tools: k6 (performance testing) + curl/Postman (manual)
+
+Test Cases:
+
+Test Case	Endpoint	Method	Verification
+TC-API-001	/wallets/{id}/balance	GET	Status 200, return current balance
+TC-API-002	/wallets/{id}/topup	POST	Status 201, transaction PENDING
+TC-API-003	/wallets/{id}/transfer	POST	Status 201, both wallets updated
+TC-API-004	/auth/login	POST	Status 200, return JWT tokens
+TC-API-005	/auth/logout	POST	Status 200, token blacklisted
+TC-API-006	/health	GET	Status 200 OK
+TC-API-007	/ready	GET	Status 200 if ready, 503 if not
+Performance Test (k6):
+
+javascript
+import http from 'k6/http';
+import { check } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '2m', target: 50 },  // 50 users for 2 min
+    { duration: '5m', target: 200 }, // 200 users for 5 min
+    { duration: '2m', target: 0 },   // Ramp down
+  ],
+  thresholds: {
+    'http_req_duration': ['p(95)<200'],  // p95 < 200ms
+  },
+};
+
+export default function () {
+  const token = 'eyJhbGc...'; // JWT token
+  
+  let res = http.get('http://localhost:8080/api/v1/wallets/me/balance', {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  
+  check(res, {
+    'status 200': (r) => r.status === 200,
+    'response < 200ms': (r) => r.timings.duration < 200,
+  });
+}
+Status Tracking:
+
+text
+[ ] Postman collection created
+[ ] k6 performance test script
+[ ] Load test execution (500 RPS)
+[ ] Latency metrics (p95, p99)
+[ ] Error rate verification (< 0.1%)
+Effort: ~12 jam
+
+3.4 MOBILE TESTS (Flutter)
+Unit Tests:
+
+dart
+void main() {
+  group('WalletProvider', () {
+    test('getBalance returns correct balance', () async {
+      final mock = MockApiClient();
+      when(mock.get('/wallets/me')).thenAnswer(
+        (_) async => Response(
+          data: {'data': {'balance': 500000}},
+          statusCode: 200,
+        ),
+      );
+      
+      final provider = WalletService(mock);
+      final balance = await provider.getBalance();
+      
+      expect(balance, 500000);
+    });
+  });
+}
+Widget Tests:
+
+dart
+void main() {
+  testWidgets('WalletScreen displays balance', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(home: WalletScreen()),
+      ),
+    );
+    
+    expect(find.text('Rp 500,000'), findsOneWidget);
+  });
+}
+Status Tracking:
+
+text
+[ ] Unit tests (Dart)
+[ ] Widget tests (Flutter)
+[ ] Integration tests (complete screens)
+[ ] Mock API setup
+[ ] Test fixture data
+Effort: ~15 jam
+
+✅ GO/NO-GO GATE
+Sebelum lanjut ke Phase 2, SEMUA kriteria berikut harus tercapai:
+
+Backend Criteria
+✅ Database schema fully migrated to Supabase (all 5 tables)
+
+✅ All backend endpoints implemented & documented (OpenAPI)
+
+✅ Double-entry ledger working: 100 test transactions → SUM(debit) = SUM(credit)
+
+✅ Idempotency verified: 5 identical top-ups → 1 ledger entry, 5 identical responses (L1+L2)
+
+✅ KYC limit enforced: Unverified user can't top-up > Rp 2M
+
+✅ Overdue debt auto-deduction: customer debt → top-up deducts debt first (Bug #47)
+
+✅ Deadlock-free transfers: ORDER BY id prevents deadlock (verified via concurrent test)
+
+✅ Webhook idempotent: duplicate webhook → rows_affected=0 → skip ledger
+
+✅ Token blacklist: logout/suspend invalidates JWT before expiry
+
+✅ Unit test coverage: 85%+ pada wallet/, auth/
+
+✅ Integration tests: All 11 test cases passing
+
+✅ API tests: k6 load test (500 RPS, p95 < 200ms, error rate < 0.1%)
+
+✅ No critical vulnerabilities (OWASP scan)
+
+✅ Graceful error handling (no 500 errors on normal edge cases)
+
+Mobile Criteria
+✅ Customer App can build & run on iOS 14+ and Android API 28+
+
+✅ Login screen fully functional (email/password auth works)
+
+✅ OTP screen fully functional (verify email via 6-digit OTP)
+
+✅ Wallet screen displays balance + recent transactions
+
+✅ Top-up screen works end-to-end (user enters amount → transaction created → balance updates)
+
+✅ Transaction history screen shows all transactions with pagination
+
+✅ Error messages clear & actionable
+
+✅ Cold start time < 3 seconds
+
+✅ No crashes (Firebase Crashlytics report = 0 crashes)
+
+✅ Widget tests passing (85%+ coverage on critical screens)
+
+Documentation Criteria
+✅ API contract updated (OpenAPI 3.0 spec)
+
+✅ Database schema locked (DATABASE_SCHEMA v10.4-FINAL)
+
+✅ README.md created with setup instructions
+
+✅ Deployment guide created (Render.com + Supabase setup)
+
+✅ Troubleshooting guide created
+
+Deployment Criteria
+✅ Backend deployed to Render.com (free tier)
+
+✅ Database deployed to Supabase (free tier)
+
+✅ Health check passing (/health & /ready endpoints)
+
+✅ HTTPS enforced (SSL/TLS)
+
+✅ Environment variables configured (no hardcoded secrets)
+
+✅ Database backups configured (Supabase auto-backup)
+
+📂 MONOREPO STATE
+After Phase 1 Completion:
+
+text
+g-flow-monorepo/
+├── backend/
+│   ├── internal/
+│   │   ├── auth/ (JWT, RBAC, TokenBlacklist)
+│   │   ├── wallet/ (PayPulse engine + dual-layer idempotency)
+│   │   ├── db/ (PostgreSQL connection, schema)
+│   │   ├── middleware/ (logging, error handling)
+│   │   └── health/ (readiness checks)
+│   ├── cmd/api/main.go (entry point)
+│   ├── migrations/ (database schema)
+│   ├── tests/ (unit + integration)
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── go.mod (includes: pgx, Gin, decimal, testify)
+│   └── README.md
+│
+├── packages/
+│   └── core/ (shared Flutter models, services, widgets)
+│
+├── apps/
+│   └── customer_app/
+│       ├── lib/
+│       │   ├── screens/auth/ (login, register, otp)
+│       │   ├── screens/wallet/ (balance, topup, history)
+│       │   ├── screens/home/ (tab navigation)
+│       │   ├── providers/ (auth, wallet)
+│       │   ├── services/ (api_client)
+│       │   ├── config/ (router, constants)
+│       │   └── main.dart
+│       ├── test/
+│       ├── android/
+│       ├── ios/
+│       └── pubspec.yaml
+│
+├── pubspec.yaml (Melos workspace)
+├── melos.yaml (Melos config)
+└── README.md (Project overview)
+Created Assets:
+
+✅ Backend Golang binary (runnable locally)
+
+✅ Database schema SQL file (runnable on PostgreSQL)
+
+✅ Flutter APK/IPA (testable on emulator/device)
+
+✅ API documentation (OpenAPI 3.0)
+
+✅ Deployment guides
+
+📊 EFFORT BREAKDOWN — CORRECTED (v1.1)
+Component	Estimated Hours
+Backend (Golang)	130 jam
+- Database setup	20
+- Wallet lifecycle service	15
+- Double-entry ledger	25
+- Top-up, transfer, idempotency (dual-layer + deadlock fix)	32
+- Authentication (JWT + RBAC + Token Blacklist)	14
+- Observability (logging, health)	14
+- Error handling & validation	8
+- Seeding & fixtures	6
+Mobile (Flutter - Customer App)	157 jam
+- Project setup & monorepo	10
+- Login screen	15
+- Register screen	15
+- OTP screen	10
+- Wallet screens (balance, topup, history, transfer)	75
+- Core providers & services	22
+- API client & config	10
+Testing	72 jam
+- Unit tests (backend)	25
+- Integration tests (backend)	22
+- API tests (k6)	12
+- Mobile tests (Flutter)	15
+TOTAL Phase 1	359 jam
+(≈24 minggu @ 15 jam/minggu)	✅
+📅 TIMELINE — CORRECTED (v1.1)
+Recommended Execution (15 jam/minggu):
+
+Week	Focus	Deliverable	Go/No-Go
+1-3	Backend Database + Wallet Service	Schema migrated, wallet CRUD working	All wallet tests green
+4-6	Ledger + Idempotency (L1+L2) + Deadlock fix	Double-entry working, idempotency verified	SUM(debit)=SUM(credit) ✓
+7-8	Auth + RBAC + Token Blacklist	JWT generation/validation, blacklist	Login + logout endpoints
+9	Observability + Error Handling	Logging, health checks, error responses	/health & /ready endpoints
+10-11	Mobile Setup + Auth Screens	Flutter project, login/register/OTP	Can login on phone
+12-15	Mobile Wallet Screens	Balance, top-up, history, transfer screens	Can top-up on phone
+16-17	Testing + Hardening	Unit, integration, API tests	85%+ coverage, k6 test passing
+18-20	Deployment + Documentation	Render + Supabase setup, guides	Backend deployed & accessible
+21-22	Bug Fix + Regression	Fix critical bugs, re-run all tests	All tests passing
+23-24	Final Validation + Go/No-Go	Complete all Go/No-Go gates	✅ READY FOR PHASE 2
+🚨 RISKS & MITIGATION — UPDATED
+Risk	Impact	Mitigation
+PostgreSQL connection issues	Database unavailable	Test pool config (maxConns=15), implement retry with exponential backoff
+Ledger balance discrepancy	Financial accuracy broken	Unit + integration tests verify SUM(debit)=SUM(credit) every test run
+Race condition on concurrent top-ups	Double spending	Use idempotency_cache with unique constraint (L1+L2), integration test concurrency
+Deadlock on concurrent transfers	Transaction rollback/failure	ORDER BY id ASC on SELECT FOR UPDATE, test concurrent A↔B transfers
+Webhook double-spend	Double credit to wallet	Atomic UPDATE WHERE status = 'PENDING', rows_affected guard
+Redis eviction causing idempotency bypass	Duplicate requests processed	PostgreSQL L2 fallback with unique constraint
+JWT token still valid after logout	Security breach	Token blacklist (Redis) checked in AuthMiddleware
+Flutter app cold start > 3s	Poor UX	Profile app with DevTools, minimize main() logic, lazy load providers
+Mobile build failure (iOS/Android)	Can't test on device	Setup CI/CD pipeline early, test builds daily
+Supabase free tier quota exceeded	Service outage	Monitor connection count, set maxConns=15, use connection pooling
+🎯 SUCCESS METRICS
+By end of Phase 1:
+
+✅ Backend:
+
+API latency p95 < 200ms (verified via k6)
+
+Ledger balance discrepancy = Rp 0 (verified via query)
+
+Idempotency deduplication = 100% (L1+L2 verified)
+
+Deadlock-free transfers (verified via concurrent test)
+
+Webhook idempotent (verified via duplicate test)
+
+Token blacklist functional (verified via logout test)
+
+Code coverage >= 85% on wallet/ & auth/
+
+✅ Mobile:
+
+App cold start < 3 seconds
+
+Crash rate < 1% (Firebase Crashlytics)
+
+All critical screens tested (widget tests passing)
+
+✅ Overall:
+
+Customer can log in, see balance, top-up, see transaction history, and logout securely
+
+No critical/blocker issues
+
+All documentation complete & linked
+
+📝 NEXT STEPS (PHASE 2)
+After Phase 1 GO, Phase 2 will focus on:
+
+🚗 G-Ride module (booking, dispatch matching, settlement)
+
+👥 Driver App (accept orders, track location, complete delivery)
+
+🔗 Cross-module settlement (ride → wallet ledger entries)
+
+Phase 2 Estimated Effort: 200+ jam
+
+📞 CONTACT & REFERENCES
+Document	Link	Owner
+PRD (Product Requirements)	PRD.txt	M. Arif Aulia
+Database Schema v10.4-FINAL	DATABASE_SCHEMA.txt	M. Arif Aulia
+Logic Flow & State Machines	LOGIC_FLOW.txt	M. Arif Aulia
+Technical Design Document	TDD.txt	M. Arif Aulia
+API Contract	API_CONTRACT.txt	M. Arif Aulia
+UI/UX Wireframes	HALAMAN.txt	M. Arif Aulia
+System Test Plan	STP.txt	M. Arif Aulia
+Blueprint Roadmap	BLUEPRINT_ROADMAP.txt	M. Arif Aulia
+✨ FINAL NOTES
+Bismillah.
+
+Dokumen ini adalah single source of truth untuk Phase 1 execution. Jangan mulai coding tanpa:
+
+✅ Baca document ini sampai akhir
+
+✅ Setup backend Golang + Flutter project structure
+
+✅ Migrate database schema ke Supabase
+
+✅ Verify /health endpoint running
+
+Prinsip Utama:
+
+✅ ATOMIC: Semua transaksi finansial all-or-nothing
+
+✅ IDEMPOTENT: Duplicate request = same response (L1 Redis + L2 PostgreSQL)
+
+✅ THREAD-SAFE: Pessimistic locking dengan ORDER BY id
+
+✅ SECURE: Token blacklist, webhook state guard
+
+✅ ABNORMAL: Sistem tetap konsisten di edge cases
+
+Golden Rule:
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal,
+tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal
+di Situasi yang sedang 'Tidak Normal'" — Vibe Coder Principle
+
+📌 DOCUMENT STATUS
+Field	Value
+Version	1.1-FINAL
+Created	2026-08-14
+Last Updated	2026-08-15
+Author	M. Arif Aulia
+Status	✅ 100% PRODUCTION-READY — LOCKED (REVISED v1.1)
+Review	Approved by Gemini (5 fixes applied)
+Lock Status	LOCKED — No further changes
+END OF ROADMAP PHASE 1 v1.1-FINAL
+
+Next: ROADMAP_02_RIDE_HAILING.md (211 jam, ~14 minggu)

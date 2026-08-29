@@ -1,0 +1,261 @@
+// Package wallet — HTTP Handler (Gin).
+//
+// Handler hanya bertugas memetakan request HTTP menjadi panggilan Service
+// dan men-map error ke status code + error code sesuai API_CONTRACT.
+// Tidak mengandung business logic finansial (itu milik Service/Repository).
+package wallet
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+)
+
+// WalletService adalah kontrak service yang dibutuhkan Handler.
+// Dipenuhi oleh *Service; dijadikan interface agar mudah di-mock pada test.
+type WalletService interface {
+	TopUp(ctx context.Context, req TopUpRequest) (*TopUpResponse, error)
+	Transfer(ctx context.Context, req TransferRequest) (*TransferResponse, error)
+	GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
+	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
+}
+
+// Handler menerima request HTTP dan memanggil Service.
+type Handler struct {
+	svc WalletService
+}
+
+// NewHandler membuat Handler baru dengan dependency injection.
+func NewHandler(svc WalletService) *Handler {
+	return &Handler{svc: svc}
+}
+
+// request/response bodies.
+
+type topUpRequestBody struct {
+	Amount         decimal.Decimal `json:"amount"`
+	IdempotencyKey string          `json:"idempotency_key"`
+}
+
+type transferRequestBody struct {
+	ToWalletID     uuid.UUID       `json:"to_wallet_id"`
+	Amount         decimal.Decimal `json:"amount"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	Description    string          `json:"description"`
+}
+
+type webhookRequestBody struct {
+	TransactionID uuid.UUID `json:"transaction_id"`
+	Status        string    `json:"status"`
+}
+
+// --- endpoints ---
+
+// TopUp POST /api/v1/wallets/:wallet_id/topup
+func (h *Handler) TopUp(c *gin.Context) {
+	if _, err := uuid.Parse(c.Param("wallet_id")); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_WALLET_ID", "invalid wallet_id")
+		return
+	}
+
+	var body topUpRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	if !body.Amount.IsPositive() {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_AMOUNT", ErrInvalidAmount.Error())
+		return
+	}
+	if body.IdempotencyKey == "" {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_IDEMPOTENCY_KEY", "idempotency key is required")
+		return
+	}
+
+	// userID diambil dari JWT claim (diset oleh AuthMiddleware), bukan
+	// di-resolve dari wallet_id (auth tidak lagi stub — Phase 1.2).
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	resp, err := h.svc.TopUp(c.Request.Context(), TopUpRequest{
+		UserID:         userID,
+		Amount:         body.Amount,
+		IdempotencyKey: body.IdempotencyKey,
+	})
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
+// Transfer POST /api/v1/wallets/:wallet_id/transfer
+func (h *Handler) Transfer(c *gin.Context) {
+	fromWalletID, err := uuid.Parse(c.Param("wallet_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_WALLET_ID", "invalid wallet_id")
+		return
+	}
+
+	var body transferRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	if !body.Amount.IsPositive() {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_AMOUNT", ErrInvalidAmount.Error())
+		return
+	}
+	if body.IdempotencyKey == "" {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_IDEMPOTENCY_KEY", "idempotency key is required")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	resp, err := h.svc.Transfer(c.Request.Context(), TransferRequest{
+		UserID:         userID,
+		FromWalletID:   fromWalletID,
+		ToWalletID:     body.ToWalletID,
+		Amount:         body.Amount,
+		IdempotencyKey: body.IdempotencyKey,
+		Description:    body.Description,
+	})
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
+// GetBalance GET /api/v1/wallets/:wallet_id/balance
+func (h *Handler) GetBalance(c *gin.Context) {
+	walletID, err := uuid.Parse(c.Param("wallet_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_WALLET_ID", "invalid wallet_id")
+		return
+	}
+
+	balance, err := h.svc.GetBalance(c.Request.Context(), walletID)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"wallet_id": walletID,
+			"balance":   balance,
+		},
+	})
+}
+
+// ProcessTopUpWebhook POST /webhooks/topup
+func (h *Handler) ProcessTopUpWebhook(c *gin.Context) {
+	var body webhookRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+
+	if err := h.svc.ProcessTopUpWebhook(c.Request.Context(), body.TransactionID); err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// --- helpers ---
+
+// userIDFromContext mengambil user_id dari Gin context (diset oleh
+// AuthMiddleware dari JWT claim `sub`). Mengembalikan false jika konteks
+// tidak berisi identitas user yang valid.
+func userIDFromContext(c *gin.Context) (uuid.UUID, bool) {
+	v, ok := c.Get("user_id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return uuid.Nil, false
+	}
+	userID, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return userID, true
+}
+
+// statusForError memetakan error service ke status code HTTP.
+func statusForError(err error) int {
+	switch {
+	case errors.Is(err, ErrWalletNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrInvalidAmount),
+		errors.Is(err, ErrKycLimitExceeded),
+		errors.Is(err, ErrInsufficientBalance),
+		errors.Is(err, ErrSameWalletTransfer):
+		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrIdempotencyInProgress):
+		return http.StatusConflict
+	case errors.Is(err, ErrWalletInactive):
+		return http.StatusForbidden
+	case errors.Is(err, ErrWalletNotOwned):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// codeForError memetakan error service ke error code (API_CONTRACT 3.2).
+func codeForError(err error) string {
+	switch {
+	case errors.Is(err, ErrWalletNotFound):
+		return "WALLET_NOT_FOUND"
+	case errors.Is(err, ErrInvalidAmount):
+		return "INVALID_AMOUNT"
+	case errors.Is(err, ErrKycLimitExceeded):
+		return "KYC_LIMIT_EXCEEDED"
+	case errors.Is(err, ErrInsufficientBalance):
+		return "INSUFFICIENT_BALANCE"
+	case errors.Is(err, ErrSameWalletTransfer):
+		return "SELF_TRANSFER_NOT_ALLOWED"
+	case errors.Is(err, ErrIdempotencyInProgress):
+		return "IDEMPOTENCY_IN_PROGRESS"
+	case errors.Is(err, ErrWalletInactive):
+		return "WALLET_INACTIVE"
+	case errors.Is(err, ErrWalletNotOwned):
+		return "WALLET_NOT_OWNED"
+	case errors.Is(err, ErrInvalidCachedResponse):
+		return "INTERNAL_ERROR"
+	default:
+		return "INTERNAL_SERVER_ERROR"
+	}
+}
+
+// writeError menulis error response sesuai format API_CONTRACT:
+// { "success": false, "error": { "code": "...", "message": "..." } }
+func writeError(c *gin.Context, status int, code string, message string) {
+	c.JSON(status, gin.H{
+		"success": false,
+		"error": gin.H{
+			"code":    code,
+			"message": message,
+		},
+	})
+}

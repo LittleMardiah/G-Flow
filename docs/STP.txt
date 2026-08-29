@@ -1,0 +1,2109 @@
+================================================================================
+STP: G-Flow Super-App Ecosystem - System Test Plan (v3.0-FINAL)
+================================================================================
+
+Version:         3.0-FINAL
+Last Updated:    2026-08-14
+Author:          M. Arif Aulia
+Status:          ✅ 100% PRODUCTION-READY — LOCKED (ALL 12 FIXES APPLIED)
+
+================================================================================
+📌 BISMILLAH — FINAL VERSION
+================================================================================
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal, 
+ tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal 
+ di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+================================================================================
+📋 TABLE OF CONTENTS
+================================================================================
+
+1. Document Metadata & Overview
+2. Testing Scope & Objectives
+3. Test Strategy & Pyramid
+4. Test Case Definition (18 Test Cases)
+5. Test Execution Plan
+6. Test Automation Strategy
+7. Data Management & Fixtures
+8. Performance Testing (With p95/p99 Metrics)
+9. Security Testing (With BOLA, PII Masking, Data Retention)
+10. Quality Metrics & Reporting
+11. Bug Tracking & Resolution
+12. Risks & Mitigation
+13. Appendix: 12 Fixes Applied
+
+================================================================================
+1. DOCUMENT METADATA & OVERVIEW
+================================================================================
+
+1.1 PROJECT INFORMATION
+
+| Field | Value |
+|-------|-------|
+| Project Name | G-Flow Super-App Ecosystem |
+| Acronym | GFLOW |
+| Release Version | 1.0-MVP |
+| Release Target Date | 2026-10-16 |
+| Platform | Mobile (iOS/Android) + Web Admin |
+| STP Owner | M. Arif Aulia (Solo Developer) |
+| Document Version | 3.0-FINAL |
+| Created | 2026-08-14 |
+| Last Updated | 2026-08-14 |
+| Status | ✅ APPROVED |
+
+1.2 DOCUMENT PURPOSE
+
+Dokumen ini menjelaskan **strategi testing end-to-end** untuk G-Flow V1.0-MVP, mencakup:
+- ✅ Scope testing (fitur, platform, environment)
+- ✅ Strategi testing (unit, integration, API, E2E, performance, security)
+- ✅ Test case definition & documentation
+- ✅ Execution plan (timeline, resource, trigger)
+- ✅ Automation strategy (CI/CD integration)
+- ✅ Quality acceptance criteria
+- ✅ Bug tracking & resolution workflow
+- ✅ Risk mitigation
+
+1.3 RELATED DOCUMENTS
+
+- ✅ [PRD.md](./PRD.md) — Product requirements & MVP scope
+- ✅ [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) — Complete schema & constraints
+- ✅ [LOGIC_FLOW.md](./LOGIC_FLOW.md) — Business logic flows & state machines
+- ✅ [HALAMAN.md](./HALAMAN.md) — UI wireframes & screen flows
+- ✅ [TDD.md](./TDD.md) — Technical architecture & implementation
+- ✅ [API_CONTRACT.md](./API_CONTRACT.md) — REST API specifications
+- ✅ [SECURITY_SPEC.md](./SECURITY_SPEC.md) — Security requirements & controls
+- ✅ [DRP.md](./DRP.md) — Disaster recovery & business continuity
+
+================================================================================
+2. TESTING SCOPE & OBJECTIVES
+================================================================================
+
+2.1 SCOPE: FEATURES IN TESTING (V1.0-MVP)
+
+PAYPULSE MODULE (DIGITAL WALLET & LEDGER)
+
+| Feature | Priority | Test Type | Coverage Target |
+|---------|----------|-----------|-----------------|
+| Wallet creation & initialization | P0 | Unit + Integration | 85% |
+| Top-up (simulated) | P0 | Unit + Integration + API | 85% |
+| Transfer between wallets | P0 | Unit + Integration + API | 85% |
+| Idempotency (duplicate prevention) | P0 | Integration + API | 85% |
+| Double-entry bookkeeping | P0 | Integration + DB | 85% |
+| Ledger balance verification | P0 | Unit + Integration | 85% |
+| Transaction history retrieval | P1 | API + E2E | 75% |
+| Wallet suspension/freeze | P1 | Integration + API | 75% |
+| Saga rollback & compensating transactions | P0 | Integration | 85% |
+| Webhook idempotency (duplicate/retried webhook) | P0 | Integration | 85% |
+| Overdue debt auto-deduction (Bug #47) — TC-017 | P0 | Unit + Integration | 85% |
+| KYC limit validation (Bug #25) — TC-018 | P0 | Unit + Integration | 85% |
+
+G-RIDE MODULE (RIDE-HAILING)
+
+| Feature | Priority | Test Type | Coverage Target |
+|---------|----------|-----------|-----------------|
+| Ride booking | P0 | Unit + Integration + API | 85% |
+| Fare calculation (distance-based) | P0 | Unit + Integration | 85% |
+| Driver dispatch matching (race condition prevention) | P0 | Integration + Concurrency | 85% |
+| Order status state machine | P0 | Unit + Integration | 85% |
+| Driver assignment (pessimistic locking) | P0 | Concurrency test | 85% |
+| Settlement & ledger entries | P0 | Integration + API | 85% |
+| Ride tracking (polling) | P1 | E2E + Integration | 75% |
+| Order cancellation & refund | P1 | Integration + API | 75% |
+| Ride rating & review | P2 | E2E | 50% |
+| Polling State Sync (WebSocket replacement for MVP) — TC-013 | P1 | Integration + E2E | 75% |
+| DB deadlock prevention (cyclic transfer) — TC-007 | P0 | Concurrency | 85% |
+
+G-FOOD MODULE (FOOD DELIVERY)
+
+| Feature | Priority | Test Type | Coverage Target |
+|---------|----------|-----------|-----------------|
+| Merchant profile management | P1 | Integration + API | 75% |
+| Menu catalog & items | P0 | Integration + API | 85% |
+| Food order creation | P0 | Unit + Integration + API | 85% |
+| Merchant order acceptance | P0 | Integration + API | 85% |
+| Merchant preparation status | P1 | Integration + API | 75% |
+| Driver dispatch for food | P0 | Integration + Concurrency | 85% |
+| Food order settlement (3-way) | P0 | Integration + API | 85% |
+| Order tracking & status updates | P1 | E2E | 75% |
+| Merchant & delivery ratings | P2 | E2E | 50% |
+| Mobile background state reconciliation — TC-014 | P1 | E2E | 75% |
+
+G-SEND MODULE (INSTANT LOGISTICS)
+
+| Feature | Priority | Test Type | Coverage Target |
+|---------|----------|-----------|-----------------|
+| Package specs & weight calculation | P1 | Unit + Integration | 75% |
+| Send order creation (pickup/dropoff) | P0 | Unit + Integration + API | 85% |
+| Distance calculation (Haversine) | P0 | Unit + Integration | 85% |
+| Fare estimation (distance + weight) | P0 | Unit + Integration | 85% |
+| Driver assignment for delivery | P0 | Integration + Concurrency | 85% |
+| Delivery proof (photo capture) | P1 | E2E | 75% |
+| Send order settlement | P0 | Integration + API | 85% |
+| Multi-stop partial cancellation — TC-012 | P1 | Integration | 75% |
+
+CROSS-MODULE FEATURES
+
+| Feature | Priority | Test Type | Coverage Target |
+|---------|----------|-----------|-----------------|
+| JWT authentication | P0 | Unit + Integration + API | 90% |
+| Role-based access control (RBAC) | P0 | Integration + API | 85% |
+| Admin ledger audit trail | P1 | Integration + API | 75% |
+| Admin user suspension/freeze | P1 | Integration + API | 75% |
+| Notification system (push, email) | P1 | E2E | 75% |
+| API versioning & backward compatibility — TC-010 | P1 | Integration | 75% |
+| Data retention & Right to be Forgotten — TC-011 | P1 | Integration | 75% |
+
+2.2 SCOPE: FEATURES OUT OF TESTING (V1.0-MVP)
+
+| Feature | Reason | Target Release |
+|---------|--------|-----------------|
+| Real-time WebSocket driver tracking | Polling sufficient for MVP | V1.1 |
+| Dynamic surge pricing | Static fare acceptable for MVP | V1.1 |
+| Third-party payment gateways (Stripe, GCash) | Simulated payment OK | V2.0 |
+| Multi-language support | English only for MVP | V1.1 |
+| Merchant KYC verification | Manual verification OK | V1.1 |
+| Dark mode UI | Not required for MVP | V1.1 |
+| Offline capability | Online-only for MVP | V1.2 |
+
+2.3 PLATFORM & ENVIRONMENT SCOPE
+
+FRONTEND PLATFORMS
+
+Mobile App (Flutter):
+- ✅ iOS: 14.0+
+- ✅ Android: API 28 (Android 9.0)+
+- ✅ Screen sizes: 4.5" - 6.7" (phones), 7.9" - 12.9" (tablets)
+
+Admin Web (Next.js):
+- ✅ Chrome 90+
+- ✅ Firefox 88+
+- ✅ Safari 14+
+- ✅ Edge 90+
+
+BACKEND PLATFORMS
+
+- ✅ Go: 1.22+
+- ✅ PostgreSQL: 15+
+- ✅ Linux: Ubuntu 22.04 LTS (production)
+- ✅ Windows/macOS: Local development
+
+NETWORK CONDITIONS
+
+- ✅ 5G / Fiber (< 50ms latency)
+- ✅ 4G / LTE (50-150ms latency)
+- ✅ 3G / Mobile data (150-500ms latency)
+- ✅ WiFi (< 50ms latency)
+- ✅ Dropped connection / reconnect scenarios (via polling fallback)
+
+TEST ENVIRONMENTS
+
+| Environment | Purpose | Data | Configuration |
+|-------------|---------|------|-----------------|
+| Local | Development & quick testing | Test data (seed.sql) | Docker Compose |
+| Staging | Pre-production validation | Realistic data (anonymized) | Supabase staging |
+| Production | Live environment | Real user data | Supabase production |
+
+2.4 TESTING OBJECTIVES
+
+- ✅ Validate all P0 features meet PRD requirements
+- ✅ Ensure zero double-spending incidents (idempotency + locking)
+- ✅ Verify ledger invariant (SUM debit = SUM credit always)
+- ✅ Prevent race conditions on concurrent operations (dispatch matching)
+- ✅ Validate API contracts match OpenAPI 3.0 specification
+- ✅ Ensure system performance meets SLA (< 200ms p95, < 300ms p99)
+- ✅ Identify security vulnerabilities before production
+- ✅ Document all bugs with severity & resolution
+- ✅ Achieve 85%+ code coverage on critical modules
+- ✅ Ensure system stability (99.5% uptime target)
+
+================================================================================
+3. TEST STRATEGY & PYRAMID
+================================================================================
+
+3.1 TESTING PYRAMID OVERVIEW
+
+                      /\
+                     /  \          E2E / UI Tests
+                    /    \         (10-15% of effort)
+                   /------\
+                  /        \
+                 /          \      Integration Tests
+                /            \     (35-40% of effort)
+               /              \
+              /________________\
+             /                  \  Unit Tests
+            /                    \ (45-50% of effort)
+           /______________________ \
+
+Distribution & Effort Allocation:
+- Unit Tests: 45-50% of effort (highest ROI)
+- Integration Tests: 35-40% of effort (critical for data flows)
+- E2E/UI Tests: 10-15% of effort (user-facing validation)
+- Performance/Security Tests: 5-10% of effort (quality gate)
+
+3.2 TEST LEVELS & DEFINITIONS
+
+LEVEL 1: UNIT TESTS (45-50% EFFORT)
+
+Purpose: Test individual functions/methods in isolation
+
+Scope:
+- ✅ All service layer functions (business logic)
+- ✅ All utility/helper functions
+- ✅ Wallet balance calculations
+- ✅ Fare calculations (Haversine, distance-based)
+- ✅ Idempotency key deduplication logic
+- ✅ Password hashing & validation
+- ✅ JWT token creation/validation
+- ✅ Error handling & edge cases
+- ✅ KYC limit validation (Bug #25)
+- ✅ Overdue debt auto-deduction logic (Bug #47)
+
+Tools:
+- Go testing (built-in `testing` package)
+- Assertion library: `testify/assert`
+- Mocking: `mockery` or `testify/mock`
+
+Coverage Target: Minimum 85% for critical modules (wallet, ride, food)
+
+Example Test Case (Go):
+
+```golang
+// Test wallet balance calculation
+func TestWalletBalanceAfterTopUp(t *testing.T) {
+  t.Run("successful top-up", func(t *testing.T) {
+    // Arrange
+    wallet := &Wallet{ID: "w1", Balance: 100000}
+    
+    // Act
+    newBalance, err := wallet.AddBalance(50000)
+    
+    // Assert
+    assert.NoError(t, err)
+    assert.Equal(t, int64(150000), newBalance)
+  })
+  
+  t.Run("invalid amount", func(t *testing.T) {
+    wallet := &Wallet{Balance: 100000}
+    newBalance, err := wallet.AddBalance(-50000)
+    assert.Error(t, err)
+    assert.Equal(t, "Amount must be positive", err.Error())
+    assert.Equal(t, int64(100000), newBalance) // unchanged
+  })
+}
+Execution: Local machine + CI pipeline (< 1 minute)
+
+LEVEL 2: INTEGRATION TESTS (35-40% EFFORT)
+
+Purpose: Test interaction between service, repository, and database
+
+Scope:
+
+✅ Wallet creation → Top-up → Ledger entry creation
+
+✅ Ride booking → Fare calculation → Payment deduction → Order creation
+
+✅ Driver dispatch matching (10 concurrent drivers accepting same order)
+
+✅ Food order creation → Merchant notification → Settlement
+
+✅ Send order → Haversine distance calculation → Fare estimation
+
+✅ Multi-wallet settlement (customer → merchant → driver → platform)
+
+✅ Idempotency cache check → Duplicate request handling
+
+✅ Transaction rollback on error
+
+✅ Saga rollback & compensating transactions
+
+✅ Webhook idempotency (duplicate/retried webhook)
+
+✅ DB deadlock prevention (cyclic transfer)
+
+✅ Redis cache failover & graceful degradation
+
+✅ Circuit breaker pattern for external APIs
+
+✅ API versioning & backward compatibility
+
+✅ Data retention & Right to be Forgotten
+
+Tools:
+
+PostgreSQL in Docker (testcontainers-go)
+
+Test database setup (seed.sql)
+
+Concurrent request simulation (goroutines)
+
+Redis mock / test container
+
+Test Data Setup:
+
+Pre-load: Users, wallets, merchants
+
+Post-test cleanup: Truncate all tables
+
+Example Test Case:
+
+golang
+// Test complete ride flow with settlement
+func TestRideCompleteFlowWithSettlement(t *testing.T) {
+  // Setup: Create test DB
+  db := setupTestDB()
+  defer db.Close()
+  
+  // Create test users
+  customerID := createTestUser(db, "customer")
+  driverID := createTestUser(db, "driver")
+  customerWalletID := getWalletID(db, customerID)
+  
+  // Create initial balances
+  setWalletBalance(db, customerID, 500000)
+  setWalletBalance(db, driverID, 100000)
+  
+  // Service setup
+  rideService := NewRideService(db)
+  
+  // Test: Customer books ride
+  bookReq := BookRideRequest{
+    CustomerID: customerID,
+    PickupLat:  -6.2, PickupLng: 106.8,
+    DropoffLat: -6.3, DropoffLng: 106.9,
+  }
+  orderID, err := rideService.BookRide(context.Background(), bookReq)
+  assert.NoError(t, err)
+  
+  // Verify: Order created with SEARCHING_DRIVER status
+  order, _ := rideService.GetOrder(context.Background(), orderID)
+  assert.Equal(t, "SEARCHING_DRIVER", order.Status)
+  assert.NotNil(t, order.EstimatedFare)
+  
+  // Verify: Ledger entries created (customer deducted)
+  ledgerEntries := getLedgerEntries(db, customerWalletID)
+  assert.True(t, len(ledgerEntries) >= 2) // Debit + Credit at least
+  
+  // Test: Driver accepts order
+  _, err = rideService.AcceptOrder(context.Background(), orderID, driverID)
+  assert.NoError(t, err)
+  
+  // Verify: Order status changed to DRIVER_ASSIGNED
+  order, _ = rideService.GetOrder(context.Background(), orderID)
+  assert.Equal(t, "DRIVER_ASSIGNED", order.Status)
+  assert.Equal(t, driverID, order.DriverID)
+  
+  // Test: Simulate trip complete & settlement
+  rideService.SettleOrder(context.Background(), orderID)
+  
+  // Verify: Order status SETTLED
+  order, _ = rideService.GetOrder(context.Background(), orderID)
+  assert.Equal(t, "SETTLED", order.Status)
+  
+  // Verify: Ledger balanced (debit = credit)
+  balanced, _ := rideService.VerifyLedger()
+  assert.True(t, balanced)
+}
+Execution: CI pipeline (2-5 minutes)
+
+LEVEL 3: API CONTRACT TESTS (20-25% EFFORT)
+
+Purpose: Validate API request/response matches specification
+
+Scope:
+
+✅ All P0 & P1 endpoints (30+ endpoints)
+
+✅ Request validation (headers, body, query params)
+
+✅ Response validation (status codes, schemas)
+
+✅ Error handling (400, 401, 403, 404, 409, 422, 500)
+
+✅ Authentication validation (JWT required/optional)
+
+✅ Authorization enforcement (RBAC)
+
+✅ BOLA/IDOR cross-role security
+
+✅ PII phone masking validation
+
+Tools:
+
+Go HTTP client + JSON assertion
+
+Test framework: httptest (Go built-in)
+
+JSON schema validation: github.com/xeipuuv/gojsonschema or github.com/kinbiko/jsonassert
+
+Example Test Case:
+
+golang
+// Test wallet top-up API contract
+func TestWalletTopUpAPI(t *testing.T) {
+  prevBalance := int64(100000) // declare variable (FIXED)
+  
+  t.Run("successful top-up returns 200 with correct schema", func(t *testing.T) {
+    // Setup
+    router := setupRouter()
+    w := httptest.NewRecorder()
+    
+    // Request
+    req := httptest.NewRequest("POST", "/wallets/123/topup", 
+      bytes.NewBufferString(`{"amount":500000}`))
+    req.Header.Set("Authorization", "Bearer "+testJWT)
+    req.Header.Set("X-Idempotency-Key", "key-123")
+    
+    // Execute
+    router.ServeHTTP(w, req)
+    
+    // Assert
+    assert.Equal(t, 200, w.Code)
+    
+    var resp TopUpResponse
+    json.Unmarshal(w.Body.Bytes(), &resp)
+    assert.NotEmpty(t, resp.TransactionID)
+    assert.Equal(t, prevBalance + 500000, resp.NewBalance)
+  })
+  
+  t.Run("missing idempotency key returns 400", func(t *testing.T) {
+    router := setupRouter()
+    w := httptest.NewRecorder()
+    
+    req := httptest.NewRequest("POST", "/wallets/123/topup", 
+      bytes.NewBufferString(`{"amount":500000}`))
+    req.Header.Set("Authorization", "Bearer "+testJWT)
+    // Missing X-Idempotency-Key
+    
+    router.ServeHTTP(w, req)
+    
+    assert.Equal(t, 400, w.Code)
+  })
+}
+Execution: CI pipeline (1-2 minutes)
+
+LEVEL 4: E2E / UI TESTS (10-15% EFFORT)
+
+Purpose: Test complete user workflows from UI perspective
+
+Scope:
+
+✅ Customer: Login → Book Ride → Track → Rate
+
+✅ Customer: Browse Merchants → Add to Cart → Checkout → Track Order
+
+✅ Driver: Login → Accept Order → Navigate → Mark Complete
+
+✅ Merchant: Login → Accept Order → Mark Preparing → Mark Ready
+
+✅ Admin: Login → View Ledger → Suspend User
+
+✅ Mobile background state reconciliation
+
+✅ Polling State Sync (fallback when WebSocket not available)
+
+Tools:
+
+Dart integration tests (Flutter) for mobile
+
+E2E tests: integration_test package
+
+Selenium / Playwright (if web E2E needed)
+
+Coverage: 1-2 critical user journeys per major feature
+
+Execution: CI pipeline (5-10 minutes)
+
+LEVEL 5: NON-FUNCTIONAL TESTS (5-10% EFFORT)
+
+5A: PERFORMANCE TESTING — WITH TAIL LATENCY METRICS
+
+Purpose: Verify system meets latency & throughput SLAs with p95/p99 metrics
+
+Test Scenarios:
+
+text
+SCENARIO 1: Normal Load (Baseline)
+  Concurrent Users: 50
+  Request Rate: 500 RPS
+  Duration: 10 minutes
+  Expected Response Time (p95): < 200ms
+  Expected Response Time (p99): < 300ms
+  Expected Error Rate: < 0.1%
+  Memory Usage: < 150 MB
+  
+SCENARIO 2: Peak Load (1.5x Normal)
+  Concurrent Users: 75
+  Request Rate: 750 RPS
+  Duration: 5 minutes
+  Expected Response Time (p95): < 250ms
+  Expected Response Time (p99): < 400ms
+  Expected Error Rate: < 0.5%
+  
+SCENARIO 3: Spike Test
+  Ramp-up: 0 → 200 users in 60 seconds
+  Duration: 5 minutes at peak
+  Expected behavior: System recovers, latency returns to baseline within 30s
+  
+SCENARIO 4: Sustained Load (24 hours)
+  Concurrent Users: 30
+  Request Rate: 300 RPS
+  Duration: 1 hour (simulating 24h)
+  Expected: No memory leaks, consistent performance
+k6 Load Test Script (WITH TAIL LATENCY METRICS AND TEARDOWN):
+
+javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+// --- FIXED: testJWT defined via __ENV ---
+const testJWT = __ENV.JWT_TOKEN || 'test-jwt-token-for-load-test';
+
+export let options = {
+  stages: [
+    { duration: '2m', target: 50 },   // Ramp-up
+    { duration: '8m', target: 50 },   // Sustain
+    { duration: '2m', target: 0 },    // Ramp-down
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<200', 'p(99)<300'],
+    http_req_failed: ['rate<0.001'],
+  },
+};
+
+export default function () {
+  const payload = JSON.stringify({
+    to_wallet_id: 'wallet-b',
+    amount: 50000,
+  });
+  
+  const response = http.post('http://localhost:8080/wallets/transfer', payload, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${testJWT}`,
+      'X-Idempotency-Key': `key-${__VU}-${__ITER}`,
+    },
+  });
+  
+  check(response, {
+    'status is 200': (r) => r.status === 200,
+    'latency p95 < 200ms': (r) => r.timings.duration < 200,
+    'latency p99 < 300ms': (r) => r.timings.duration < 300,
+    'body has transaction_id': (r) => r.json('transaction_id') !== undefined,
+  });
+  
+  sleep(1);
+}
+
+// --- FIXED: teardown function added ---
+export function teardown() {
+  // Reset test data sandbox
+  http.post('http://localhost:8080/admin/test/reset', null, {
+    headers: {
+      'Authorization': `Bearer ${testJWT}`,
+      'Content-Type': 'application/json',
+    },
+  });
+}
+Metrics Collection:
+
+text
+- Response Time: p50, p95, p99
+- Throughput: Requests/second
+- Error Rate: % of failed requests
+- Memory: Peak usage, growth over time
+- CPU: Average utilization
+- Database Connections: Active, idle, wait queue
+Acceptance Criteria:
+
+✅ p95 latency < 200ms (500 RPS normal load)
+
+✅ p99 latency < 300ms (500 RPS normal load)
+
+✅ p95 latency < 250ms (750 RPS peak load)
+
+✅ p99 latency < 400ms (750 RPS peak load)
+
+✅ Error rate < 0.1% (normal), < 0.5% (peak)
+
+✅ No memory leaks (sustained 1hr test)
+
+✅ Graceful recovery from spikes (30s recovery time)
+
+Execution: Staging environment (pre-release)
+
+Test Data Isolation & Cleanup:
+
+✅ Each load test run uses isolated database sandbox
+
+✅ Test data automatically reset after each test via teardown()
+
+✅ No cross-contamination between test runs
+
+5B: SECURITY TESTING — WITH BOLA, PII MASKING, DATA RETENTION
+
+Purpose: Verify protection against common vulnerabilities
+
+Test Categories:
+
+Authentication & Authorization
+
+text
+Test: Valid credentials → Access granted
+  Input: email=customer@test.com, password=correct
+  Expected: HTTP 200, JWT token returned
+
+Test: Invalid credentials → Access denied
+  Input: email=customer@test.com, password=wrong
+  Expected: HTTP 401, error message
+
+Test: Missing auth token → 401 Unauthorized
+  Request: GET /wallet/balance (no Authorization header)
+  Expected: HTTP 401
+
+Test: Expired JWT → 401 Unauthorized
+  Input: Expired JWT (exp < now)
+  Expected: HTTP 401, token refresh offered
+
+Test: Insufficient permissions → 403 Forbidden
+  Input: Customer trying to access /admin/users
+  Expected: HTTP 403
+
+Test: RBAC enforcement
+  Input: Driver JWT trying to access customer order (not theirs)
+  Expected: HTTP 403
+BOLA/IDOR Cross-Role Security
+
+text
+Test: Customer accessing other customer's wallet
+  Token: customer1 JWT
+  Request: GET /wallets/wallet-customer-2/balance
+  Expected: HTTP 403 Forbidden (not 404, to prevent enumeration)
+
+Test: Driver accessing merchant's settlement data
+  Token: driver1 JWT
+  Request: GET /merchant/settlement/merchant-1
+  Expected: HTTP 403 Forbidden
+
+Test: Merchant accessing admin ledger
+  Token: merchant1 JWT
+  Request: GET /admin/ledger/audit
+  Expected: HTTP 403 Forbidden
+
+Test: User ID tampering in payload
+  Token: customer1 JWT
+  Request: POST /wallets/transfer
+  Body: { "from_wallet_id": "wallet-customer-2", ... }
+  Expected: HTTP 403 Forbidden (cannot transfer from other's wallet)
+PII Phone Masking & Proxying
+
+text
+Test: Customer phone not exposed to driver
+  Token: driver1 JWT (assigned to ride order)
+  Request: GET /rides/order-123/details
+  Response: { "customer_phone": "proxied-number" }  ← Masked
+  Expected: Original phone number NOT exposed
+
+Test: Driver phone not exposed to customer
+  Token: customer1 JWT
+  Request: GET /rides/order-123/details
+  Response: { "driver_phone": "proxied-number" }  ← Masked
+  Expected: Original phone number NOT exposed
+
+Test: API response does not contain PII in plain text
+  Request: GET /users/profile (authenticated)
+  Response: { "phone": "****5678" }  ← Masked
+  Expected: Full phone number only visible to account owner
+Data Retention & Right to be Forgotten (UU PDP)
+
+text
+Test: Ledger entries NOT deleted on user deletion
+  Action: DELETE /users/user-123 (soft delete)
+  Verify: ledger_entries table still contains user-123 transactions
+  Expected: Ledger preserved (regulatory requirement)
+
+Test: PII anonymized on user deletion
+  Action: DELETE /users/user-123 (soft delete)
+  Verify: users table → email masked, phone NULL, name 'Deleted User'
+  Expected: PII removed but ledger references intact
+
+Test: GPS location data purged after order completion
+  Action: Order completed 30 days ago
+  Verify: driver_location_logs for that order purged
+  Expected: Location data deleted (sensitive data lifecycle)
+
+Test: Right to be Forgotten request
+  Action: POST /users/user-123/forget
+  Verify: PII removed, ledger kept (anonymized)
+  Expected: Compliance with UU PDP
+Input Validation
+
+text
+Test: SQL Injection attempt rejected
+  Input: name=' OR '1'='1
+  Expected: HTTP 400, sanitized/rejected
+
+Test: XSS payload sanitized
+  Input: message=<script>alert('xss')</script>
+  Expected: Stored as escaped text, rendered safely
+
+Test: Invalid data types rejected
+  Input: amount="not_a_number"
+  Expected: HTTP 400, validation error
+
+Test: Buffer overflow protection
+  Input: name with 100,000 characters
+  Expected: HTTP 413 (Payload Too Large) or truncated to max length
+
+Test: Special characters handled safely
+  Input: name=Jean-Luc O'Brien (French, apostrophe)
+  Expected: HTTP 200, stored correctly
+Rate Limiting & DoS Protection
+
+text
+Test: Rate limit enforced per IP
+  Input: 100 requests from same IP in 60s
+  Expected: After limit (e.g., 50/min), HTTP 429 Too Many Requests
+
+Test: Brute force protection (login)
+  Input: 10 failed login attempts
+  Expected: Account locked or CAPTCHA required
+
+Test: API rate limiting
+  Input: 1000 RPS from single user
+  Expected: After limit, HTTP 429, user informed
+CORS & Session Security
+
+text
+Test: CORS headers correct
+  Input: Cross-origin request from another domain
+  Expected: CORS headers set correctly (Access-Control-Allow-Origin)
+
+Test: CSRF protection
+  Input: POST without CSRF token
+  Expected: HTTP 403 if CSRF check enabled
+
+Test: Session token HTTPOnly flag
+  Verify: Set-Cookie header
+  Expected: HttpOnly; Secure; SameSite=Strict flags present
+Tools:
+
+Manual testing (Postman, curl)
+
+OWASP ZAP (automated scanning)
+
+Dependency vulnerabilities: go list -u (for Go), npm audit (for Node)
+
+Execution: Before release on staging
+
+Acceptance Criteria:
+
+✅ All OWASP Top 10 tested
+
+✅ No high-severity vulnerabilities found
+
+✅ All authentication/authorization tests pass
+
+✅ Input validation prevents injection attacks
+
+✅ Rate limiting functional
+
+✅ No secrets in logs
+
+✅ BOLA/IDOR tests pass
+
+✅ PII masking validated
+
+✅ Data retention compliance validated
+
+5C: INFRASTRUCTURE & RESILIENCE TESTING
+
+Purpose: Verify system recovers from failures gracefully
+
+Test Scenarios:
+
+text
+Scenario 1: Database Connection Loss
+  Action: Kill database connection mid-transaction
+  Expected: Automatic retry, circuit breaker activated, error response to client
+
+Scenario 2: Timeout Simulation
+  Action: Delay database response by 30 seconds
+  Expected: Request timeout, graceful error, no hanging connection
+
+Scenario 3: Memory Leak Test
+  Action: Run API under load for 1 hour continuously
+  Expected: Memory usage stable, no growth, garbage collection effective
+
+Scenario 4: Network Latency Spike
+  Action: Introduce 5-second network delay
+  Expected: System responsive, timeouts handled, no cascading failures
+
+Scenario 5: Concurrent Requests Under Failure
+  Action: 10 concurrent requests while database is briefly down (5s)
+  Expected: Requests queue, retry when available, some requests may fail gracefully
+
+Scenario 6: Redis Cache Outage & Failover
+  Action: Stop Redis service during active transactions
+  Expected: 
+    - System falls back to PostgreSQL for rate-limiting/idempotency
+    - No HTTP 500 errors (graceful degradation)
+    - Connection pool not exhausted
+    - Alert triggered
+
+Scenario 7: External API Circuit Breaker
+  Action: Simulate Google Maps API timeout (5s delay)
+  Expected:
+    - Circuit breaker opens after 3 failures
+    - Fallback to OpenStreetMap or cached data
+    - No thread pool exhaustion
+    - Recovery after timeout period
+
+Scenario 8: API Versioning & Backward Compatibility
+  Action: Send request using API v1 (old format) to backend running v2
+  Expected:
+    - Both v1 and v2 endpoints respond correctly
+    - No breaking changes causing crash
+    - Deprecation warning header sent
+    - Graceful handling of missing fields
+Execution: Staging environment (pre-release)
+
+================================================================================
+
+TEST CASE DEFINITION — 18 TEST CASES
+================================================================================
+
+4.1 CRITICAL TEST CASES (P0 FEATURES)
+
+TC-001: WALLET TOP-UP WITH IDEMPOTENCY
+
+text
+TEST CASE ID: TC-001
+Title: Wallet top-up with idempotency key prevents duplicate charges
+Module: PayPulse
+Priority: P0
+Type: Integration + API
+Status: Active
+
+Precondition:
+  - User account exists with wallet ID: w-001
+  - Initial balance: Rp 100,000
+  - JWT token valid
+
+Test Steps:
+  1. Send POST /wallets/w-001/topup
+     Body: { amount: 500000 }
+     Header: X-Idempotency-Key: key-123
+  2. Receive HTTP 200 response with transaction_id: tx-001
+  3. Verify new balance: Rp 600,000
+  4. Send SAME request again with SAME X-Idempotency-Key: key-123
+  5. Receive HTTP 200 response with transaction_id: tx-001 (SAME)
+  6. Verify balance still: Rp 600,000 (NOT doubled to Rp 1,100,000)
+  7. Query ledger_entries table
+  8. Verify only 2 entries exist (1 debit + 1 credit), NOT 4
+
+Expected Result:
+  ✅ First request: New balance = Rp 600,000
+  ✅ Duplicate request: Returns cached response, balance unchanged
+  ✅ Ledger: Exactly 2 entries for this topup (balanced)
+
+Acceptance Criteria:
+  - No duplicate charge on idempotent request
+  - Response is identical (same transaction_id)
+  - Ledger remains balanced (debit = credit)
+TC-002: CONCURRENT DRIVER ORDER MATCHING (RACE CONDITION PREVENTION)
+
+text
+TEST CASE ID: TC-002
+Title: Only 1 driver wins when 10 drivers accept order simultaneously
+Module: G-Ride
+Priority: P0
+Type: Concurrency + Integration
+Status: Active
+
+Precondition:
+  - Ride order exists: order-123, status: SEARCHING_DRIVER
+  - 10 drivers available (driver-1 to driver-10)
+  - All drivers are online and near pickup location
+
+Test Steps:
+  1. Simulate 10 concurrent HTTP requests to POST /rides/order-123/accept
+     Each request: { driver_id: driver-N }
+  2. All 10 requests sent within 100ms (concurrent)
+  3. Observe responses from all 10 drivers
+  4. Query ride_orders table for order-123
+  5. Verify status = DRIVER_ASSIGNED
+  6. Verify assigned_driver_id = ONLY ONE driver (e.g., driver-1)
+  7. Verify ride_order_events for state transitions
+
+Expected Results:
+  ✅ Exactly 1 driver: HTTP 200 "DRIVER_ASSIGNED"
+  ✅ Other 9 drivers: HTTP 409 "Order already assigned"
+  ✅ Database: Only 1 UPDATE on ride_orders
+  ✅ No ghost assignments (order not assigned to multiple drivers)
+
+Acceptance Criteria:
+  - Zero double-booking (only 1 driver assigned)
+  - 9 drivers receive conflict error (HTTP 409)
+  - Pessimistic locking enforced (SELECT ... FOR UPDATE)
+  - Audit trail shows only 1 acceptance event
+TC-003: LEDGER BALANCE VERIFICATION
+
+text
+TEST CASE ID: TC-003
+Title: Ledger entries always sum to zero (debit = credit)
+Module: PayPulse
+Priority: P0
+Type: Data Integrity + Integration
+Status: Active
+
+Precondition:
+  - Multiple transactions completed: topups, transfers, settlements
+  - Database populated with ledger entries
+
+Test Steps:
+  1. Execute query:
+     SELECT 
+       SUM(CASE WHEN entry_type='DEBIT' THEN amount ELSE 0 END) as total_debits,
+       SUM(CASE WHEN entry_type='CREDIT' THEN amount ELSE 0 END) as total_credits
+     FROM ledger_entries WHERE is_reversed=FALSE
+  2. Compare total_debits vs total_credits
+  3. Verify difference = 0
+
+Expected Result:
+  ✅ SUM(DEBIT) = SUM(CREDIT)
+  ✅ Discrepancy: Rp 0
+
+Acceptance Criteria:
+  - Ledger always balanced (100% of time)
+  - Every transaction creates balanced pair (debit + credit)
+  - No orphaned entries
+TC-004: SETTLEMENT WITH MULTI-WALLET DISTRIBUTION
+
+text
+TEST CASE ID: TC-004
+Title: Food order settlement distributes payment correctly to merchant, driver, platform
+Module: G-Food + PayPulse
+Priority: P0
+Type: Integration + Business Logic
+Status: Active
+
+Precondition:
+  - Food order completed: order-456
+  - Order details:
+    - Item total: Rp 40,000
+    - Delivery fee: Rp 8,000
+    - Platform commission: 5% of items = Rp 2,000
+    - Total paid by customer: Rp 48,000
+  - Wallets: Customer, Merchant, Driver, Platform
+  - All wallets have sufficient balance
+
+Test Steps:
+  1. Trigger settlement for order-456 (status: DELIVERED → SETTLED)
+  2. Service calculates:
+     - Merchant earning = Rp 40,000 - Rp 2,000 = Rp 38,000
+     - Driver earning = Rp 8,000
+     - Platform earning = Rp 2,000
+  3. Execute atomic settlement transaction
+  4. Verify all wallet balances updated
+  5. Query ledger entries for order-456
+  6. Verify entries:
+     - DEBIT customer: Rp 48,000
+     - CREDIT merchant: Rp 38,000
+     - CREDIT driver: Rp 8,000
+     - CREDIT platform: Rp 2,000
+
+Expected Results:
+  ✅ Customer balance -= Rp 48,000
+  ✅ Merchant balance += Rp 38,000
+  ✅ Driver balance += Rp 8,000
+  ✅ Platform balance += Rp 2,000
+  ✅ Total DEBIT = Total CREDIT = Rp 48,000
+  ✅ Order status = SETTLED
+
+Acceptance Criteria:
+  - 3-way settlement correct
+  - Ledger balanced (debit = credit)
+  - All wallets updated atomically
+  - No partial settlement (all-or-nothing)
+TC-005: SAGA ROLLBACK & COMPENSATING TRANSACTIONS
+
+text
+TEST CASE ID: TC-005
+Title: Failed distributed transaction triggers compensating transaction
+Module: PayPulse + G-Food
+Priority: P0
+Type: Integration
+Status: Active
+
+Precondition:
+  - Customer has balance: Rp 100,000
+  - Order creation will fail after escrow deduction (simulated)
+
+Test Steps:
+  1. Customer initiates food order
+  2. Escrow deducted: Rp 50,000
+  3. Order creation fails (merchant service timeout)
+  4. Saga orchestrator triggers compensation
+  5. Compensating transaction: CREDIT customer by Rp 50,000
+  6. Verify ledger entries:
+     - DEBIT escrow: Rp 50,000
+     - CREDIT customer: Rp 50,000 (compensation)
+  7. Verify no double refund (only 1 compensation executed)
+  8. Verify SUM(DEBIT) = SUM(CREDIT) = Rp 50,000
+
+Expected Results:
+  ✅ Customer balance restored to Rp 100,000
+  ✅ No double refund (only 1 CREDIT)
+  ✅ Ledger balanced
+  ✅ Order status = CANCELLED
+
+Acceptance Criteria:
+  - Compensating transaction executed exactly once
+  - No double refund
+  - Ledger invariant maintained
+TC-006: WEBHOOK IDEMPOTENCY (DUPLICATE/RETRIED WEBHOOK)
+
+text
+TEST CASE ID: TC-006
+Title: Duplicate/retried webhook does not double-credit wallet
+Module: PayPulse
+Priority: P0
+Type: Integration
+Status: Active
+
+Precondition:
+  - Top-up transaction: txn-789, status: PENDING
+  - Amount: Rp 500,000
+  - Customer balance: Rp 100,000
+
+Test Steps:
+  1. Payment gateway sends SUCCESS webhook (first delivery)
+  2. System processes: CREDIT customer by Rp 500,000
+  3. Transaction status: COMPLETED
+  4. Payment gateway retries SUCCESS webhook (duplicate delivery, 5s later)
+  5. System checks transaction status: COMPLETED
+  6. System IGNORES duplicate webhook
+  7. Verify customer balance: Rp 600,000 (NOT Rp 1,100,000)
+  8. Verify ledger entries: only 2 entries (not 4)
+
+Expected Results:
+  ✅ First webhook processed: balance += Rp 500,000
+  ✅ Duplicate webhook ignored: balance unchanged
+  ✅ Ledger entries: 2 entries only
+  ✅ No double-credit
+
+Acceptance Criteria:
+  - Duplicate webhook detection works
+  - Terminal state protection (COMPLETED cannot be reversed)
+  - No double-credit
+TC-007: DB DEADLOCK PREVENTION (CYCLIC TRANSFER)
+
+text
+TEST CASE ID: TC-007
+Title: Concurrent cyclic transfers do not cause database deadlock
+Module: PayPulse
+Priority: P0
+Type: Concurrency + Integration
+Status: Active
+
+Precondition:
+  - Wallet A: Rp 100,000
+  - Wallet B: Rp 100,000
+  - Both wallets active
+
+Test Steps:
+  1. Simulate Transfer 1: A → B (amount: Rp 50,000)
+  2. Simulate Transfer 2: B → A (amount: Rp 50,000)
+  3. Both transfers executed concurrently (within 5ms)
+  4. Observe database logs for deadlock detection
+  5. Verify both transfers succeed or one fails gracefully
+  6. Verify no transaction left in inconsistent state
+  7. Verify ledger balanced
+
+Expected Results:
+  ✅ No database deadlock detected (SQLSTATE 40P01)
+  ✅ Both transfers eventually complete (or one retried)
+  ✅ Ledger balanced
+  ✅ Wallets balances reflect correct state
+
+Acceptance Criteria:
+  - ORDER BY id locking prevents deadlock
+  - Retry mechanism on deadlock detection (3x)
+  - No inconsistent state
+TC-008: REDIS CACHE FAILOVER & GRACEFUL DEGRADATION
+
+text
+TEST CASE ID: TC-008
+Title: System gracefully degrades when Redis is unavailable
+Module: Infrastructure
+Priority: P1
+Type: Integration
+Status: Active
+
+Precondition:
+  - Redis running (idempotency cache, rate limiting, distributed locks)
+  - API service active
+
+Test Steps:
+  1. Send request to /wallets/topup (successful)
+  2. Stop Redis service (simulate outage)
+  3. Send duplicate request (should hit cache)
+  4. Expected: System falls back to PostgreSQL for idempotency
+  5. Send rate-limited request (login attempt)
+  6. Expected: Rate limiting degraded (allow requests, log warning)
+  7. Verify no HTTP 500 errors (graceful degradation)
+  8. Verify connection pool not exhausted
+  9. Restart Redis
+  10. Verify system resumes normal operation
+
+Expected Results:
+  ✅ No HTTP 500 during Redis outage
+  ✅ Idempotency works via PostgreSQL fallback
+  ✅ Rate limiting degrades gracefully (fail-open)
+  ✅ Connection pool not exhausted
+  ✅ System auto-recovers when Redis restarts
+
+Acceptance Criteria:
+  - Graceful degradation (no crashes)
+  - Automatic recovery on Redis restart
+  - Alert triggered for Redis outage
+TC-009: EXTERNAL API CIRCUIT BREAKER
+
+text
+TEST CASE ID: TC-009
+Title: Circuit breaker prevents cascading failures from external API outages
+Module: Infrastructure
+Priority: P1
+Type: Integration
+Status: Active
+
+Precondition:
+  - Service integrates with Google Maps API
+  - Circuit breaker configured (3 failures → open)
+
+Test Steps:
+  1. Simulate Google Maps API timeout (5s delay)
+  2. Send request to /rides/book (requires distance calculation)
+  3. First request: timeout, circuit breaker increments failure count
+  4. Second request: timeout, circuit breaker increments failure count
+  5. Third request: timeout, circuit breaker opens
+  6. Fourth request: circuit breaker open → fallback to cached data
+  7. Verify response uses fallback data
+  8. Verify thread pool not exhausted
+  9. Wait circuit breaker timeout (10s)
+  10. Verify circuit breaker transitions to half-open
+  11. Verify successful request closes circuit breaker
+
+Expected Results:
+  ✅ Circuit breaker opens after 3 failures
+  ✅ Fallback data used (OpenStreetMap or cached)
+  ✅ No thread pool exhaustion
+  ✅ Automatic recovery after timeout
+
+Acceptance Criteria:
+  - Circuit breaker pattern implemented
+  - Fallback provider works
+  - Thread pool not exhausted
+  - Automatic recovery after timeout
+TC-010: API VERSIONING & BACKWARD COMPATIBILITY
+
+text
+TEST CASE ID: TC-010
+Title: Legacy mobile app continues to work with new backend version
+Module: API
+Priority: P1
+Type: Integration
+Status: Active
+
+Precondition:
+  - Backend running API v2 (breaking changes introduced)
+  - Mobile app running API v1 (old format)
+  - Customer account exists
+
+Test Steps:
+  1. Send request using API v1 format (legacy)
+     GET /api/v1/rides/order-123
+  2. Backend v2 processes request, maps to new format
+  3. Verify response matches v1 format (backward compatible)
+  4. Send request missing new required fields
+  5. Verify system uses defaults or handles gracefully
+  6. Send request with v2 headers
+  7. Verify v2 response has new fields
+  8. Verify no app crashes on legacy clients
+
+Expected Results:
+  ✅ Both v1 and v2 endpoints respond correctly
+  ✅ No breaking changes causing crash
+  ✅ Deprecation warning header sent (v1)
+  ✅ Graceful handling of missing fields
+
+Acceptance Criteria:
+  - Backward compatibility maintained
+  - No breaking changes for legacy clients
+  - Deprecation warnings for deprecated endpoints
+  - Default values for missing fields
+TC-011: DATA RETENTION & RIGHT TO BE FORGOTTEN
+
+text
+TEST CASE ID: TC-011
+Title: PII purged but ledger retained per regulatory requirements
+Module: Compliance
+Priority: P1
+Type: Integration
+Status: Active
+
+Precondition:
+  - User account exists with PII (email, phone, name)
+  - User has completed 5 transactions (ledger entries exist)
+  - Regulatory requirement: Ledger retention: 7 years
+
+Test Steps:
+  1. User requests account deletion (Right to be Forgotten)
+  2. System executes soft-delete:
+     - users.email = 'deleted_{id}@deleted.gflow.com'
+     - users.phone = NULL
+     - users.name = 'Deleted User'
+     - users.deleted_at = NOW()
+  3. Verify ledger_entries still contain user's transactions (anonymized)
+  4. Verify foreign keys intact (user_id references still valid)
+  5. Verify GPS location data purged (send_order_stops.location for this user)
+  6. Verify phone masked in all related tables
+
+Expected Results:
+  ✅ PII removed from users table
+  ✅ Ledger entries preserved (audit requirement)
+  ✅ GPS location data purged (sensitive data)
+  ✅ Phone numbers masked in order history
+
+Acceptance Criteria:
+  - UU PDP compliance (Right to be Forgotten)
+  - Ledger retained for regulatory audit
+  - Sensitive location data purged
+  - Foreign keys intact (data integrity maintained)
+TC-012: G-SEND PARTIAL ORDER CANCELLATION
+
+text
+TEST CASE ID: TC-012
+Title: Multi-stop send order supports partial cancellation
+Module: G-Send
+Priority: P1
+Type: Integration
+Status: Active
+
+Precondition:
+  - Send order exists with 3 stops:
+    Stop 1: Completed (delivered)
+    Stop 2: Pending
+    Stop 3: Pending
+
+Test Steps:
+  1. Customer cancels Stop 2
+  2. Verify Stop 2 status = 'CANCELLED'
+  3. Verify Stop 3 remains active
+  4. Verify refund calculated correctly for Stop 2
+  5. Verify allocated_fare for Stop 2 refunded to customer
+  6. Verify driver still receives fare for Stop 1
+  7. Verify Stop 3 can still be delivered
+
+Expected Results:
+  ✅ Stop 2 cancelled, refund processed
+  ✅ Stop 1 driver earnings preserved
+  ✅ Stop 3 continues as normal
+  ✅ Ledger entries balanced
+
+Acceptance Criteria:
+  - Partial cancellation supported
+  - Refund correctly calculated
+  - Other stops unaffected
+  - Ledger balanced
+TC-013: POLLING STATE SYNC (REPLACES WEBSOCKET FOR MVP)
+
+text
+TEST CASE ID: TC-013
+Title: Driver location updates resume after network recovery
+Module: G-Ride
+Priority: P1
+Type: Integration + E2E
+Status: Active
+
+Precondition:
+  - Driver assigned to active ride
+  - Mobile app polls status every 5 seconds
+
+Test Steps:
+  1. Simulate network interruption (driver moves 500m, no requests sent)
+  2. App resumes polling after 10 seconds
+  3. App sends GET /rides/order-123/status
+  4. System returns latest status and driver location
+  5. Verify latest location is correct (state sync)
+  6. Verify ride tracking resumes normally
+  7. Verify no stale state on UI
+
+Expected Results:
+  ✅ Latest status fetched on poll
+  ✅ Latest location correct
+  ✅ No stale state on UI
+  ✅ ETA recalculated correctly
+
+Acceptance Criteria:
+  - Polling state sync works (on app resume)
+  - No stale state on UI
+  - ETA correctly recalculated
+TC-014: MOBILE BACKGROUND STATE RECONCILIATION
+
+text
+TEST CASE ID: TC-014
+Title: App state syncs correctly after background/foreground transition
+Module: Mobile App
+Priority: P1
+Type: E2E
+Status: Active
+
+Precondition:
+  - Customer has active ride order
+  - App in foreground
+
+Test Steps:
+  1. Order status changes: SEARCHING_DRIVER → DRIVER_ASSIGNED
+  2. App backgrounded (switched to other app)
+  3. Driver accepts order (status change happens while backgrounded)
+  4. App returns to foreground (after 30s)
+  5. App polls /rides/order-123/status
+  6. Verify UI shows DRIVER_ASSIGNED (not stale SEARCHING_DRIVER)
+  7. Verify no missed events
+
+Expected Results:
+  ✅ Status correctly fetched on resume
+  ✅ UI updates to latest state
+  ✅ No missed events
+  ✅ No stale state displayed
+
+Acceptance Criteria:
+  - Polling on app resume
+  - State reconciliation works
+  - No stale UI state
+TC-015: BOLA/IDOR CROSS-ROLE SECURITY
+
+text
+TEST CASE ID: TC-015
+Title: Cross-role access to sensitive endpoints is blocked
+Module: Security
+Priority: P0
+Type: Integration + Security
+Status: Active
+
+Precondition:
+  - JWT tokens for all roles (customer, driver, merchant, admin)
+  - Multiple users with different roles
+
+Test Steps:
+  1. Customer token: GET /admin/ledger/audit → 403
+  2. Driver token: GET /merchant/settlement/merchant-1 → 403
+  3. Customer token: GET /wallets/wallet-customer-2/balance → 403
+  4. Driver token: POST /rides/order-456/accept (not assigned) → 403
+  5. Merchant token: PATCH /users/user-123/freeze → 403
+  6. Admin token: GET /admin/ledger/audit → 200 (allowed)
+
+Expected Results:
+  ✅ All unauthorized attempts return 403
+  ✅ Admin has full access
+  ✅ Resource ID tampering blocked
+  ✅ No data leakage
+
+Acceptance Criteria:
+  - RBAC enforced on all endpoints
+  - BOLA/IDOR attacks blocked
+  - Resource ID validation
+  - Admin access only for admin roles
+TC-016: PII PHONE MASKING
+
+text
+TEST CASE ID: TC-016
+Title: Phone numbers are masked in API responses
+Module: Security
+Priority: P1
+Type: Integration + Security
+Status: Active
+
+Precondition:
+  - User account with phone: +62812345678
+
+Test Steps:
+  1. Request GET /rides/order-123/details (driver authenticated)
+  2. Verify response.customer_phone = masked ("+62****5678")
+  3. Request GET /rides/order-123/details (customer authenticated)
+  4. Verify response.driver_phone = masked ("+62****5678")
+  5. Request GET /users/profile (owner authenticated)
+  6. Verify response.phone = "+62812345678" (full, owner only)
+  7. Verify no phone number exposed in logs
+
+Expected Results:
+  ✅ Phone masked for non-owners
+  ✅ Full phone only visible to owner
+  ✅ No PII in logs
+
+Acceptance Criteria:
+  - Phone masking enabled for all API responses
+  - Owner can view full phone
+  - No PII exposure in logs
+TC-017: OVERDUE DEBT AUTO-DEDUCTION ON TOP-UP (BUG #47)
+
+text
+TEST CASE ID: TC-017
+Title: Overdue debt is automatically deducted when customer tops up
+Module: PayPulse
+Priority: P0
+Type: Unit + Integration
+Status: Active
+
+Precondition:
+  - Customer has overdue debt: Rp 30,000 (from fare shortfall)
+  - Customer current balance: Rp 50,000
+  - Customer overdue_debt flag: TRUE
+
+Test Steps:
+  1. Customer initiates top-up: Rp 100,000
+  2. System calculates:
+     - debt_deduction = min(100,000, 30,000) = 30,000
+     - net_topup = 100,000 - 30,000 = 70,000
+  3. Customer wallet balance updated: 50,000 + 70,000 = 120,000
+  4. Overdue debt flag set to FALSE
+  5. Verify ledger entries:
+     - DEBIT customer wallet: Rp 30,000 (debt deduction)
+     - CREDIT SYSTEM_PLATFORM: Rp 30,000 (debt settled)
+     - CREDIT customer wallet: Rp 70,000 (net topup)
+  6. Verify total DEBIT = total CREDIT = Rp 100,000
+
+Expected Results:
+  ✅ Overdue debt fully deducted
+  ✅ Net topup applied correctly
+  ✅ Ledger balanced
+  ✅ Overdue debt flag reset
+
+Acceptance Criteria:
+  - Auto-deduction logic works
+  - No double deduction
+  - Ledger invariant maintained
+TC-018: KYC LIMIT VALIDATION (BUG #25)
+
+text
+TEST CASE ID: TC-018
+Title: Top-up exceeds KYC limit is rejected
+Module: PayPulse
+Priority: P0
+Type: Unit + Integration
+Status: Active
+
+Precondition:
+  - Customer is unverified (KYC not completed)
+  - Max wallet limit: Rp 2,000,000 (unverified)
+  - Current balance: Rp 1,800,000
+
+Test Steps:
+  1. Customer initiates top-up: Rp 300,000
+  2. System calculates: current_balance + amount = 1,800,000 + 300,000 = 2,100,000
+  3. 2,100,000 > 2,000,000 → REJECT
+  4. Verify HTTP 422 Unprocessable Entity
+  5. Verify error message: "Top-up would exceed maximum wallet limit"
+  6. Verify balance unchanged: Rp 1,800,000
+  7. Verify no ledger entries created
+
+Expected Results:
+  ✅ Top-up rejected
+  ✅ Balance unchanged
+  ✅ No ledger entries
+  ✅ Appropriate error message
+
+Acceptance Criteria:
+  - KYC limit enforcement works
+  - Rejection with correct status code
+  - No partial execution
+  - Clear error message
+================================================================================
+
+TEST EXECUTION PLAN
+================================================================================
+
+5.1 TIMELINE (V1.0-MVP RELEASE)
+
+Phase	Duration	Dates	Activities	Owner
+Planning	1 week	Aug 14-20	Test case design, strategy review	Arif
+Unit Testing	2 weeks	Aug 21 - Sep 3	Write & execute unit tests, achieve 85% coverage	Arif
+Integration Testing	2 weeks	Sep 4-17	Integration tests, concurrency testing, race condition validation	Arif
+API Testing	1 week	Sep 18-24	API contract testing, full endpoint coverage	Arif
+E2E Testing	1 week	Sep 25 - Oct 1	User flow testing, UI validation	Arif
+Performance Testing	3-4 days	Oct 2-5	Load testing, k6 stress test, latency verification	Arif
+Security Testing	3-4 days	Oct 6-9	OWASP testing, vulnerability scanning, auth/authz validation	Arif
+Bug Fix & Regression	3-4 days	Oct 10-13	Fix identified bugs, re-run all tests	Arif
+Release Preparation	2 days	Oct 14-15	Final validation, documentation, deployment prep	Arif
+Production Release	1 day	Oct 16, 2026	Deploy to production	Arif
+Total Duration: ~9 weeks from test planning to production release
+
+5.2 TEST EXECUTION ENVIRONMENT
+
+Environment	Purpose	Data Reset	Access
+Local Dev	Developer testing (quick feedback)	Per test	Dev machine only
+Staging	Pre-production validation (realistic)	Daily reset	Limited internal access
+Production	Live validation (production readiness)	Never reset	Full user data
+5.3 TEST RESOURCES
+
+Resource	Count	Availability
+Developer	1 (Solo)	Full-time
+QA/Tester	1 (Dev wearing QA hat)	Part of dev work
+Test Database	1 (Docker local + Supabase staging)	Always available
+Load Test Machine	1 (Local for small loads)	As needed
+Mobile Devices	2-3 (iPhone, Android)	For E2E testing
+================================================================================
+
+TEST AUTOMATION STRATEGY
+================================================================================
+
+6.1 AUTOMATION FRAMEWORK
+
+Backend Testing:
+
+Go native testing package
+
+Frameworks: testify/assert, testify/mock
+
+CI Integration: GitHub Actions
+
+Coverage: go test -cover ./... -coverprofile=coverage.out
+
+Mobile Testing (Flutter):
+
+Dart integration tests (integration_test package)
+
+Execution: Physical device or emulator
+
+CI Integration: Flutter CI on GitHub Actions
+
+API Testing:
+
+Go HTTP client (net/http, httptest)
+
+JSON schema validation: github.com/xeipuuv/gojsonschema
+
+Load Testing:
+
+k6 (lightweight, CLI-based)
+
+Script location: tests/k6/load_test.js
+
+Tail latency metrics: p95, p99
+
+6.2 CI/CD INTEGRATION
+
+GitHub Actions Workflow (FIXED):
+
+yaml
+# .github/workflows/test.yml
+name: Automated Testing
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  unit_tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version: 1.22
+      - run: go test -v -cover ./... -coverprofile=coverage.out
+      - run: go tool cover -html=coverage.out -o coverage.html
+
+  integration_tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:                                   # FIXED: Added POSTGRES_PASSWORD
+          POSTGRES_PASSWORD: password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version: 1.22
+      - run: go test -v -tags integration ./...
+
+  api_tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:                                   # FIXED: Added POSTGRES_PASSWORD
+          POSTGRES_PASSWORD: password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version: 1.22
+      - run: go test -v ./tests/api/...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: golangci/golangci-lint-action@v3
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [unit_tests, integration_tests, api_tests]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version: 1.22
+      - run: go build -o gflow ./cmd/api
+Test Trigger Points:
+
+✅ Every commit to main/develop
+
+✅ Every pull request
+
+✅ Daily scheduled run (full test suite)
+
+✅ Manual trigger before release
+
+6.3 TEST COVERAGE TARGETS
+
+Module	Target Coverage	Minimum Acceptable
+wallet/	85%+	80%
+ride/	85%+	80%
+food/	85%+	80%
+send/	80%+	75%
+auth/	90%+	85%
+Overall	85%+	80%
+================================================================================
+
+DATA MANAGEMENT & FIXTURES
+================================================================================
+
+7.1 TEST DATA SETUP
+
+Seed Data (seed.sql):
+
+sql
+-- Users
+INSERT INTO users (id, email, phone, name, user_type, status) VALUES
+  ('user-customer-1', 'customer1@test.com', '+6281234567890', 'Budi Santoso', 'customer', 'ACTIVE'),
+  ('user-driver-1', 'driver1@test.com', '+6281234567891', 'Ahmad Dedi', 'driver', 'ACTIVE'),
+  ('user-merchant-1', 'merchant1@test.com', '+6281234567892', 'Warung Mak Surti', 'merchant', 'ACTIVE'),
+  ('user-admin-1', 'admin@test.com', '+6281234567899', 'Admin User', 'admin', 'ACTIVE');
+
+-- Wallets with initial balance
+INSERT INTO wallets (id, user_id, balance, status) VALUES
+  ('wallet-customer-1', 'user-customer-1', 5000000, 'ACTIVE'),  -- Rp 5M
+  ('wallet-driver-1', 'user-driver-1', 1000000, 'ACTIVE'),      -- Rp 1M
+  ('wallet-merchant-1', 'user-merchant-1', 500000, 'ACTIVE');   -- Rp 500K
+
+-- Merchants
+INSERT INTO food_merchants (id, user_id, merchant_name, category, latitude, longitude, address, is_open) VALUES
+  ('merchant-1', 'user-merchant-1', 'Warung Mak Surti', 'restaurant', -6.2088, 106.8456, 'Jl. Sudirman No.1', TRUE);
+
+-- Menu & Items
+INSERT INTO merchant_menus (id, merchant_id, name) VALUES
+  ('menu-1', 'merchant-1', 'Nasi & Mie');
+
+INSERT INTO merchant_items (id, menu_id, merchant_id, name, price, stock, is_available) VALUES
+  ('item-1', 'menu-1', 'merchant-1', 'Nasi Kuning Spesial', 15000, 50, TRUE),
+  ('item-2', 'menu-1', 'merchant-1', 'Ayam Goreng', 25000, 30, TRUE);
+7.2 TEST DATABASE RESET
+
+Between Tests:
+
+Truncate all tables (except seed data)
+
+Reset sequences/identity
+
+Re-insert seed data
+
+Verify clean state before each test
+
+Between Test Suites:
+
+Full database reset
+
+Re-run all migrations
+
+Re-seed initial data
+
+================================================================================
+
+PERFORMANCE TESTING — WITH TAIL LATENCY METRICS
+================================================================================
+
+8.1 PERFORMANCE ACCEPTANCE CRITERIA
+
+Metric	Target	Threshold
+API Latency (p95)	< 200ms	< 250ms (warning)
+API Latency (p99)	< 300ms	< 400ms (warning)
+Throughput	500+ RPS	400+ RPS (minimum)
+Error Rate	< 0.1%	< 0.5% (warning)
+Memory (idle)	< 100 MB	< 150 MB (warning)
+Memory (load)	< 200 MB	< 300 MB (warning)
+DB Connections	< 10 (active)	< 15 (max pool)
+8.2 LOAD TEST EXECUTION
+
+bash
+# Run baseline load test with tail latency metrics
+k6 run tests/k6/load_test.js --vus 50 --duration 10m --out json=results.json
+
+# Run spike test
+k6 run tests/k6/spike_test.js
+
+# Run sustained load (simulated 24h)
+k6 run tests/k6/sustained_load.js --duration 1h
+
+# Run with threshold validation
+k6 run tests/k6/load_test.js --threshold "http_req_duration{p95}<200" --threshold "http_req_duration{p99}<300"
+8.3 K6 SCRIPT WITH TAIL LATENCY METRICS AND TEARDOWN (FIXED)
+
+javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+// --- FIXED: testJWT defined via __ENV ---
+const testJWT = __ENV.JWT_TOKEN || 'test-jwt-token-for-load-test';
+
+export let options = {
+  stages: [
+    { duration: '2m', target: 50 },
+    { duration: '8m', target: 50 },
+    { duration: '2m', target: 0 },
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<200', 'p(99)<300'],
+    http_req_failed: ['rate<0.001'],
+  },
+};
+
+export default function () {
+  const payload = JSON.stringify({
+    to_wallet_id: 'wallet-b',
+    amount: 50000,
+  });
+  
+  const response = http.post('http://localhost:8080/wallets/transfer', payload, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${testJWT}`,
+      'X-Idempotency-Key': `key-${__VU}-${__ITER}`,
+    },
+  });
+  
+  check(response, {
+    'status is 200': (r) => r.status === 200,
+    'latency p95 < 200ms': (r) => r.timings.duration < 200,
+    'latency p99 < 300ms': (r) => r.timings.duration < 300,
+    'body has transaction_id': (r) => r.json('transaction_id') !== undefined,
+  });
+  
+  sleep(1);
+}
+
+// --- FIXED: teardown function added ---
+export function teardown() {
+  // Reset test data sandbox
+  http.post('http://localhost:8080/admin/test/reset', null, {
+    headers: {
+      'Authorization': `Bearer ${testJWT}`,
+      'Content-Type': 'application/json',
+    },
+  });
+}
+================================================================================
+
+SECURITY TESTING — WITH BOLA, PII MASKING, DATA RETENTION
+================================================================================
+
+9.1 OWASP TOP 10 COVERAGE
+
+All OWASP Top 10 (2021) will be tested:
+
+□ A01: Broken Access Control
+□ A02: Cryptographic Failures
+□ A03: Injection
+□ A04: Insecure Design
+□ A05: Security Misconfiguration
+□ A06: Vulnerable & Outdated Components
+□ A07: Authentication Failures
+□ A08: Data Integrity Failures
+□ A09: Logging & Monitoring Failures
+□ A10: SSRF
+9.2 SECURITY TEST CASES
+
+text
+✅ SQL Injection: Attempt to inject SQL via input fields
+✅ XSS: Try to inject JavaScript payloads
+✅ CSRF: Submit forms without CSRF tokens
+✅ Auth bypass: Attempt to access protected resources without auth
+✅ Brute force: Multiple failed login attempts
+✅ Rate limiting: Exceed API rate limits
+✅ Dependency vulnerabilities: `go mod verify`, `npm audit`
+✅ Secrets exposure: Ensure no API keys/passwords in logs
+✅ BOLA/IDOR: Cross-role access to sensitive endpoints
+✅ PII Masking: Phone numbers masked in responses
+✅ Data Retention: Ledger preserved, PII purged
+✅ Right to be Forgotten: User deletion compliance
+================================================================================
+
+QUALITY METRICS & REPORTING
+================================================================================
+
+10.1 KEY METRICS
+
+Metric	Target	Frequency
+Code Coverage	85%+	Per commit
+Test Pass Rate	100%	Per commit
+Bug Escape Rate	< 5%	Per release
+Critical Bugs	0	Per release
+Performance SLA	99.5%	Daily
+Security Vulnerabilities	0 (critical/high)	Per release
+Tail Latency (p95)	< 200ms	Per load test
+Tail Latency (p99)	< 300ms	Per load test
+10.2 TEST REPORT TEMPLATE
+
+markdown
+## Test Execution Report - V1.0-MVP
+
+**Date:** 2026-10-16
+**Release Version:** 1.0-MVP
+**Test Duration:** 9 weeks
+**Total Test Cases:** 150+
+
+### Summary
+- Total Tests: 150
+- Passed: 148 (98.7%)
+- Failed: 2 (1.3%)
+  - TC-045: Food order refund (fixed)
+  - TC-089: Merchant suspension timing (fixed)
+- Skipped: 0
+
+### Coverage
+- Code Coverage: 82% (target: 80%)
+- Feature Coverage: 100% (all P0/P1 features tested)
+- Platform Coverage: iOS + Android + Web Admin
+
+### Performance
+- API p95 latency: 185ms (target: < 200ms) ✅
+- API p99 latency: 270ms (target: < 300ms) ✅
+- Throughput: 520 RPS (target: 500+) ✅
+- Error rate: 0.08% (target: < 0.1%) ✅
+
+### Security
+- OWASP Top 10: All tested ✅
+- BOLA/IDOR: All tested ✅
+- PII Masking: Validated ✅
+- Data Retention: Validated ✅
+- Vulnerabilities: 0 critical, 0 high ✅
+- Dependency audit: Clean ✅
+
+### Recommendations
+- Ready for production release
+================================================================================
+
+BUG TRACKING & RESOLUTION
+================================================================================
+
+11.1 BUG SEVERITY LEVELS
+
+Severity	Definition	SLA	Example
+Critical	System down, data loss, security breach	4 hours	Ledger imbalance, race condition
+High	Major feature broken, significant user impact	24 hours	Order not settle, login fails
+Medium	Minor feature broken, workaround exists	48 hours	Typo in error message
+Low	UI issue, cosmetic problem	1 week	Button color incorrect
+11.2 BUG LIFECYCLE
+
+OPEN → IN PROGRESS → RESOLVED → VERIFIED → CLOSED
+
+Open: Bug reported, initial triage
+
+In Progress: Developer assigned, fixing
+
+Resolved: Developer marks fixed, awaiting verification
+
+Verified: QA confirms fix, retests
+
+Closed: Released to production
+
+11.3 BUG TRACKING (GITHUB ISSUES)
+
+Each bug tracked with:
+
+Title (descriptive)
+
+Severity (Critical/High/Medium/Low)
+
+Component (wallet/ride/food/send/auth)
+
+Steps to reproduce
+
+Expected vs actual behavior
+
+Logs/screenshots
+
+Resolution
+
+Verified by (QA)
+
+================================================================================
+
+RISKS & MITIGATION
+================================================================================
+
+12.1 TESTING RISKS
+
+Risk	Likelihood	Impact	Mitigation
+Solo developer bottleneck	High	High	Automate tests heavily, use CI/CD
+Test environment differs from production	Medium	High	Use staging env that mirrors prod
+Race condition testing incomplete	Medium	Critical	Concurrent test suite (10+ concurrent requests)
+Performance test under-represents real load	Medium	Medium	Run sustained load tests (1hr+)
+Security testing insufficient	Low	Critical	Hire external security audit (V1.1)
+Test data inadequate	Low	Medium	Create comprehensive seed data fixtures
+Redis outage not tested	Medium	High	Added TC-008 (Redis failover)
+External API failure not tested	Medium	High	Added TC-009 (Circuit breaker)
+Mobile background state not tested	Medium	Medium	Added TC-014 (Background sync)
+12.2 MITIGATION STRATEGIES
+
+✅ Automation: All repeatable tests automated (unit, integration, API)
+
+✅ Staging: Pre-prod staging env matches production
+
+✅ Concurrent Testing: Goroutine-based concurrent request simulation
+
+✅ Monitoring: Real-time metrics collection during all tests
+
+✅ Documentation: Test cases documented, runnable, reproducible
+
+✅ Continuous Learning: Track lessons learned, improve test coverage
+
+✅ Infrastructure Testing: Redis failover, circuit breaker tests added
+
+✅ Mobile Testing: Background state reconciliation added
+
+✅ Security Testing: BOLA, PII masking, data retention added
+
+================================================================================
+
+APPENDIX: 12 FIXES APPLIED TO STP v3.0
+================================================================================
+
+#	Category	Fix Applied	Section
+1	Timeline	Fixed release date to 2026-10-16	1.1, 5.1, 10.2
+2	Scope	Changed WebSocket to Polling State Sync (TC-013)	2.1, 2.2, 4.1
+3	Tooling	Replaced xelatex with gojsonschema/jsonassert	3.2 Level 3
+4	Coverage	Unified coverage target to 85% (P0)	2.1, 6.3
+5	Code Snippet	Declared prev_balance variable	3.2 Level 3
+6	Code Snippet	Fixed AddBalance return signature (int64, error)	3.2 Level 1
+7	Code Snippet	Added customerWalletID declaration	3.2 Level 2
+8	CI/CD	Added -coverprofile=coverage.out flag	6.2
+9	TC Coverage	Added TC-017 (Bug #47) and TC-018 (Bug #25)	4.1
+10	k6 Script	Added teardown() function	5A, 8.3
+11	CI/CD	Added POSTGRES_PASSWORD env in integration & api jobs	6.2
+12	k6 Script	Declared testJWT via __ENV.JWT_TOKEN	5A, 8.3
+================================================================================
+APPENDIX A: QUICK REFERENCE COMMANDS
+================================================================================
+
+bash
+# Run all tests locally
+go test -v ./...
+
+# Unit tests only
+go test -v -short ./...
+
+# Integration tests only
+go test -v -tags integration ./...
+
+# With coverage report
+go test -v -cover ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out
+
+# API tests
+go test -v ./tests/api/...
+
+# Performance testing with tail latency metrics
+k6 run tests/k6/load_test.js
+
+# Security scan
+go list -u ./...
+
+# Linting
+golangci-lint run
+
+# Docker test environment
+docker-compose -f docker-compose.test.yml up
+
+# CI/CD pipeline locally
+act (requires act CLI)
+================================================================================
+APPENDIX B: TEST CASE CHECKLIST (FINAL)
+================================================================================
+
+text
+PRE-RELEASE TEST CHECKLIST:
+  ☐ Unit tests: 85%+ coverage achieved
+  ☐ Integration tests: All P0 features tested (including Saga, Webhook, Deadlock)
+  ☐ API tests: All endpoints validated (including API versioning)
+  ☐ E2E tests: Critical user journeys verified (including background sync)
+  ☐ Performance tests: SLA met (< 200ms p95, < 300ms p99)
+  ☐ Security tests: OWASP Top 10 + BOLA/IDOR + PII Masking
+  ☐ Regression tests: All pass
+  ☐ Load testing: 500 RPS sustained, data cleanup validated
+  ☐ Database consistency: Ledger verified
+  ☐ Race condition prevention: Dispatch matching tested (10 concurrent)
+  ☐ Idempotency: Duplicate requests handled (client + webhook)
+  ☐ Infrastructure: Redis failover, Circuit breaker tested
+  ☐ Bug fixes: All critical/high bugs resolved
+  ☐ Documentation: Test cases documented
+  ☐ Monitoring: Alerts configured
+  ☐ Deployment: Runbook prepared
+  ☐ Data retention: UU PDP compliance validated
+  ☐ Overdue debt auto-deduction: TC-017 passed
+  ☐ KYC limit validation: TC-018 passed
+  ☐ Polling State Sync: TC-013 passed
+================================================================================
+END OF STP v3.0-FINAL
+================================================================================
+
+✅ 100% PRODUCTION-READY — LOCKED
+✅ All 12 Gemini Review items addressed
+✅ Synchronized with PRD v4.0, DATABASE SCHEMA v10.4, LOGIC FLOW v6.1, HALAMAN v2.0, TDD v2.0, API CONTRACT v1.0, SECURITY SPEC v1.0, DRP v1.0
+✅ Ready for backend and frontend implementation
+
+"Jangan hanya berpikir bahwa Sistem akhirnya bisa berjalan dengan Normal,
+tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal
+di Situasi yang sedang 'Tidak Normal'"
+
+— Vibe Coder Principle
+
+Last Updated: 2026-08-14 by M. Arif Aulia
+Bismillah — Final Version.
+
+text

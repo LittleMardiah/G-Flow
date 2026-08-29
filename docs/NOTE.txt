@@ -1,0 +1,114 @@
+docker exec -it dentflow-postgres psql -U dentflow -d dentflow
+
+PS D:\AI Engineer\DentFlow 1.0\dentflow-backend> taskkill /f /im "Docker Desktop.exe"
+
+cd "/mnt/d/AI Engineer/DentFlow 1.0/dentflow-backend"
+
+Install opsi untuk log: curl -s http://localhost:3000/health | jq '.jobs'
+
+Apa masalahnya > Apa solusi Terbaik Tanpa BYPASS > Resolve. Sebelum eksekusi, jika ada keraguan silahkan lakukan debugging atau pengecekan dulu agar hasilnya sesuai dan akurat
+
+Sebelum eksekusi, jika ada keraguan silahkan lakukan debugging atau pengecekan dulu agar hasilnya sesuai dan akurat
+
+Apa artinya. Lakukan Debugging terus. Jangan eksekusi jika Debuggingnya belum menemukan Sumber masalah nya. Pastikan jika sebelumnya sudah melakukan perbaikan, di cek lagi apakah perubahannya sesuai yang kita mau atau tidak. Jika belum berhasil juga, tambahkan log untuk memunculkan sumber masalahnya.
+Ingat untuk selalu UTAMAKAN SOLUSI PERBAIKAN dengan CEK > VALIDASI > PERBAIKI. Jangan langsung mengubah atau memperbaiki tanpa MENGECEK DAN MEMVALIDASI TERLEBIH DAHULU
+Dan jika lu sudah di titik BUNTU atau kehabisan cara. BILANG KE GUA. Biar gua minta AI lain untuk memberikan solusi. JANGAN MEMAKSAKAN CARA YANG TIDAK PASTI JIKA DIEKSEKUSI
+
+
+# Matikan server
+pkill -f "ts-node.*src/index.ts"
+
+# Start ulang
+npm run dev
+
+
+npx jest --coverage --collectCoverageFrom="src/**/*.ts" --coveragePathIgnorePatterns="node_modules,dist,tests" --coverageReporters="json-summary" --coverageReporters="html" --coverageReporters="text"
+
+
+(Coba perbaiki lengkap, tandai perbaikannya dan jangan hapus komentar yang sudah ada sebelumnya)
+
+Tolong berikan solusi perbaikan pasti nya tanpa bypass. tanyakan saja apa saja file yang ingin kamu lihat untuk dicek atau diperbaiki. Minta saja sebanyak mungkin untuk penyesuaian dan meminimalisir error kedepannya dan agar kamu mendapatkan kepastian data tanpa perlu menebak-nebak. Akan saya kirim
+
+Sudah saya bilang, jangan ragu MEMINTA BANYAK DATA ATAU SUMBER FILE UNTUK DICEK. JADI PASTIKAN INI ADALAH YANG TERAKHIR  UNTUK MENYELESAIKAN MASALAH DIATAS AGAR TIDAK TERULANG LAGI
+Minta saja sebanyak mungkin untuk penyesuaian dan meminimalisir error kedepannya dan agar kamu mendapatkan kepastian data tanpa perlu menebak-nebak. Akan saya kirim
+
+Jelaskan pada saya dengan sederhana, berarti apa masalahnya, apa akibatnya, apa solusinya, dan apa hasil yang diharapkan
+
+
+Tolong buatkan Tampilan Design Mobile nya sesuai image.png TANPA MENGUBAH ISI ASLI DARI HALAMAN.TXT DAN PRD.TXT.
+
+Pastikan buat selengkap mungkin masing-masing halaman dan hubungkan halaman 1 dengan halaman lainnya sesuai HALAMAN.txt agar terbentuk Prototype nya. Berikut keterangan lengkap nya:
+
+
+
+Ok lanjut ke Task 1.1.2
+Jelaskan masing-masing poinnya secara detail dan jelas beserta fungsinya dan kodingan yang clean dan saya menggunakan Powershell terminal
+
+
+
+Sebelum eksekusi, jika ada keraguan silahkan lakukan debugging atau pengecekan dulu agar hasilnya sesuai dan akurat
+
+Lakukan Debugging terus. Jangan eksekusi jika Debuggingnya belum menemukan Sumber masalah nya. Pastikan jika sebelumnya sudah melakukan perbaikan, di cek lagi apakah perubahannya sesuai yang kita mau atau tidak. Jika belum berhasil juga, tambahkan log untuk memunculkan sumber masalahnya.
+Ingat untuk selalu UTAMAKAN SOLUSI PERBAIKAN dengan CEK > VALIDASI > PERBAIKI. Jangan langsung mengubah atau memperbaiki tanpa MENGECEK DAN MEMVALIDASI TERLEBIH DAHULU
+
+
+
+pkill -f "ts-node.*index.ts" 2>/dev/null
+sleep 1
+nohup npm run dev > server.log 2>&1 &
+sleep 5
+
+
+# Hentikan server yang berjalan
+pkill -f "ts-node.*index.ts"
+
+# Jalankan server dengan log ke file dan terminal
+NODE_ENV=development ts-node src/index.ts 2>&1 | tee server-debug.log
+
+
+
+
+
+Apa artinya. JANGAN EKSEKUSI jika belum menemukan SUMBER MASALAH.
+
+Debugging: CEK > VALIDASI > KETEMU ROOT CAUSE > PERBAIKI > VERIFIKASI (WAJIB)
+
+Jangan langsung ubah kode tanpa identify root cause—itu halusinasi. Setiap perbaikan WAJIB di-check dengan: (1) Show FULL output execution (no truncation, scroll lengkap jika panjang), (2) Compare BEFORE state vs AFTER state side-by-side dengan konkret, (3) Confirm: criteria met? ✓ or ✗. Jika belum match, tambah log strategis, re-dump state, lalu VALIDASI ulang (CEK-VALIDASI loop sampe jelas).
+
+Isolasi problem ke satu layer, buat minimal reproducible case, satu change at a time. Setiap step harus tervalidasi—jangan assume berhasil, lihat bukti konkretnya.
+
+TERMINAL SCRIPT SAFETY (WAJIB):
+
+Jangan kasih script yang kompleks/panjang tanpa test dulu
+Setiap script harus: (1) Safe syntax, (2) Verify file creation dengan cat, (3) Show FULL output tanpa truncate
+Jika script panjang (>50 lines), break into sections & test tiap section separately
+Jangan pernah suggest script yang bisa force-close terminal atau corrupt state
+Sebelum suggest script, confirm: "Script ini aman dan terverifikasi output-nya"
+
+KONTEKS & SCOPE (WAJIB):
+Sebelum suggest aksi/script/solusi, konfirmasi dulu: apakah ini related ke [project scope: EduFlow/ScIntel/DentFlow]? Jika uncertain atau out-of-scope, tanya dulu jangan langsung suggest.
+
+HALLUCINATION DETECTION (WAJIB):
+Hallucination = suggest solusi tanpa concrete evidence, atau assume sesuatu berhasil tanpa verify. Jika ketahuan hallucinating, admit: "Gua hallucinate di X, ngga ada evidence konkret, back to CEK." Jangan hide uncertainty.
+
+LEARNING CHECKPOINT (WAJIB):
+Di akhir setiap debugging session yg SOLVED: (1) Summarize root cause, (2) Fix yg worked, (3) Lessons learned. Jika masalah yg sama muncul lagi, reference lessons itu langsung.
+
+Kalau stuck atau kehabisan cara pasti, jangan paksa—bilang aja dengan jelas: "sudah coba A, B, C, semua gagal di X, butuh fresh perspective." Visibility, patience, dan structured validation di setiap tahap adalah kunci: progress incremental tanpa halusinasi.
+
+
+
+
+
+Lalu gua mengubah target gua menjadi 90% automation testing berhasil di segala aspek
+
+Lu paham gak maksud gua. JANGAN PERNAH MENYARANKAN SOLUSI BYPASS atau SKIP atau apapun itu Jika itu dapat merusak isi kode baik saat ini atau di masa depan
+
+Ok lalu biasakan di gabungkan seluruh isi kode lu ke dalam 1 terminal SEKALIGUS. Jadi gua cukup tinggal 1 kali saja copas dan selesai. Paham
+
+Tapi gua ga mau keinginan gua mempersulit debugging atau tampilan log yang tidak terbaca
+
+Dan jika lu sudah di titik BUNTU atau kehabisan cara. BILANG KE GUA. Biar gua minta AI lain untuk memberikan solusi. JANGAN MEMAKSAKAN CARA YANG TIDAK PASTI JIKA DIEKSEKUSI
+
+Paham tidak.
+

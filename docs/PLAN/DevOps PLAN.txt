@@ -1,0 +1,119 @@
+========================================
+DEVOPS PLAN CHECKLIST
+Untuk Solo Developer (Production Grade)
+========================================
+Disusun dari sudut pandang DevOps Engineer
+
+1. REFERENSI DOKUMEN
+   - PRD (NFR: availability, performance)
+   - TDD (stack, deployment environment)
+   - STP (testing di staging)
+   - Alasan: DevOps menghubungkan kode dengan infrastruktur.
+
+2. LINGKUNGAN (ENVIRONMENTS)
+   | Environment | Tujuan | Hosting |
+   |-------------|--------|---------|
+   | Development  | Coding & unit test | Laptop lokal |
+   | Staging      | Integration test, UAT, pre-production | VPS murah / same as prod (terpisah DB) |
+   | Production   | User riil | VPS + managed services |
+   - Wajib: staging mirip production (OS, versi Go, konfigurasi)
+
+3. REPOSITORY & VERSION CONTROL
+   - Gunakan Git (GitHub / GitLab)
+   - Branch strategy: main (production), develop (staging), feature/*
+   - Tagging: semantic versioning (v1.0.0, v1.0.1, ...)
+   - Jangan commit secret (.env, credentials) → pakai .gitignore
+
+4. BUILD & CI/CD PIPELINE
+   - Tools: GitHub Actions (gratis untuk public repo, terbatas untuk private)
+   - Pipeline stages:
+     a. Lint & format (golangci-lint, prettier)
+     b. Unit test & integration test (jalankan go test)
+     c. Build binary (go build) / build frontend (npm run build)
+     d. (Opsional) Scan keamanan dasar (govulncheck)
+     e. Deploy ke staging (otomatis jika push ke develop)
+     f. Deploy ke production (manual trigger atau otomatis setelah tag)
+   - Artifact: simpan binary di workflow artifact atau langsung deploy
+
+5. INFRASTRUCTURE AS CODE (IaC) - MINIMAL
+   - Tidak perlu Terraform untuk V1 solo.
+   - Tulis script bash atau docker-compose untuk setup server:
+     - Install Go, Nginx, PostgreSQL client
+     - Setup systemd service untuk Go binary
+     - Setup logrotate
+   - Simpan script di /infra/setup.sh
+
+6. DEPLOYMENT ARCHITECTURE (PRODUCTION)
+   - Frontend: Vercel (gratis) → build dari GitHub, CDN global
+   - Backend: VPS murah (contoh: DigitalOcean $6/mo, atau Racknerd $10/year)
+     - Jalankan Go binary sebagai systemd service
+     - Reverse proxy: Nginx (handle HTTPS, static files jika perlu)
+   - Database: Neon.tech (free tier PostgreSQL) atau Supabase (free)
+   - Object storage (jika upload gambar): Cloudinary / S3 compatible (free tier)
+   - Notifikasi realtime (jika perlu): Pusher (free tier)
+
+7. SERVICE MANAGEMENT & RELIABILITY
+   - Systemd unit file untuk Go app (auto-restart jika crash)
+   - Health check endpoint (/health) yang return 200
+   - Monitoring basic: UptimeRobot (free) untuk cek endpoint setiap 5 menit
+   - Log management: log ke stdout, dikumpulkan dengan journald (systemd)
+   - Log rotation: atur logrotate untuk menghindari disk full
+
+8. SECURITY & NETWORKING (OPS LEVEL)
+   - SSH key only (disable password login untuk VPS)
+   - Firewall: hanya buka port 22 (SSH), 80 (HTTP), 443 (HTTPS)
+   - Automatic security updates: unattended-upgrades (Ubuntu/Debian)
+   - SSL/TLS: Gunakan Let's Encrypt via Certbot + Nginx (auto-renewal)
+   - Rate limiting di level Nginx (bisa juga di app, tapi Nginx lebih ringan)
+
+9. DATABASE OPERATIONS
+   - Backup otomatis: Neon.tech sudah menyediakan, atau gunakan pg_dump via cron
+   - Backup schedule: daily (simpan ke cloud storage seperti Backblaze B2 atau Google Drive)
+   - Restore procedure: dokumentasikan cara restore dari backup terbaru
+   - Connection pooling: jika perlu, gunakan pgbouncer atau pooling dari app
+
+10. MONITORING & ALERTING (MINIMAL)
+    - Uptime monitoring: UptimeRobot (notifikasi email/Telegram)
+    - Error tracking: Sentry (free tier) untuk menangkap panic/error di Go
+    - Health endpoint: dimonitor oleh UptimeRobot
+    - Resource monitoring: bisa pakai Netdata (simple, atau cukup `htop` manual)
+    - Alert jika service down: UptimeRobot akan kirim notifikasi
+
+11. RELEASE & ROLLBACK STRATEGY
+    - Deployment: 
+      a. Pull kode di VPS (atau pakai CI yang SSH)
+      b. Build ulang (jika tidak pakai binary artifact)
+      c. Restart systemd service
+    - Rollback: simpan binary versi sebelumnya, cukup restart dengan binary lama
+    - Blue-green deployment tidak diperlukan untuk V1 (overkill)
+    - Pastikan ada script rollback manual (1 baris perintah)
+
+12. COST & RESOURCE OPTIMIZATION (DARI SUDUT PANDANG OPS)
+    - Pilih VPS dengan RAM minimal 512MB (cukup untuk Go + Nginx + PostgreSQL jika DB lokal, tapi karena DB managed, cukup untuk Go dan Nginx)
+    - Gunakan free tier sebanyak mungkin: Vercel, Neon, Sentry, UptimeRobot
+    - Batasi resource: set GOMEMLIMIT di Go app agar tidak makan swap
+    - Matikan service yang tidak perlu (misal: Apache, mail server di VPS)
+    - Estimasi biaya bulanan: VPS (~$6) + domain (~$1 jika pakai .xyz) = < Rp 100rb
+
+13. DISASTER RECOVERY & RUNBOOK
+    - Skenario: VPS mati total, database corrupted, SSL expired
+    - Mitigasi:
+      - VPS mati: backup konfigurasi + script setup, bisa rebuild dalam 1 jam
+      - Database corrupted: restore dari backup harian Neon/pg_dump
+      - SSL expired: cronjob auto-renewal Certbot
+    - Simpan runbook singkat (10 langkah) di /docs/RUNBOOK.md
+
+14. COMPLIANCE & AUDIT (JIKA PERLU)
+    - Untuk aplikasi kesehatan: pastikan logging akses ke data sensitif
+    - Audit log: simpan log siapa mengakses data pasien (bisa di aplikasi)
+    - (Opsional) Jika butuh HIPAA/sederajat, perlu enkripsi tambahan & VPC
+
+========================================
+CATATAN UNTUK SOLO DEVELOPER SEBAGAI DEVOPS
+========================================
+- Kamu adalah tim DevOps satu orang. Otomatisasi adalah sahabatmu.
+- Mulai sederhana: VPS + Nginx + systemd + free monitoring. Upgrade hanya jika butuh.
+- Dokumentasikan semua perintah setup di README atau script, agar tidak lupa.
+- Jangan lupa backup! Kehilangan data adalah kesalahan DevOps terbesar.
+- Simpan DevOps Plan di /docs/DEVOPS_PLAN.md.
+========================================

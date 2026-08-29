@@ -1,0 +1,25 @@
+PRD > DATABASE SCHEMA > LOGIC FLOW > HALAMAN > DESIGN.MD > Hifi Prototype & Design (DESIGN MOBILE.MD / DESIGN WEB.MD) > TDD > API CONTRACT > SECURITY SPEC > DRP (WORST CASE + SOLUTION) > STP > ROADMAP
+
+PRD 
+  ↓
+DATABASE_SCHEMA.md  
+  ↓
+LOGIC_FLOW
+  ↓
+HALAMAN (Wireframes)
+  ↓
+DESIGN.MD (Visual)
+  ↓
+DESIGN_MOBILE.MD / DESIGN_WEB.MD (HiFi)
+  ↓
+TDD (Technical Design)
+  ↓
+API_CONTRACT.md
+  ↓
+SECURITY_SPEC.md  
+  ↓
+DRP (Disaster Recovery Plan)
+  ↓
+STP (System Test Plan)
+  ↓
+ROADMAP

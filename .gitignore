@@ -1,0 +1,46 @@
+﻿# Env files
+.env
+.env.local
+.env.*.local
+
+# Logs & coverage
+logs/
+*.log
+coverage.out
+*.cover
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.iml
+
+# Build output
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+node_modules/
+.terraform/
+*.apk
+
+# Backend Go
+vendor/
+*.test
+*.mod
+*.sum
+coverage.out
+profiler/
+
+# Flutter
+apps/*/build/
+apps/*/.dart_tool/
+apps/*/pubspec.lock
+packages/*/build/
+packages/*/.dart_tool/
+
+# OpenCode cache
+.cache/

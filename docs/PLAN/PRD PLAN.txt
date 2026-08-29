@@ -1,0 +1,82 @@
+========================================
+PRD (PRODUCT REQUIREMENT DOCUMENT) - FIXED
+Untuk Solo Developer (Production Grade)
+========================================
+
+1. HEADER & IDENTITAS
+   - Nama proyek
+   - Versi dokumen (v1.0)
+   - Tanggal pembuatan & revisi
+   - Penulis (kamu)
+
+2. RINGKASAN EKSEKUTIF (1 paragraf)
+   - Latar belakang masalah (apa yang melatarbelakangi)
+   - Solusi produk (apa yang dibangun)
+   - Value proposition (keunikan/keunggulan)
+
+3. TUJUAN PRODUK
+   - Tujuan utama (contoh: portofolio, atau solving real problem)
+   - Target pengguna (siapa yang akan menggunakan)
+
+4. RUANG LINGKUP (SCOPE) - PENTING
+   | In Scope (V1.0)                          | Out of Scope (V2 atau tidak dikerjakan) |
+   |------------------------------------------|------------------------------------------|
+   | - Fitur A (prioritas P0)                 | - Fitur C                                |
+   | - Fitur B (prioritas P1)                 | - Fitur D                                |
+
+5. USER PERSONA (minimal 1, maksimal 3)
+   - Nama, peran, demografi
+   - Kebutuhan & pain points
+   - Tujuan menggunakan produk
+
+6. USER JOURNEY / USE CASES (1-2 alur utama)
+   - Langkah-langkah dari awal hingga akhir (bisa bullet point)
+   - Sertakan alternate path (jika ada error)
+
+7. FUNCTIONAL REQUIREMENTS (FR)
+   Gunakan tabel:
+   | ID    | Deskripsi                                   | Prioritas |
+   |-------|---------------------------------------------|-----------|
+   | FR-01 | User dapat registrasi dengan email/HP      | P0        |
+   | FR-02 | User dapat login                           | P0        |
+   | FR-03 | User dapat melihat dashboard               | P0        |
+   | ...   | ...                                         | ...       |
+   *Prioritas: P0 (wajib MVP), P1 (nice to have), P2 (future)*
+
+8. NON-FUNCTIONAL REQUIREMENTS (NFR)
+   - Performance: response API < 500ms, halaman load < 2 detik
+   - Security: password hash (bcrypt), HTTPS, input validation
+   - Usability: responsif (mobile/desktop), aksesibilitas dasar
+   - Availability: target uptime 99% (atau "bisa diakses publik 24/7")
+   - Maintainability: kode modular, dokumentasi di /docs
+
+9. BATASAN & ASUMSI (CONSTRAINTS & ASSUMPTIONS)
+   - Contoh batasan: hanya support browser modern, tidak ada payment gateway di V1
+   - Contoh asumsi: user punya koneksi internet stabil, menggunakan smartphone dengan layar sentuh
+
+10. KRITERIA SUKSES & METRICS (HARUS TERUKUR)
+    - Contoh: 
+      - Aplikasi dapat diakses publik tanpa crash selama 7 hari
+      - Minimal 5 orang tester memberikan feedback positif
+      - Semua FR prioritas P0 berfungsi tanpa bug blocker
+
+11. DEPENDENSI & INTEGRASI EKSTERNAL
+    - Layanan pihak ketiga (contoh: database hosting, object storage, notifikasi, dll)
+    - API eksternal (contoh: payment gateway, maps, dll)
+    - Library/framework yang sudah ditentukan (contoh: Go, Next.js, dll)
+
+12. RISIKO TINGKAT TINGGI (HIGH-LEVEL RISKS)
+    - Identifikasi risiko utama (bisa teknis maupun non-teknis)
+    - Mitigasi sederhana (contoh: backup database, rate limiting)
+
+13. GLOSARIUM (opsional)
+    - Definisi singkatan/istilah agar tidak ambigu
+
+========================================
+CATATAN PENGGUNAAN UNTUK SOLO DEVELOPER
+========================================
+- Isi PRD maksimal 2-3 halaman versi teks. Tidak perlu panjang.
+- Simpan di /docs/PRD.md dalam repositori agar versioned.
+- PRD adalah dokumen hidup: revisi jika ada perubahan besar, tapi tetap konservatif.
+- Setelah PRD disetujui (oleh dirimu sendiri), lanjut ke TDD.
+========================================

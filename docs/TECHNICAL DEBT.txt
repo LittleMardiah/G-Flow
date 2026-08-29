@@ -1,0 +1,215 @@
+================================================================================
+TECHNICAL DEBT REGISTER - G-Flow v1.0 (Phase 1)
+================================================================================
+Tanggal       : 2026-08-29
+Status        : Aktif - Daftar hutang teknis yang perlu diperbaiki sebelum rilis
+Proyek        : G-Flow Backend (Modular Monolith - Golang)
+Versi Dokumen : 1.0
+
+================================================================================
+1. PENDAHULUAN
+   Dokumen ini mencatat semua "hutang teknis" yang ditimbulkan selama
+   pengembangan Phase 1 (Wallet & Authentication) untuk memenuhi deadline
+   dan menjaga kode tetap berjalan. Setiap item harus dievaluasi dan
+   diperbaiki pada fase selanjutnya (Phase 2, 3, atau 4) sebelum production
+   release.
+
+================================================================================
+2. DAFTAR HUTANG TEKNIS (PRIORITAS TINGGI)
+
+2.1. TESTING
+────────────────────────────────────────────────────────────────────────────────
+ID : TD-TEST-001
+Judul : Coverage Wallet Masih 72.1% (Target 85%)
+Deskripsi : Unit test coverage untuk package wallet masih 72.1%,
+            kurang 12.9% dari target 85%. Fungsi dengan coverage rendah:
+            - ledger.go: CreateLedgerEntries 43.5%, ReverseLedger 26.9%
+            - service.go: Transfer 66.7%, kycLimitFor 66.7%
+            - handler.go: Transfer 73.9%, ProcessTopUpWebhook 50%
+Dampak : Risiko bug di fungsi yang tidak tercover, terutama di ledger
+         (batch insert, reversal) dan service transfer.
+Perbaikan : Tambahkan unit test untuk menutup fungsi-fungsi tersebut.
+           Fokus pada:
+           - Test ReverseLedger success path (dengan pgxmock batch)
+           - Test CreateLedgerEntries error branches
+           - Test Transfer edge cases (insufficient balance, self-transfer)
+           - Test ProcessTopUpWebhook
+Estimasi : 2-3 jam
+Prioritas : HIGH
+
+ID : TD-TEST-002
+Judul : Coverage Auth Masih 80.2% (Target 85%)
+Deskripsi : Auth package coverage 80.2%, kurang 4.8% dari target 85%.
+            Fungsi yang masih rendah:
+            - handler.go: Login 74.1%, Register 75.4%
+            - blacklist.go: Add 75.0%, IsBlacklisted 66.7%
+            - rbac.go: RBACMiddleware 83.3%
+Dampak : Risiko bug di login/register/blacklist yang tidak terdeteksi.
+Perbaikan : Tambahkan unit test untuk error branches di auth handler
+           (misal: blacklist.Add error, Register duplicate email di unit test).
+Estimasi : 1-2 jam
+Prioritas : HIGH
+
+ID : TD-TEST-003
+Judul : Integration Test Tidak Menguji Semua Skenario Edge Case
+Deskripsi : Integration test untuk wallet & auth hanya mencakup happy path
+            dan beberapa edge case. Belum ada integration test untuk:
+            - Overdue debt top-up (dengan database real)
+            - KYC limit exceeded
+            - Deadlock prevention concurrent transfer
+            - Idempotency L1 Redis (masih mock)
+Dampak : Risiko regression di production untuk skenario yang tidak teruji.
+Perbaikan : Tambahkan integration test untuk skenario-skenario di atas
+           dengan database real dan Redis.
+Estimasi : 2-3 jam
+Prioritas : MEDIUM
+
+2.2. KODE & ARSITEKTUR
+────────────────────────────────────────────────────────────────────────────────
+ID : TD-CODE-001
+Judul : Overdue Debt Belum Sepenuhnya Terintegrasi dengan Payment Flow
+Deskripsi : Overdue debt hanya diterapkan di TopUp. Belum ada mekanisme
+            untuk mencatat overdue debt dari settlement ride (jika customer
+            balance insufficient di settlement).
+Dampak : Overdue debt tidak akan tercatat jika customer kekurangan saldo
+         saat settlement ride di Phase 2.
+Perbaikan : Tambahkan logika di settlement untuk mencatat overdue debt
+           jika customer balance < actual_fare, dan deduksi di top-up
+           berikutnya (sudah ada).
+Estimasi : 2-3 jam (saat implementasi Phase 2 settlement)
+Prioritas : HIGH (terkait Phase 2)
+
+ID : TD-CODE-002
+Judul : Auth Handler Masih Menggunakan ResolveUserIDByWallet (Sementara)
+Deskripsi : Di wallet handler, TopUp dan Transfer menggunakan
+            ResolveUserIDByWallet untuk mendapatkan user_id dari wallet_id.
+            Ini adalah solusi sementara sebelum JWT claim diimplementasikan
+            (padahal JWT sudah ada, tapi belum diintegrasikan ke wallet handler).
+Dampak : Tidak ada validasi kepemilikan wallet berdasarkan JWT claim.
+         Siapa pun dengan token valid bisa top-up/transfer wallet mana pun.
+Perbaikan : Update wallet handler untuk mengambil user_id dari c.GetString("user_id")
+           (dari JWT claim) dan hapus ResolveUserIDByWallet.
+Estimasi : 1 jam
+Prioritas : HIGH (security)
+
+ID : TD-CODE-003
+Judul : Logger Masih Menggunakan slog Default, Belum Ada Konfigurasi Log Level
+Deskripsi : Slog di-set ke default (INFO). Belum ada pengaturan log level
+            berdasarkan environment (DEBUG di dev, INFO/WARN di prod).
+Dampak : Log terlalu verbose di production atau terlalu sedikit di development.
+Perbaikan : Tambahkan konfigurasi log level di config dan set slog level
+           sesuai ENV.
+Estimasi : 30 menit
+Prioritas : LOW
+
+ID : TD-CODE-004
+Judul : Redis Client Digunakan Tanpa Graceful Shutdown di main.go
+Deskripsi : Redis client diinisialisasi di main.go, tapi tidak ditutup
+            saat server shutdown (hanya db.Close yang dipanggil).
+Dampak : Koneksi Redis tidak dilepas saat graceful shutdown.
+Perbaikan : Tambahkan defer rdb.Close() di main.go (jika rdb != nil).
+Estimasi : 15 menit
+Prioritas : LOW
+
+2.3. DATABASE
+────────────────────────────────────────────────────────────────────────────────
+ID : TD-DB-001
+Judul : Belum Ada Index untuk query idempotency_cache berdasarkan user_id & key
+Deskripsi : idempotency_cache memiliki primary key key (VARCHAR) dan user_id.
+            Query SELECT state, response_body, debounce_at ... WHERE key = $1 AND user_id = $2
+            belum memiliki index composite (key, user_id) selain primary key.
+Dampak : Query idempotency bisa lambat jika cache besar (ribuan record).
+Perbaikan : Tambahkan index: CREATE INDEX idx_idempotency_cache_key_user ON idempotency_cache(key, user_id).
+Estimasi : 15 menit
+Prioritas : MEDIUM
+
+ID : TD-DB-002
+Judul : Belum Ada Index untuk topup_transactions berdasarkan status & created_at
+Deskripsi : Query webhook dan auto-cancel sering filter status='PENDING' dan created_at.
+            Belum ada index yang mengcover (status, created_at).
+Dampak : Query webhook/auto-cancel bisa lambat jika topup_transactions besar.
+Perbaikan : Tambahkan index: CREATE INDEX idx_topup_transactions_status_created ON topup_transactions(status, created_at).
+Estimasi : 15 menit
+Prioritas : MEDIUM
+
+2.4. MOBILE
+────────────────────────────────────────────────────────────────────────────────
+ID : TD-MOBILE-001
+Judul : Flutter Customer App Belum Disentuh Sama Sekali
+Deskripsi : ROADMAP 01 mencakup mobile app (Customer), tapi belum ada
+            kode Flutter yang dibuat. Semua fokus ke backend.
+Dampak : Phase 1 tidak bisa dianggap 100% selesai karena milestone
+         "Customer bisa login ke HP, melihat wallet balance, top-up"
+         belum tercapai.
+Perbaikan : Mulai Flutter Customer App di Phase 2 (atau sebagai bagian
+           dari Phase 1 yang diperpanjang).
+Estimasi : 157 jam (sesuai ROADMAP 01)
+Prioritas : HIGH (blocker untuk produksi)
+
+2.5. DEPLOYMENT & INFRASTRUKTUR
+────────────────────────────────────────────────────────────────────────────────
+ID : TD-DEPLOY-001
+Judul : Belum Ada Deployment ke Supabase & Render
+Deskripsi : ROADMAP 01 mencakup deployment ke Supabase (database) dan
+            Render (backend). Saat ini semua berjalan lokal.
+Dampak : Aplikasi belum bisa diakses publik, mobile app tidak bisa terhubung.
+Perbaikan : Lakukan deployment di ROADMAP 04 (Hardening & Deployment).
+Estimasi : 30 jam (sesuai ROADMAP 04)
+Prioritas : HIGH
+
+2.6. DOKUMENTASI
+────────────────────────────────────────────────────────────────────────────────
+ID : TD-DOC-001
+Judul : API Documentation (OpenAPI) Belum Dibuat
+Deskripsi : API_CONTRACT.txt sudah ada, tapi belum ada implementasi
+            OpenAPI/Swagger untuk dokumentasi interaktif.
+Dampak : Frontend developer (Flutter) harus membaca file text untuk
+         memahami API, kurang praktis.
+Perbaikan : Generate OpenAPI spec dari kode (menggunakan go-swagger atau
+           manual) dan serve di /docs.
+Estimasi : 2-3 jam
+Prioritas : MEDIUM
+
+ID : TD-DOC-002
+Judul : README.md Belum Mencakup Cara Menjalankan Integration Test
+Deskripsi : README.md sudah ada, tapi tidak menjelaskan cara setup
+            database untuk integration test (docker-compose, migration).
+Dampak : Contributor baru kesulitan menjalankan integration test.
+Perbaikan : Tambahkan section di README tentang setup integration test.
+Estimasi : 30 menit
+Prioritas : LOW
+
+================================================================================
+3. RENCANA PERBAIKAN (FASE 2 & 3)
+
+Sprint 1 (Bersamaan dengan Phase 2 - Minggu 1-2):
+- TD-CODE-002 (Integrasi JWT claim ke wallet handler)
+- TD-TEST-001 & TD-TEST-002 (Kejar coverage 85%)
+- TD-DB-001 & TD-DB-002 (Index tambahan)
+- TD-DOC-001 (OpenAPI spec)
+
+Sprint 2 (Bersamaan dengan Phase 3 - Minggu 3-4):
+- TD-CODE-001 (Overdue debt settlement)
+- TD-TEST-003 (Integration test edge cases)
+- TD-CODE-004 (Redis graceful shutdown)
+- TD-DOC-002 (README update)
+
+Sprint 3 (Phase 4 - Hardening):
+- TD-MOBILE-001 (Flutter Customer App - actual effort)
+- TD-DEPLOY-001 (Deployment ke Supabase & Render)
+
+================================================================================
+4. CATATAN
+
+- Semua technical debt di atas bersifat "aman" untuk MVP karena tidak
+  menyebabkan crash atau data loss.
+- Prioritas perbaikan mengikuti risk assessment:
+  High = berpotensi mengganggu stabilitas / keamanan (TD-CODE-002, TD-TEST-001).
+  Medium = mengurangi kualitas atau maintainability.
+  Low = kosmetik atau dokumentasi.
+- TD-MOBILE-001 dan TD-DEPLOY-001 adalah bloker untuk production release,
+  sehingga harus diselesaikan sebelum rilis.
+
+================================================================================
+END OF TECHNICAL DEBT REGISTER v1.0
+================================================================================

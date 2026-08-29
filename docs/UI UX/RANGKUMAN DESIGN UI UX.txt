@@ -1,0 +1,114 @@
+========================================================================
+           DENTFLOW v10.0 - GLOBAL UI/UX DESIGN SYSTEM SUMMARY
+========================================================================
+Tujuan Dokumen: Sebagai blueprint dan panduan absolut untuk mengenerate 
+file DESIGN WEB.md (Admin & Dokter) dan DESIGN MOBILE.md (Pasien) agar 
+tampilan tidak hanya estetik (clean & modern SaaS Flat 2.0), tetapi juga
+memiliki usability tinggi, aman, dan lolos uji kontras WCAG AA.
+
+========================================================================
+[1] GLOBAL COLOR PALETTE & ACCESSIBILITY RULES
+========================================================================
+Sistem warna mengadopsi aturan 60-30-10 (60% Neutral/Surface, 30% Primary, 
+10% Alert/Accent) untuk menyeimbangkan psikologi klinis yang steril dan modern.
+
+* Primary (Deep Teal)      : #0F766E -> Tombol utama, menu aktif, text headings.
+                               Memancarkan kesan higiene, rasa percaya, dan modern.
+* Primary Light            : #CCFBF1 -> Hover states, row highlight, badge sukses.
+* Alert / Danger (Soft Red): #D08080 -> SELERA PERSONAL USER.
+                               Bukan merah darah murni. Digunakan KHUSUS untuk 
+                               state negatif (Batal, No Show, Low Stock, Error).
+* Neutral Dark (Slate 800) : #1E293B -> Text utama (body text) untuk keterbacaan tinggi.
+* Neutral Light (Slate 50) : #F8FAFC -> Background dasar aplikasi web & mobile.
+* Surface White            : #FFFFFF -> Background Card, Modal, Tabel.
+
+⚠️ ATURAN KONTRAS UTAMA UNTUK WARNA #D08080:
+Karena #D08080 memiliki luminance tanggung, jika dipasang sebagai teks di atas 
+background putih, ia tidak lolos WCAG AA. Solusi UX:
+1. Sebagai Badge: Gunakan background #D08080 dengan OPACITY 15%, lalu teks di 
+   dalamnya menggunakan warna #D08080 murni (atau versi lebih gelap).
+2. Sebagai Text: Gunakan hanya untuk angka indikator besar atau berpasangan 
+   dengan background gelap/gelap-kontras.
+
+========================================================================
+[2] ARCHITECTURE DESIGN: WEB PORTAL (ADMIN & DOKTER)
+========================================================================
+Karakter Desain: Padat data, didominasi Neutral Light (#F8FAFC) & Putih (70%), 
+minim kelelahan mata (low eye-strain), layout responsif desktop-first.
+Sistem Navigasi Utama: FIXED LEFT SIDEBAR.
+
+A. HALAMAN ADMIN (Patokan: 7 Menu Kunci di Sidebar)
+   1. Antrian (`/admin/queue`): Dashboard live monitor antrian ruang tunggu. 
+      Ada tombol panggil/selesai, modal check-in kode, dan walk-in form.
+   2. Dokter (`/admin/doctors`): Daftar 8 dokter cabang. Klik nama untuk 
+      memunculkan modal/pop-up pengaturan jadwal praktik.
+   3. Pasien (`/admin/patients`): Master data pasien. Klik nama masuk ke 
+      Detail Pasien (/admin/patients/:patient_id) yang memiliki 3 Tab internal:
+      - Tab Riwayat Booking
+      - Tab Riwayat Keuangan
+      - Tab Riwayat Kunjungan (Ada tombol [Lihat EMR] -> /admin/emr/:encounter_id)
+   4. Keuangan (`/admin/finance`): Daftar invoice. Klik invoice membuka Detail 
+      Invoice (/admin/finance/invoices/:invoice_id) untuk input pembayaran 
+      (Cash/Transfer) dan tombol validasi [Lihat EMR]. Ada sub-link ke Rekonsiliasi.
+   5. Inventaris (`/admin/inventory`): Manajemen stok obat/alat (CRUD). 
+      Gunakan Low Stock Alert: Jika stock <= min_stock, teks kuantitas menjadi #D08080 (Bold).
+   6. Audit Log (`/admin/audit-logs`): Tabel log aktivitas sistem bersifat 
+      immutable (Read-Only). No edit/delete buttons.
+   7. Pengaturan (`/admin/settings`): Edit profil admin & tombol backup/restore DB.
+
+   🔒 PRIVASI MEDIS PADA ROLE ADMIN:
+   Admin dapat mengakses halaman EMR View (/admin/emr/:encounter_id) via menu 
+   Keuangan/Pasien murni untuk validasi tindakan kasir. Sifatnya MUTLAK READ-ONLY. 
+   Desain UI harus MENYEMBUNYIKAN field Diagnosa Penyakit dari pandangan Admin.
+
+B. HALAMAN DOKTER (Patokan: 4 Menu Kunci di Sidebar)
+   1. Antrian (`/doctor/queue`): List pasien per spesialis hari ini. Tombol 
+      "Mulai Layani" akan mengarahkan ke halaman Form Input EMR Baru (/doctor/emr/new).
+   2. Pasien (`/doctor/patients`): Database pasien spesifik yang pernah ditangani.
+   3. EMR (`/doctor/emr`): Arsip rekam medis dokter terkait. Bisa filter status 
+      "Draft" (untuk melanjutkan input yang tertunda) atau "Finalized" (locked).
+   4. Profil (`/doctor/profile`): Info kompetensi medis dan form ganti password.
+
+   🩺 DETAIL UX FORM INPUT EMR BARU (/doctor/emr/new):
+   Layout split-screen direkomendasikan. Bagian atas wajib menampilkan Banner 
+   Alergi Obat Pasien dengan warna dasar #D08080 (Text Putih) sebagai alert kritis 
+   bagi dokter. Odontogram (peta gigi) menggunakan warna #D08080 untuk menandai 
+   gigi bermasalah yang butuh tindakan.
+
+========================================================================
+[3] ARCHITECTURE DESIGN: MOBILE APP (PASIEN-FACING)
+========================================================================
+Karakter Desain: Emosional, menenangkan, interaktif, mobile-first/responsive web.
+Sistem Navigasi Utama: PERSISTENT BOTTOM BAR (4 Menu Utama).
+
+📱 DETAIL 4 MENU BOTTOM BAR PASIEN:
+1. Home (`/patient/home`): Dashboard personal. Berisi card jadwal janji temu 
+   terdekat (jika diklik membuka Detail Booking) dan Button utama warna 
+   Primary (#0F766E) untuk "Buat Janji Temu Baru".
+2. Bookings (`/patient/bookings`): Menampilkan list riwayat booking. Klik item 
+   membuka Detail Booking (/patient/bookings/:booking_id) untuk urusan status 
+   atau integrasi Midtrans. Di menu ini ada akses ke 4-Step Booking Flow (/patient/booking):
+   - Step 1: Pilih Cabang (A, B, C)
+   - Step 2: Pilih Dokter (Filter per Spesialisasi)
+   - Step 3: Pilih Tanggal & Slot Waktu
+   - Step 4: Review Ringkasan & Bayar DP Rp 50.000 (Trigger Midtrans Gateway)
+3. EMR History (`/patient/encounters`): Daftar riwayat kunjungan. Klik item 
+   membuka EMR Detail (/patient/encounters/:encounter_id) bersifat READ-ONLY, 
+   menampilkan catatan keluhan, tindakan, resep obat, dan link file rontgen/X-Ray.
+4. Profile (`/patient/profile`): Edit personal data, ganti password, dan logout.
+
+⚠️ DETAIL UX EMOSIONAL PASIEN (WARNA #D08080):
+Hindari penggunaan warna #D08080 di area utama aplikasi pasien agar tidak memicu 
+psikologi kecemasan (darah/rasa sakit). Warna #D08080 HANYA boleh muncul dalam 
+skala kecil sebagai status badge "Dibatalkan" / "No Show" di riwayat, atau border 
+pada modal konfirmasi "Apakah Anda yakin ingin membatalkan janji temu ini?".
+
+========================================================================
+[4] GLOBAL INTERACTION & UI/UX COMPLIANCE (PANDUAN CODING FRONTEND)
+========================================================================
+- Ganti semua native browser alert() dengan Custom Dialog/Modal yang rapi.
+- Gunakan Toast Notifications (non-blocking) di pojok layar untuk sukses/error.
+- Terapkan Skeleton Loading / Spinner saat data sedang di-fetch untuk mencegah layout-shifting.
+- Jika terjadi error sistem, tampilkan pesan deskriptif dalam Bahasa Indonesia 
+  menggunakan komponen card ber-border #D08080.
+========================================================================
