@@ -1053,3 +1053,80 @@ Referensi:
 - apps/customer_app/lib/services/api_client.dart (pola auth/idempotency)
 
 ================================================================================
+TASK 3.10 - Driver App: Multi-Order & Multi-Stop (Implemented)
+================================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. Buat apps/driver_app (flutter create --org com.gflow --project-name
+   driver_app). Fitur sesuai ROADMAP 03 §3.10 A-F & HALAMAN.txt §7.
+2. Struktur lib/:
+   - models/: driver_order.dart (DriverOrder terpadu ride/food/send +
+     OrderType + kActive*Statuses + isActive/isTerminal/nextUndeliveredStop),
+     driver_stop.dart (DriverStop + isDelivered), driver_earning.dart.
+   - services/: api_client.dart (dio + token flutter_secure_storage +
+     idempotency uuid, pola customer_app), location_service.dart
+     (GET/POST /drivers/location, nearby, geolocator), order_service.dart
+     (accept/status/stop PATCH per tipe + mock dataset DEMO karena endpoint
+     listing backend belum ada), earnings_service.dart.
+   - providers/: auth_provider.dart (login/register driver + provider
+     location/order/earnings + currentDriverId via secure storage),
+     location_provider.dart (lokasi + publish tiap 5 detik saat online),
+     order_provider.dart (available + activeOrders, capacity check maks 3,
+     acceptRide/Send, updateStatus, markStopDelivered via DriverStopCopier),
+     earnings_provider.dart.
+   - screens/: dashboard (multi-order: toggle online, map + pin order aktif,
+     KPI, capacity bar, daftar active per tipe), available_orders (list
+     ride/food/send, filter per tipe, sortir jarak/tipe/waktu, countdown
+     30 detik, ACCEPT), active_order_detail (map rute + aksi status machine
+     per tipe + pintu multi-stop), multi_stop_delivery (navigasi Google Maps
+     + foto image_picker base64 + mark stop DELIVERED), earnings (fl_chart
+     bar harian/mingguan, KPI ride/food/send, withdrawal placeholder),
+     auth/login & register.
+   - widgets/: status_badge.dart, order_type_badge.dart, kpi_card.dart
+     (KpiCard + DemoBadge + EmptyStateView).
+   - config/: constants.dart (kAppName 'G-Flow Driver', kApiBaseUrl,
+     kMaxActiveOrders=3, kLocationPublishIntervalSeconds=5, formatRupiah,
+     shortId), router.dart (goRouterProvider; redirect login/dashboard).
+3. Perbaikan error flutter analyze (37 issues → No issues found):
+   - location_provider.dart import auth_provider (locationServiceProvider).
+   - Import kpi_card.dart di active_order_detail & multi_stop_delivery
+     (EmptyStateView/DemoBadge sudah ada di lib/widgets/kpi_card.dart).
+   - OrdersListState: tambah getter activeCount & isAtCapacity (dipakai
+     dashboard & available_orders); hapus duplikat di ActiveOrdersNotifier.
+   - location_service.dart: Position geolocator non-nullable — buang const,
+     ganti null dengan DateTime.now()/0.0 via helper _defaultPosition().
+   - Hapus unused imports (register_screen, available_orders_screen,
+     order_service, kpi_card).
+   - multi_stop_delivery_screen: tulis ulang usePhoto (hapus dead code &
+     dead_null_aware_expression, await showDialog dipisah jadi bool).
+   - Info lint: unnecessary brace interpolation & use_null_aware_elements.
+
+File yang diubah/ditambah:
+- apps/driver_app/** (proyek Flutter baru, 137 file).
+- apps/driver_app/pubspec.yaml - deps: dio, riverpod, flutter_riverpod,
+  flutter_secure_storage, go_router >=14 <17, flutter_map+latlong2, geolocator,
+  fl_chart, image_picker, url_launcher, uuid; dev: build_runner,
+  flutter_lints ^6.
+
+Hasil Verifikasi:
+- ✅ flutter pub get clean (go_router 16.3.0, flutter_map 6.2.1, geolocator 10.1.1).
+- ✅ flutter analyze - No issues found.
+- ✅ flutter test - 11/11 PASS (models_test 10 + widget_test 1).
+- ✅ Commit & push ke origin/main.
+
+Catatan:
+- ⚠️ GAP BACKEND: GET /rides/available, /food-orders/available,
+  /send-orders/available, /drivers/{id}/orders & GET /rides/{id} belum ada.
+  App memakai dataset DEMO (kUseMockAvailableOrders, badge DEMO di UI);
+  accept ride/send memakai endpoint real di service.
+- ⚠️ Dengan kapasitas maks 3, backlog order aktif (awaited_since) & cancel
+  timeout driver belum diimplementasikan di task ini.
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.10 - Driver App)
+- docs/HALAMAN.txt (Section 7 - Driver App, screens 7.1-7.6)
+- apps/customer_app/lib/services/api_client.dart (pola auth/idempotency)
+- apps/merchant_app/lib/services/order_service.dart (pola endpoint status)
+
+================================================================================
