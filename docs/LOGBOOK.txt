@@ -627,3 +627,73 @@ Catatan:
 
 Referensi:
 - docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.3.1 - 3.3.6)
+
+===============================================================================
+TASK 3.4 - Food Order Status Machine & Settlement (Implemented & Validated)
+===============================================================================
+Status: ✅ IMPLEMENTED & VALIDATED (2026-08-30)
+
+Apa yang dilakukan:
+1. Food status machine (valid transitions, per aktor):
+   CREATED → CONFIRMED → PREPARING → READY_FOR_PICKUP → PICKED_UP →
+   IN_TRANSIT → DELIVERED → SETTLED (otomatis saat DELIVERED).
+   - Merchant: CREATED → CONFIRMED → PREPARING → READY_FOR_PICKUP
+     (merchant_status WAITING → CONFIRMED → PREPARING → READY).
+   - Driver: READY_FOR_PICKUP → PICKED_UP → IN_TRANSIT → DELIVERED.
+   - Settled TIDAK bisa dipanggil manual via PATCH (HANYA otomatis DELIVERED).
+2. 4-way settlement (Task 3.4) — settleFoodOrderTx (internal/food/service.go):
+   - WALLET: DEBIT SYSTEM_ESCROW (total_amount) → CREDIT merchant_wallet
+     (item_subtotal - platform_commission) + CREDIT driver_wallet
+     (driver_earning = delivery_fee × 0.9) + CREDIT SYSTEM_PLATFORM
+     (platform_commission + delivery_fee × 0.1).
+   - Invariant balances: merchant_earning + driver_earning +
+     platform_commission = item_subtotal + delivery_fee - discount.
+   - CASH: customer bayar tunai ke driver; driver menyetor merchant_share +
+     komisi platform (food + delivery) ke wallet digital:
+     DEBIT driver → CREDIT merchant, DEBIT driver → CREDIT platform.
+   - Locking wallet ORDER BY id ASC FOR UPDATE (deadlock-free), semua transaksi
+     di dalam SELECT ... FOR UPDATE NOWAIT pada food_orders.
+   - Semua double-entry memakai wallet.LedgerService (CREATE_LEDGER_ENTRIES
+     memvalidasi SUM(DEBIT) == SUM(CREDIT)).
+3. Cash settlement handling:
+   - Saldo driver boleh minus (COD) dengan ceiling -Rp 50.000; jika balance
+     < ceiling setelah distribusi → driver di-SUSPENDED (users.status =
+     'SUSPENDED', working_status = 'IDLE'). Jika aman → working_status IDLE.
+4. Settlement audit trail (food_order_events):
+   - Event IN_TRANSIT → DELIVERED (aktor driver) + event DELIVERED → SETTLED
+     (settleFoodOrderTx) dalam transaksi yang sama dengan penerimaan dana.
+5. Refund cancellation (reverse escrow):
+   - Cancel CREATED/CONFIRMED WALLET → refund FOOD_REFUND penuh
+     (DEBIT escrow → CREDIT customer, is_refunded = TRUE) — kembali
+     dipakai/distimulasi pada transisi CANCELLED.
+6. Trigger/event untuk settlement otomatis DELIVERED → SETTLED:
+   - Otomatisasi di Go service (status DELIVERED memicu settlement in-tx).
+   - Migration 006_food_settlement_guard.up.sql mengganti trigger
+     `process_cash_settlement` (lama: auth.uid() tidak ada + hanya komisi
+     platform → risiko DOBEL settlement) dengan GUARD trigger idempoten:
+     status = 'SETTLED' ⇒ is_settled = TRUE & settled_at terisi
+     (tanpa menulis ledger — distribusi dana milik service layer).
+7. UPDATE food_orders SET is_settled = TRUE, settled_at = NOW() setelah
+   settlement sukses (MarkFoodOrderSettled, CAS dari status 'DELIVERED').
+
+File yang diubah:
+- internal/food/service.go — settleFoodOrderTx, auto-settle DELIVERED→SETTLED,
+  konstanta (walletTypeDriver/systemPlatform, referenceTypeFoodSettle,
+  maxDriverNegativeBalance, foodDriverEarningRate, foodDeliveryCommissionRate),
+  error ErrDriverNotFound, Repo interface diperluas.
+- internal/food/repository.go — MarkFoodOrderSettled, MarkDriverSuspended,
+  ResetDriverIdle.
+- internal/food/handler.go — error mapping ErrDriverNotFound (DRIVER_NOT_FOUND
+  404), ErrWalletNotFound (WALLET_NOT_FOUND 404).
+- migrations/006_food_settlement_guard.up.sql — trigger guard baru.
+
+Hasil Verifikasi:
+- ✅ go build ./... clean.
+- ✅ go vet ./... clean.
+- ✅ gofmt clean (internal/food).
+- ✅ go test ./internal/food/... ./internal/wallet/... PASS.
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.4, F009 — ORDER BY id ASC)
+- docs/LOGIC FLOW.txt (CASH FOOD MERCHANT SETTLEMENT / NEGATIVE BALANCE 5.5)
+- docs/API CONTRACT.txt (Settlement DELIVERED → SETTLED)
