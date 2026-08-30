@@ -23,6 +23,7 @@ import (
 	"github.com/g-flow/g-flow/internal/ride"
 	"github.com/g-flow/g-flow/internal/send"
 	"github.com/g-flow/g-flow/internal/wallet"
+	"github.com/g-flow/g-flow/internal/worker"
 )
 
 func main() {
@@ -92,6 +93,13 @@ func main() {
 	sendLedger := wallet.NewLedgerService(pool)
 	sendService := send.NewService(sendRepository, pool, rdb, sendLedger)
 	sendHandler := send.NewHandler(sendService)
+
+	// Wire up dependencies auto-cancel worker (Phase 3, Task 3.7). Worker
+	// memakai pool DB, LedgerService untuk refund escrow double-entry, dan
+	// Redis untuk distributed lock (SET NX) agar aman di multi-instance.
+	workerRepository := worker.NewRepository(pool)
+	workerLedger := wallet.NewLedgerService(pool)
+	autoCancelWorker := worker.NewWorker(workerRepository, pool, rdb, workerLedger)
 
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
 	// dan Logger (JSON terstruktur / F014) dipasang sebelum route apapun.
@@ -203,6 +211,11 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	go locationWorker.FlushLoop(workerCtx)
+
+	// Jalankan background worker auto-cancel G-Food & G-Send (3.7) sebagai
+	// goroutine. Loop 1 menit + Redis distributed lock (SET NX) memastikan
+	// hanya satu instance yang mengeksekusi sweep pada satu waktu.
+	go autoCancelWorker.Run(workerCtx)
 
 	log.Printf("Server running on port %s (env=%s)", cfg.App.Port, cfg.App.Env)
 	if err := r.Run(":" + cfg.App.Port); err != nil {

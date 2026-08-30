@@ -841,3 +841,70 @@ Catatan:
 - Driver capacity hanya menghitung order ber-status aktif
   (DRIVER_ASSIGNED/PICKED_UP/IN_TRANSIT); CANCELLED/DELIVERED/SETTLED — slot
   terisi kembali (CAPACITY filter fix, LOGIC_FLOW #59).
+
+================================================================================
+TASK 3.7 - Auto-Cancel Workers for Food & Send Orders (Implemented)
+================================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. Package baru internal/worker (Task 3.7, ROADMAP 03 §3.7):
+   - Worker.Run(ctx): loop ticker 1 menit sebagai goroutine dari main.go.
+   - Sweep pertama dijalankan segera (tanpa tunggu ticker pertama).
+   - Food order auto-cancel: SELECT id FROM food_orders
+     WHERE status='CREATED' AND created_at < NOW() - INTERVAL '15 minutes'.
+   - Send order auto-cancel: SELECT id FROM send_orders
+     WHERE status='SEARCHING_DRIVER' AND created_at < NOW() - INTERVAL '10 minutes'.
+   - Redis distributed lock (SET NX) + compare-and-del (Lua) agar aman di
+     multi-instance: hanya satu instance yang mengeksekusi sweep pada satu
+     waktu; lock dilepas hanya bila masih dimiliki (mencegah hapus lock milik
+     instance lain bila TTL kedaluwarsa). Tanpa Redis => single-instance
+     dianggap pemilik (graceful).
+2. Per-order dalam transaksi PostgreSQL terpisah (pola sama dgn ride
+   AutoCancelExpiredOrders Task 2.7):
+   - Lock baris order SELECT ... FOR UPDATE NOWAIT (55P03 => lock timeout).
+   - Guard status (CAS): food 'CREATED', send 'SEARCHING_DRIVER'.
+   - Jika payment_method='WALLET' (dan belum settled/refund): reverse escrow
+     double-entry refund (FOOD_REFUND / SEND_REFUND) via wallet.LedgerService,
+     lock wallets ORDER BY id ASC FOR UPDATE (deadlock-free).
+   - Update status='CANCELLED' + cancellation_reason='EXPIRED'.
+   - Insert audit event (food_order_events / send_order_events) dengan
+     reason + metadata {reason: EXPIRED}.
+   - Idempoten (tidak double-refund): food memakai flag is_refunded + CAS;
+     send memakai guard status CAS (pola ride).
+3. Migration 007_auto_cancel_worker.up.sql:
+   - Tambah kolom cancellation_reason TEXT ke food_orders & send_orders
+     (sebelumnya hanya ride_orders yang punya, Migration 004).
+   - Partial index idx_food_orders_auto_cancel (status='CREATED') &
+     idx_send_orders_auto_cancel (status='SEARCHING_DRIVER') agar query
+     worker per-1-menit cepat.
+   - Di-apply ke dev DB (g_flow_dev) + verifikasi kolom & index terpasang.
+   - scripts/migrate.bat & migrate.sh diperbarui (menambah 005, 006, 007).
+4. cmd/api/main.go: wiring workerRepository/wallet.LedgerService + goroutine
+   autoCancelWorker.Run(workerCtx) berdampingan locationWorker.
+
+File yang diubah/ditambah:
+- internal/worker/worker.go — Worker, Run loop, distributed lock (SET NX +
+  compare-and-del), CancelFoodOrders/CancelSendOrders + refund + audit.
+- internal/worker/repository.go — ExpiredFoodOrderIDs, LockFoodOrder/SendOrder,
+  CancelFoodOrder/SendOrder, InsertFoodOrderEvent/SendOrderEvent,
+  SystemWalletID (+ scanner helpers).
+- internal/worker/types.go — tipe worker (FoodOrder/SendOrder/Event) + konstanta.
+- migrations/007_auto_cancel_worker.up.sql — kolom cancellation_reason + index.
+- scripts/migrate.bat & scripts/migrate.sh — tambah 005, 006, 007.
+- cmd/api/main.go — wiring + goroutine worker auto-cancel.
+
+Hasil Verifikasi:
+- ✅ go build ./... clean.
+- ✅ go vet ./... clean.
+- ✅ gofmt -l internal/worker clean (tidak ada file tak terformat).
+- ✅ go test ./... PASS.
+- ✅ Migration 007 di-apply ke dev DB (ALTER TABLE x2, CREATE INDEX x2).
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.7 — Auto-Cancel Workers)
+- internal/ride AutoCancelExpiredOrders (Task 2.7 — pola acuan lock+refund)
+
+================================================================================
+TASK 3.8 - Customer App Enhancements (Belum — lanjutan ROADMAP 03)
+================================================================================

@@ -16,4 +16,16 @@ psql $DATABASE_URL -f migrations/002_add_kyc_status_and_fix_idempotency_key.up.s
 # Migration 003
 psql $DATABASE_URL -f migrations/003_add_overdue_debt.up.sql
 
+# Migration 004
+psql $DATABASE_URL -f migrations/004_ride_orders.up.sql
+
+# Migration 005
+psql $DATABASE_URL -f migrations/005_food_send_schema.up.sql
+
+# Migration 006
+psql $DATABASE_URL -f migrations/006_food_settlement_guard.up.sql
+
+# Migration 007
+psql $DATABASE_URL -f migrations/007_auto_cancel_worker.up.sql
+
 echo "Migrations completed."
