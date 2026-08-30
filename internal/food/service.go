@@ -16,6 +16,12 @@
 //     transaksi yang sama dengan pembuatan order.
 //   - Status update (PATCH /food-orders/{id}): SELECT ... FOR UPDATE NOWAIT
 //   - transisi status per aktor + audit trail food_order_events.
+//   - Settlement (Task 3.4): saat driver menandai DELIVERED, service otomatis
+//     men-disettle order (DELIVERED → SETTLED) dalam transaksi yang sama —
+//     lock wallet ORDER BY id ASC FOR UPDATE, double-entry ledger
+//     FOOD_SETTLEMENT via wallet.LedgerService, cash settlement dengan cek
+//     balance driver (ceiling -50.000 → SUSPENDED), dan audit trail.
+//     DB migration 006 memasang guard trigger (status SETTLED ⇒ is_settled).
 //
 // Prinsip yang selaras dengan modul ride/wallet:
 //   - Otorisasi ownership merchant/order divalidasi di service, bukan hanya
@@ -86,6 +92,15 @@ const (
 	// Reference type double-entry ledger untuk food escrow & refund.
 	referenceTypeFoodEscrow = "FOOD_ESCROW"
 	referenceTypeFoodRefund = "FOOD_REFUND"
+
+	// Task 3.4 — Settlement & status machine.
+	walletTypeDriver         = "DRIVER"
+	walletTypeSystemPlatform = "SYSTEM_PLATFORM"
+	referenceTypeFoodSettle  = "FOOD_SETTLEMENT"
+
+	// Ceiling saldo negatif driver (LOGIC_FLOW 5.5): jika balance driver
+	// < -Rp 50.000 setelah CASH settlement, akun driver di-SUSPENDED.
+	maxDriverNegativeBalance = -50000
 )
 
 // Tarif G-Food (ROADMAP 3.3.3 langkah 3): delivery fee fixed Rp 20.000 dan
@@ -93,6 +108,8 @@ const (
 var (
 	foodDeliveryFee            = decimal.NewFromInt(20000)
 	foodPlatformCommissionRate = decimal.RequireFromString("0.15")
+	foodDriverEarningRate      = decimal.RequireFromString("0.90")
+	foodDeliveryCommissionRate = decimal.RequireFromString("0.10")
 	foodEstimatedDelivery      = "30 minutes"
 )
 
@@ -125,6 +142,7 @@ var (
 	ErrInvalidStatus          = errors.New("invalid status value")
 	ErrInvalidTransition      = errors.New("invalid status transition for current order state")
 	ErrNotAllowed             = errors.New("user is not allowed to access this order")
+	ErrDriverNotFound         = errors.New("driver not found or has no DRIVER wallet")
 )
 
 // Repo adalah kontrak repository yang dibutuhkan Service. Dipenuhi oleh
@@ -172,6 +190,11 @@ type Repo interface {
 	GetFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID, limit, offset int) ([]*FoodOrder, error)
 	CountFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID) (int, error)
 	SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error)
+
+	// Task 3.4 — Settlement & status machine.
+	MarkFoodOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
+	MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error
+	ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
@@ -1140,6 +1163,198 @@ func (s *Service) refundFoodEscrow(ctx context.Context, tx pgx.Tx, order *FoodOr
 	})
 }
 
+// ---- Task 3.4: Settlement (ROADMAP 3.4, F009) ----
+
+// settleFoodOrderTx melakukan 4-way settlement double-entry ledger saat food
+// order bertransisi DELIVERED → SETTLED (otomatis dipanggil setelah driver
+// menandai DELIVERED). Locking wallet ORDER BY id ASC FOR UPDATE (deadlock-free).
+//
+//	WALLET: DEBIT SYSTEM_ESCROW (total_amount) → CREDIT merchant_wallet
+//	        (item_subtotal - platform_commission) + CREDIT driver_wallet
+//	        (driver_earning = delivery_fee * 0.9) + CREDIT SYSTEM_PLATFORM
+//	        (platform_commission + delivery_fee * 0.1).
+//	CASH  : customer bayar tunai ke driver; driver menyetor merchant_share +
+//	        komisi platform ke wallet digital:
+//	        DEBIT driver_wallet → CREDIT merchant_wallet (merchant_share)
+//	        DEBIT driver_wallet → CREDIT platform_wallet (komisi item + delivery).
+//	        Saldo driver boleh negatif (ceiling -Rp 50.000); jika balance
+//	        < ceiling, driver di-SUSPENDED.
+//
+// Lalu menandai order SETTLED (is_settled = TRUE, settled_at = NOW()) dan
+// menulis audit trail food_order_events (DELIVERED → SETTLED).
+//
+// Invariant double-entry: SUM(DEBIT) == SUM(CREDIT) per group — diverifikasi
+// oleh wallet.LedgerService.CreateLedgerEntries.
+func (s *Service) settleFoodOrderTx(ctx context.Context, tx pgx.Tx, order *FoodOrder) error {
+	if order.DriverID == nil {
+		return ErrDriverNotFound
+	}
+	driverWallet, err := s.repo.GetWalletByUserAndType(ctx, *order.DriverID, walletTypeDriver)
+	if err != nil {
+		return err
+	}
+	if order.MerchantWalletID == nil {
+		return ErrWalletNotFound
+	}
+	platformID, err := s.repo.SystemWalletID(ctx, tx, walletTypeSystemPlatform)
+	if err != nil {
+		return err
+	}
+
+	commission := decimal.Zero
+	if order.PlatformCommission != nil {
+		commission = order.PlatformCommission.Round(2)
+	}
+	merchantEarning := order.ItemSubtotal.Sub(commission).Round(2)
+	deliveryCommission := order.DeliveryFee.Mul(foodDeliveryCommissionRate).Round(2)
+	driverEarning := order.DeliveryFee.Mul(foodDriverEarningRate).Round(2)
+	if order.DriverEarning != nil {
+		driverEarning = order.DriverEarning.Round(2)
+	}
+
+	switch order.PaymentMethod {
+	case PaymentMethodCash:
+		// Driver memegang kas customer; menyetor bagian merchant + komisi
+		// platform ke wallet digital.
+		if err := lockWalletsAsc(ctx, tx, driverWallet.ID, *order.MerchantWalletID, platformID); err != nil {
+			return err
+		}
+		if err := s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+			{
+				WalletID:      driverWallet.ID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        merchantEarning,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - merchant share DEBIT driver (CASH)",
+			},
+			{
+				WalletID:      *order.MerchantWalletID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        merchantEarning,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - merchant share CREDIT (CASH)",
+			},
+			{
+				WalletID:      driverWallet.ID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        commission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - food commission DEBIT driver (CASH)",
+			},
+			{
+				WalletID:      platformID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        commission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - food commission CREDIT (CASH)",
+			},
+			{
+				WalletID:      driverWallet.ID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        deliveryCommission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - delivery commission DEBIT driver (CASH)",
+			},
+			{
+				WalletID:      platformID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        deliveryCommission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - delivery commission CREDIT (CASH)",
+			},
+		}); err != nil {
+			return err
+		}
+
+		// Cek saldo driver SETELAH distribusi; jika menembus ceiling negatif
+		// -Rp 50.000 → driver di-SUSPENDED (LOGIC_FLOW 5.5).
+		balance, err := getWalletBalanceTx(ctx, tx, driverWallet.ID)
+		if err != nil {
+			return err
+		}
+		if balance.LessThan(decimal.NewFromInt(maxDriverNegativeBalance)) {
+			if err := s.repo.MarkDriverSuspended(ctx, tx, *order.DriverID); err != nil {
+				return err
+			}
+		} else if err := s.repo.ResetDriverIdle(ctx, tx, *order.DriverID); err != nil {
+			return err
+		}
+	case PaymentMethodWallet:
+		escrowID, err := s.repo.SystemWalletID(ctx, tx, walletTypeSystemEscrow)
+		if err != nil {
+			return err
+		}
+		// 4-way: escrow (DEBIT) → merchant + driver + platform (CREDIT).
+		// Lock seluruh wallet dengan ORDER BY id ASC untuk mencegah deadlock.
+		if err := lockWalletsAsc(ctx, tx, escrowID, *order.MerchantWalletID, driverWallet.ID, platformID); err != nil {
+			return err
+		}
+		if err := s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+			{
+				WalletID:      escrowID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        order.TotalAmount,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - release escrow to merchant/driver/platform",
+			},
+			{
+				WalletID:      *order.MerchantWalletID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        merchantEarning,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - merchant earning CREDIT",
+			},
+			{
+				WalletID:      driverWallet.ID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        driverEarning,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - driver earning 90% delivery fee CREDIT",
+			},
+			{
+				WalletID:      platformID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        commission.Add(deliveryCommission),
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeFoodSettle,
+				Description:   "FOOD_SETTLEMENT - platform commission (food + delivery) CREDIT",
+			},
+		}); err != nil {
+			return err
+		}
+		if err := s.repo.ResetDriverIdle(ctx, tx, *order.DriverID); err != nil {
+			return err
+		}
+	default:
+		return ErrInvalidPaymentMethod
+	}
+
+	// Tandai SETTLED + audit trail DELIVERED → SETTLED.
+	if err := s.repo.MarkFoodOrderSettled(ctx, tx, order.ID); err != nil {
+		return err
+	}
+
+	from := foodStatusDelivered
+	if err := s.repo.InsertFoodOrderEvent(ctx, tx, FoodOrderEvent{
+		OrderID:     order.ID,
+		FromStatus:  &from,
+		ToStatus:    foodStatusSettled,
+		TriggeredBy: order.DriverID,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ---- Task 3.3: Status Update (ROADMAP 3.3.4) ----
 
 // UpdateFoodOrderStatusRequest input untuk PATCH /food-orders/{id}.
@@ -1171,9 +1386,11 @@ const (
 //   - Merchant (pemilik merchant): CREATED → CONFIRMED → PREPARING →
 //     READY_FOR_PICKUP (merchant_status ikut maju).
 //   - Driver tertunjuk: READY_FOR_PICKUP → PICKED_UP → IN_TRANSIT →
-//     DELIVERED (implementasi penuh di Task 3.4).
+//     DELIVERED; status DELIVERED otomatis memicu settlement (Task 3.4):
+//     order langsung menjadi SETTLED dalam transaksi yang sama
+//     (settleFoodOrderTx — 4-way WALLET / CASH).
 //
-// Settlement (DELIVERED → SETTLED) belum diimplementasi di Task 3.3.
+// Settlement (DELIVERED → SETTLED) otomatis diimplementasi di Task 3.4.
 func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrderStatusRequest) (*UpdateFoodOrderStatusResponse, error) {
 	if !validFoodStatusTarget(req.Status) {
 		return nil, ErrInvalidStatus
@@ -1284,10 +1501,21 @@ func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrder
 		return nil, err
 	}
 
+	// Task 3.4 — Settlement otomatis: ketika driver menandai DELIVERED, order
+	// langsung disettel (DELIVERED → SETTLED) dalam transaksi yang sama agar
+	// order + distribusi dana atomik. Response status akhir = SETTLED.
+	respStatus := req.Status
+	if req.Status == foodStatusDelivered {
+		if err := s.settleFoodOrderTx(ctx, tx, locked); err != nil {
+			return nil, err
+		}
+		respStatus = foodStatusSettled
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &UpdateFoodOrderStatusResponse{OrderID: req.OrderID, Status: req.Status}, nil
+	return &UpdateFoodOrderStatusResponse{OrderID: req.OrderID, Status: respStatus}, nil
 }
 
 // validFoodStatusTarget memvalidasi nilai status yang boleh dikirim ke

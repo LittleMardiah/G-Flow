@@ -812,7 +812,9 @@ func statusForError(err error) int {
 	case errors.Is(err, ErrMerchantNotFound),
 		errors.Is(err, ErrMenuNotFound),
 		errors.Is(err, ErrItemNotFound),
-		errors.Is(err, ErrFoodOrderNotFound):
+		errors.Is(err, ErrFoodOrderNotFound),
+		errors.Is(err, ErrDriverNotFound),
+		errors.Is(err, ErrWalletNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrNotMerchant),
 		errors.Is(err, ErrNotMerchantOwner),
@@ -860,6 +862,10 @@ func codeForError(err error) string {
 		return "ITEM_NOT_FOUND"
 	case errors.Is(err, ErrFoodOrderNotFound):
 		return "FOOD_ORDER_NOT_FOUND"
+	case errors.Is(err, ErrDriverNotFound):
+		return "DRIVER_NOT_FOUND"
+	case errors.Is(err, ErrWalletNotFound):
+		return "WALLET_NOT_FOUND"
 	case errors.Is(err, ErrNotMerchant):
 		return "NOT_MERCHANT"
 	case errors.Is(err, ErrNotMerchantOwner):

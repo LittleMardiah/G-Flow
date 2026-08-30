@@ -757,6 +757,41 @@ func (r *Repository) UpdateFoodOrderStatus(ctx context.Context, q Querier, order
 	return tag.RowsAffected() > 0, nil
 }
 
+// MarkFoodOrderSettled menandai food order SETTLED + is_settled + settled_at
+// (dipakai SETELAH settlement ledger berhasil — Task 3.4). CAS guard status
+// DELIVERED agar settlement tidak menimpa transisi lain.
+func (r *Repository) MarkFoodOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
+		UPDATE food_orders
+		SET status = 'SETTLED', is_settled = TRUE, settled_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'DELIVERED'
+	`, orderID)
+	return err
+}
+
+// ResetDriverIdle menyetel working_status driver kembali ke IDLE (habis
+// menyelesaikan delivery food order) — selaras dengan modul ride.
+func (r *Repository) ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
+		UPDATE users
+		SET working_status = 'IDLE', last_status_update_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, driverID)
+	return err
+}
+
+// MarkDriverSuspended menyetel status driver menjadi SUSPENDED (dipakai saat
+// saldo driver melewati ceiling negatif setelah CASH settlement food order).
+func (r *Repository) MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
+		UPDATE users
+		SET status = 'SUSPENDED', working_status = 'IDLE',
+		    last_status_update_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, driverID)
+	return err
+}
+
 // GetFoodOrderItems mengambil semua item sebuah food order (urut insert).
 func (r *Repository) GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error) {
 	rows, err := r.db.Query(ctx, `
