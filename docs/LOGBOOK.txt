@@ -906,5 +906,88 @@ Referensi:
 - internal/ride AutoCancelExpiredOrders (Task 2.7 — pola acuan lock+refund)
 
 ================================================================================
-TASK 3.8 - Customer App Enhancements (Belum — lanjutan ROADMAP 03)
+TASK 3.8 - Customer App Enhancements (Implemented)
+================================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. Screens Food baru di apps/customer_app/lib/screens/food/ (ROADMAP 03 §3.8
+   & HALAMAN.txt §4):
+   - food_catalog_screen.dart — daftar merchant dengan pencarian, filter/sort
+     (distance/rating/price), dan toggle list/map (FlutterMap + OSM).
+   - merchant_detail_screen.dart — menu + item per merchant, bottom sheet item
+     dengan opsi SINGLE/MULTIPLE (RadioGroup Flutter 3.47), tambah ke keranjang.
+   - food_cart_screen.dart — keranjang single-merchant: stepper qty, voucher,
+     subtotal; checkout wajib memiliki merchantId.
+   - food_checkout_screen.dart — alamat, metode bayar (WALLET/CASH), ringkasan,
+     kirim order (festival Amount.RAW 1.000 + idempotency key).
+   - food_tracking_screen.dart — stepper 7-tahap (kFoodStatusFlow), kartu
+     merchant/driver, cancel dengan dialog konfirmasi, serta DEMO badge.
+   - food_history_screen.dart — riwayat dengan pagination (scroll listener).
+2. Screens Send baru di lib/screens/send/ (HALAMAN.txt §5):
+   - send_package_form_screen.dart — berat, tipe paket, nilai deklarasi,
+     pickup, multi-stop dinamis (maks 3), live fare breakdown, metode bayar.
+     Rumus fare MENGIKUTI backend internal/send/service.go: base 15.000 +
+     jarak km x 3.000 + weight surcharge (>5 kg, 2.000/kg kelebihan) +
+     asuransi (declared > 100.000, 1%, cap 50.000).
+   - send_tracking_screen.dart — stepper 6-tahap (kSendStatusFlow), daftar
+     stop dengan status & allocated_fare, cancel order.
+   - send_history_screen.dart — riwayat dengan pagination.
+3. Model baru di lib/models/: merchant.dart, menu.dart, menu_item.dart,
+   item_option.dart, option_choice.dart, food_order.dart (TerminalOrderStatuses/
+   status terminal), food_order_item.dart, send_order.dart (incl. RETURN_REQUIRED/
+   RETURNED_TO_SENDER), send_stop.dart (status DB-valid COMPLETED).
+4. Service baru di lib/services/: merchant_service.dart (GET /api/v1/merchants[?]
+   + /merchants/{id}/menus + /items), food_order_service.dart, send_order_service.dart
+   (POST/GET/PATCH + history, idempotency key). Query param dipakai untuk
+   lat/lng/search/sort & page/limit (bukan header).
+5. Provider baru di lib/providers/: merchant_provider.dart (search/sort),
+   cart_provider.dart (add/remove/updateQuantity/subtotal/voucher/merchantId,
+   baris sama digabung), food_order_provider.dart & send_order_provider.dart
+   (submit + tracking family + history pagination; tracking poll 5 detik).
+6. lib/config/router.dart — routes baru: /food-catalog, /food-merchant-detail,
+   /food-cart, /food-checkout, /food-tracking, /food-history, /send-form,
+   /send-tracking, /send-history. Argumen dikirim via arguments (pola
+   RideTrackingArgs). main.dart dibiarkan (sudah ProviderScope + AppRouter).
+7. Tes baru:
+   - test/models_test.dart — 7 test unit (Merchant, MenuItem opsi multi-grup,
+     FoodOrder, status terminal, SendOrder + stops + allocated_fare, CartNotifier
+     add/update/remove/subtotal, merge baris identik).
+   - test/widget_test.dart — smoke test boot Login (mengganti template counter
+     lama yang gagal; flutter analyze bersih untuk semua kode Task 3.8).
+
+File yang diubah/ditambah:
+- apps/customer_app/lib/models/* (9 file) & lib/services/* (3 file) &
+  lib/providers/* (4 file) & lib/screens/food/* (6 file) &
+  lib/screens/send/* (3 file).
+- apps/customer_app/lib/config/router.dart.
+- apps/customer_app/test/models_test.dart & test/widget_test.dart.
+
+Hasil Verifikasi:
+- ✅ flutter pub get clean.
+- ✅ flutter analyze — 0 issue dari kode Task 3.8 (6 sisa issue adalah
+  pre-existing di lib/screens/auth/login_screen.dart & register_screen.dart,
+  di luar scope).
+- ✅ flutter test — 8/8 PASS (models_test 7 + widget_test 1).
+- ✅ Commit & push ke origin/main.
+
+Catatan:
+- 🧭 DISCREPANCY API CONTRACT 9.1 vs implementasi: request POST /send-orders
+  backend sebenarnya memakai pickup_address (wajib), package_weight_kg,
+  declared_value, payment_method, dan stops[].delivery_address/delivery_lat/
+  delivery_lng (bukan field 'address'/'distance_km' per stop). Jarak & fare
+  dihitung backend via haversine — estimasi jarak di form hanya preview,
+  lat/lng pengiriman dikirim 0 (tidak ada geocoder di pubspec).
+- 🧭 RadioGroup<T> (Flutter 3.47) menggantikan RadioListTile.groupValue/
+  onChanged yang deprecated (form send, checkout, bottom sheet opsi item).
+- Mock tracking: kUseMockFoodTracking = true & kUseMockSendTracking = true
+  (backend belum menyediakan detail lokasi driver); tracking provider poll
+  tiap 5 detik dengan status simulator (pola Task 3.3).
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.8 — Customer App Enhancements)
+- docs/HALAMAN.txt (Section 4 — screens Food, Section 5 — screens Send)
+- docs/API CONTRACT.txt (Sections 8-9 food & send)
+- internal/send/service.go & internal/food/handler.go (format request/fare asli)
+
 ================================================================================
