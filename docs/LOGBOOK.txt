@@ -578,3 +578,52 @@ Hasil: Semua endpoint merchant (register, get, menu, item, patch) return 200/201
 Metode: Manual test via curl/Postman (bash script automation).
 Referensi: docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.2)
 Catatan: Git identity sudah diset, commit & push berhasil.
+
+===============================================================================
+TASK 3.3 - Food Order Creation & Cart (Implemented)
+===============================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. Catalog discovery (3.3.1 & 3.3.2):
+   - GET /api/v1/merchants (auth optional): filter category/search, sortir
+     jarak bila lat/lng diberikan (earthdistance), hanya merchant ACTIVE.
+   - GET /api/v1/merchants/:id/items (auth optional): pemilik melihat seluruh
+     item; selainnya hanya is_available=TRUE. Menggantikan GET /:id/items
+     RBAC (route publik menghindari konflik Gin).
+   - OptionalAuthMiddleware baru di internal/middleware.
+2. Food order creation (3.3.3) — POST /api/v1/food-orders (RBAC customer):
+   - Dual-layer idempotency: L1 Redis + L2 idempotency_cache (PROCESSING
+     debounce 5 menit, COMPLETED reply response tersimpan).
+   - Debt Gate Universal: overdue_debt > 0 → tolak (WALLET & CASH).
+   - WALLET → CONFIRMED + escrow FOOD_ESCROW (lock wallets ORDER BY id ASC,
+     double-entry: DEBIT customer / CREDIT SYSTEM_ESCROW) dalam satu transaksi
+     dengan insert order + items. CASH → CREATED.
+   - Harga: item_subtotal + delivery_fee 20.000 + komisi platform 15%
+     (item_subtotal * 0.15); voucher tidak didukung (tabel vouchers belum ada).
+3. Status update (3.3.4) — PATCH /api/v1/food-orders/:id:
+   - SELECT ... FOR UPDATE NOWAIT (SQLSTATE 55P03 → LOCK_TIMEOUT 409).
+   - Transisi per aktor (customer/merchant/driver tertunjuk) + audit trail
+     food_order_events. Cancel WALLET → refund FOOD_REFUND penuh (is_refunded).
+   - Settlement (DELIVERED → SETTLED) ditunda ke Task 3.4.
+4. Retrieval & history (3.3.5/3.3.6):
+   - GET /api/v1/food-orders/:id (detail + items; customer/merchant/driver).
+   - GET /api/v1/food-orders (riwayat customer, pagination page/page_size, max 50).
+
+Hasil Verifikasi:
+- ✅ go build ./... && go vet ./... clean.
+- ✅ go test ./... PASS (internal/auth, internal/wallet; food/cmd no tests).
+- ✅ gofmt clean untuk file yang diubah.
+
+Catatan:
+- Repository diperluas: SearchMerchants, GetAvailableItems, GetItemsByIDs,
+  GetCustomer, SystemWalletID, InsertFoodOrder(+Item/+Event),
+  GetFoodOrderByID, LockFoodOrder (NOWAIT), UpdateFoodOrderStatus (CAS),
+  GetFoodOrderItems, GetFoodOrdersByCustomer, CountFoodOrdersByCustomer.
+- FoodOrder/FoodOrderItem diberi JSON tag (response detail/history rapi);
+  options JSONB dipetakan ke json.RawMessage.
+- Service NewService(repo, db, redis, ledger) — foodLedger = wallet.LedgerService.
+- Commit a85283c, push ke origin/main.
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.3.1 - 3.3.6)
