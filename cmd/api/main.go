@@ -17,6 +17,7 @@ import (
 	"github.com/g-flow/g-flow/internal/auth"
 	"github.com/g-flow/g-flow/internal/config"
 	"github.com/g-flow/g-flow/internal/db"
+	"github.com/g-flow/g-flow/internal/food"
 	"github.com/g-flow/g-flow/internal/location"
 	"github.com/g-flow/g-flow/internal/middleware"
 	"github.com/g-flow/g-flow/internal/ride"
@@ -72,6 +73,13 @@ func main() {
 	locationHandler := location.NewHandler(locationService)
 	locationWorker := location.NewWorker(locationService, rdb, locationRepo)
 
+	// Wire up dependencies food (Phase 3, Task 3.2: Merchant Onboarding &
+	// Catalog Management). Service memakai pool langsung untuk transaksi
+	// merchant register (membuat merchant + wallet MERCHANT secara atomik).
+	foodRepository := food.NewRepository(pool)
+	foodService := food.NewService(foodRepository, pool)
+	foodHandler := food.NewHandler(foodService)
+
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
 	// dan Logger (JSON terstruktur / F014) dipasang sebelum route apapun.
 	r := gin.New()
@@ -122,6 +130,25 @@ func main() {
 		api.GET("/wallets/:wallet_id/balance", handler.GetBalance)
 		// Driver update lokasi: auth wajib + role driver.
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
+	}
+
+	// G-Food: Merchant Onboarding & Catalog Management (Task 3.2).
+	// Semua resource merchant dilindungi Auth + RBAC role 'merchant' agar
+	// hanya akun merchant yang bisa mengelola. Ownership per-resource (apakah
+	// merchant tersebut milik user yang login) divalidasi di Service.
+	merchants := r.Group("/api/v1/merchants", middleware.AuthMiddleware(jwtService, blacklistService), auth.RBACMiddleware("merchant"))
+	{
+		merchants.POST("/register", foodHandler.RegisterMerchant)
+		merchants.GET("/:id", foodHandler.GetMerchant)
+		merchants.PATCH("/:id", foodHandler.UpdateMerchant)
+		merchants.POST("/:id/menus", foodHandler.CreateMenu)
+		merchants.PATCH("/:id/menus/:menu_id", foodHandler.UpdateMenu)
+		merchants.DELETE("/:id/menus/:menu_id", foodHandler.DeleteMenu)
+		merchants.GET("/:id/menus", foodHandler.GetMenus)
+		merchants.POST("/:id/items", foodHandler.CreateItem)
+		merchants.PATCH("/:id/items/:item_id", foodHandler.UpdateItem)
+		merchants.DELETE("/:id/items/:item_id", foodHandler.DeleteItem)
+		merchants.GET("/:id/items", foodHandler.GetItems)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.
