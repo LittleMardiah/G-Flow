@@ -569,3 +569,12 @@ Apa yang dilakukan:
 
 Referensi:
 - docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.1)
+
+===============================================================================
+TASK 3.2 - Merchant Onboarding & Catalog Management (Validation)
+===============================================================================
+Status: ✅ TESTED & VALIDATED (2026-08-30)
+Hasil: Semua endpoint merchant (register, get, menu, item, patch) return 200/201.
+Metode: Manual test via curl/Postman (bash script automation).
+Referensi: docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.2)
+Catatan: Git identity sudah diset, commit & push berhasil.
