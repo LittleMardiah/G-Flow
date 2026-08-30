@@ -697,3 +697,64 @@ Referensi:
 - docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.4, F009 — ORDER BY id ASC)
 - docs/LOGIC FLOW.txt (CASH FOOD MERCHANT SETTLEMENT / NEGATIVE BALANCE 5.5)
 - docs/API CONTRACT.txt (Settlement DELIVERED → SETTLED)
+
+===============================================================================
+TASK 3.5 - G-Send Order Creation & Pricing (Implemented)
+===============================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. POST /api/v1/send-orders (RBAC customer) — CreateSendOrder:
+   - Dual-layer idempotency: L1 Redis + L2 idempotency_cache (PROCESSING
+     debounce 5 menit, COMPLETED reply response tersimpan).
+   - Debt Gate Universal: overdue_debt > 0 → tolak (WALLET & CASH).
+   - Validasi: stops 1-3, package_weight_kg > 0, declared_value >= 0,
+     package_type valid (STANDARD/FRAGILE/LIQUID/ELECTRONICS), koordinat valid.
+   - Fare: base_fare 15.000 + distance_km * 3.000 (haversine pickup→stop1→
+     stop2→…) + weight_surcharge (>5kg: +2.000/kg kelebihan) + insurance_fee
+     (declared_value > 100.000: 1% maks 50.000).
+   - Multi-stop allocation: allocated_fare proporsional per jarak; stop
+     terakhir mengambil sisa agar SUM(allocated_fare) == total_fare persis.
+   - Escrow conditional dalam satu transaksi dengan insert order:
+     WALLET → lock wallet ORDER BY id ASC FOR UPDATE, double-entry SEND_ESCROW
+     (DEBIT sender / CREDIT SYSTEM_ESCROW); CASH → tanpa escrow.
+     Semua atomik: INSERT send_orders (status SEARCHING_DRIVER) +
+     send_order_stops (status PENDING) + send_order_events audit.
+   - Trigger driver matching (async) — placeholder (implementasi Task 3.6).
+2. GET /api/v1/send-orders/:id — GetSendOrder: detail order + stops dengan
+   pemeriksaan kepemilikan (sender pemilik / driver tertunjuk).
+3. PATCH /api/v1/send-orders/:id — UpdateSendOrderStatus:
+   - FOR UPDATE NOWAIT (SQLSTATE 55P03 → LOCK_TIMEOUT 409) + CAS by status.
+   - Sender: CREATED/SEARCHING_DRIVER → CANCELLED, refund SEND_REFUND penuh
+     bila WALLET. Driver tertunjuk: DRIVER_ASSIGNED → PICKED_UP → IN_TRANSIT →
+     DELIVERED (settlement DELIVERED → SETTLED ditunda Task 3.6).
+   - Audit trail send_order_events setiap transisi.
+
+File yang diubah:
+- internal/send/service.go — CreateSendOrder, GetSendOrder,
+  UpdateSendOrderStatus, fare calc, multi-stop allocation, escrow/refund,
+  idempotency L1+L2, driver matching placeholder.
+- internal/send/repository.go — GetCustomer, GetWalletByUserAndType,
+  SystemWalletID, InsertSendOrder, InsertSendOrderStops, InsertSendOrderEvent,
+  GetSendOrderByID, LockSendOrder (NOWAIT), UpdateSendOrderStatus (CAS),
+  GetSendOrderStops.
+- internal/send/handler.go — POST/GET/PATCH send-orders + error mapping.
+- cmd/api/main.go — route group /api/v1/send-orders (auth + RBAC customer utk POST).
+
+Hasil Verifikasi:
+- ✅ go build ./... clean.
+- ✅ go vet ./... clean.
+- ✅ gofmt clean (internal/send).
+- ✅ go test ./... PASS.
+- ✅ Commit 995cf4c, push ke origin/main.
+
+Catatan:
+- Tarif mengikuti ROADMAP 3.5.1 (base_fare 15.000, per km 3.000, weight
+  surcharge 2.000/kg kelebihan >5kg, insurance 1% maks 50.000) — konsisten dgn
+  API CONTRACT 9.1 (per-stops fare breakdown) & DATABASE SCHEMA v10.4.
+- Voucher/discount belum didukung (tabel vouchers menyusul) — discount_amount 0.
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.5.1, F010 — G-Send)
+- docs/DATABASE SCHEMA.txt (send_orders, send_order_stops §21-22)
+- docs/API CONTRACT.txt (Section 9.1 CREATE SEND ORDER)
