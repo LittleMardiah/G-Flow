@@ -991,3 +991,65 @@ Referensi:
 - internal/send/service.go & internal/food/handler.go (format request/fare asli)
 
 ================================================================================
+TASK 3.9 - Merchant App (Implemented)
+================================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. Buat apps/merchant_app (flutter create --org com.gflow --project-name
+   merchant_app). Fitur sesuai ROADMAP 03 §3.9 & HALAMAN.txt §6.
+2. Struktur lib/:
+   - models/: merchant_order.dart (MerchantOrder/Action/Item, displayStatus,
+     nextActions sesuai state machine merchant CONFIRMED→PREPARING→
+     READY_FOR_PICKUP), merchant_menu.dart, merchant_item.dart, merchant.dart
+     (MerchantProfile + toUpdateJson null-aware).
+   - services/: api_client.dart (dio + token flutter_secure_storage + idempotency
+     key uuid, pola customer_app), merchant_service.dart (GET/PATCH
+     /merchants/:id), menu_service.dart (menus/items CRUD), order_service.dart
+     (GET /merchants/:id/orders + GET/PATCH /food-orders/:id).
+   - providers/: auth_provider.dart (login/register merchant + registrasi
+     merchant + simpan merchant_id), order_provider.dart (list + detail family),
+     menu_provider.dart, analytics_provider.dart (summary dihitung lokal dari
+     order yang dimuat — karena endpoint /analytics belum ada di backend).
+   - screens/: login, register (auth register user_type=merchant → merchants/
+     register), dashboard (KPI, toggle is_open, banner PENDING_VERIFICATION),
+     orders_list (filter status + pull-to-refresh), order_detail (aksi
+     Confirm/Start Preparing/Ready for Pickup), menu_management, item_editor
+     (image_picker, harga/stok/is_available), analytics (fl_chart bar).
+   - widgets/: status_badge.dart, kpi_card.dart, order_card.dart.
+   - config/: constants.dart (kAppName 'G-Flow Merchant', formatRupiah),
+     router.dart (goRouterProvider; redirect login/dashboard berdasarkan state
+     auth via ValueNotifier + ref.listen → refreshListenable).
+3. Tests: test/widget_test.dart (smoke login dalam ProviderScope) &
+   test/models_test.dart (8 test: model order/item/menu/profile + AnalyticsSummary).
+
+File yang diubah/ditambah:
+- apps/merchant_app/** (proyek Flutter baru, 155 file).
+- apps/merchant_app/pubspec.yaml — deps: dio, riverpod, flutter_riverpod,
+  flutter_secure_storage, go_router >=14 <17, flutter_map+latlong2, fl_chart,
+  image_picker, uuid; dev: build_runner, flutter_lints ^6.
+
+Hasil Verifikasi:
+- ✅ flutter pub get clean (go_router 16.3.0, fl_chart 1.2.0).
+- ✅ flutter analyze — No issues found.
+- ✅ flutter test — 8/8 PASS.
+- ✅ Commit & push ke origin/main.
+
+Catatan:
+- 🧭 GAP BACKEND: GET /api/v1/merchants/:id/orders & /analytics belum ada.
+  App memanggil endpoint per spec; kegagalan di-render graceful (empty state/
+  snackbar) dan analytics dihitung dari order yang berhasil dimuat. Perlu
+  ditambahkan backend agar dashboard & analytics realtime.
+- 🧭 Tidak ada aksi "Reject/Cancel" merchant di backend (validateFoodTransition
+  hanya CREATED→CONFIRMED→PREPARING→READY_FOR_PICKUP); dialog reject tidak
+  di-trigger di daftar aksi (order_card menampilkan aksi yang tersedia saja).
+- Merchant::REJECT & customer response WAITING→CREATED harus dikonfirmasi oleh
+  customer (belum ada alur reject di Task 3.9).
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.9 — Merchant App)
+- docs/HALAMAN.txt (Section 6 — Merchant App)
+- internal/food/service.go (validateFoodTransition status merchant)
+- apps/customer_app/lib/services/api_client.dart (pola auth/idempotency)
+
+================================================================================
