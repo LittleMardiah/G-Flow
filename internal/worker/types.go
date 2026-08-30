@@ -34,6 +34,10 @@ var (
 	// menyelesaikan satu sweep (tiap transaksi dibatasi statement_timeout 3s).
 	LockTTL = 50 * time.Second
 
+	// IdempotencyPurgeInterval adalah interval pembersihan idempotency_cache
+	// yang kedaluwarsa (expires_at < NOW()), dijalankan dalam worker loop (TD-002).
+	IdempotencyPurgeInterval = time.Hour
+
 	// CancellationReason EXPIRED (ROADMAP 03 §3.7).
 	cancellationReasonExpired = "EXPIRED"
 

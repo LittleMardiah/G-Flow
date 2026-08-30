@@ -155,8 +155,8 @@ func TestIntegration_ServiceGetBalanceAndWebhook(t *testing.T) {
 	ledger := wallet.NewLedgerService(pool)
 	svc := wallet.NewService(repo, ledger, nil, pool)
 
-	_, wal := newIntegrationUser(t, ctx, pool, "customer")
-	bal, err := svc.GetBalance(ctx, wal)
+	uid, wal := newIntegrationUser(t, ctx, pool, "customer")
+	bal, err := svc.GetBalance(ctx, uid, wal)
 	require.NoError(t, err)
 	assert.True(t, bal.IsZero())
 

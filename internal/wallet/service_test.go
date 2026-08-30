@@ -43,6 +43,11 @@ func (m *mockRepo) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.
 	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
+func (m *mockRepo) GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error) {
+	args := m.Called(ctx, walletID)
+	return args.Get(0).(uuid.UUID), args.Error(1)
+}
+
 type mockLedger struct {
 	mock.Mock
 }
@@ -607,8 +612,8 @@ func TestService_ProcessTopUpWebhook_Success(t *testing.T) {
 
 // ---- Test Service: GetBalance ----
 
-// TestService_GetBalance_Success: mock repo.GetBalance return balance,
-// assert balance > 0.
+// TestService_GetBalance_Success: wallet milik user, mock owner & GetBalance
+// return balance, assert balance > 0.
 func TestService_GetBalance_Success(t *testing.T) {
 	repo := new(mockRepo)
 	lgr := new(mockLedger)
@@ -616,14 +621,34 @@ func TestService_GetBalance_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	balance := decimal.NewFromInt(120000)
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(testUserID, nil)
 	repo.On("GetBalance", mock.Anything, testWalletID).Return(balance, nil)
 
 	svc := NewService(repo, lgr, nil, mDB)
-	got, err := svc.GetBalance(context.Background(), testWalletID)
+	got, err := svc.GetBalance(context.Background(), testUserID, testWalletID)
 
 	assert.NoError(t, err)
 	assert.True(t, got.GreaterThan(decimal.Zero), "balance harus > 0, got %v", got)
 	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetBalance_NotOwned: wallet milik user lain -> ErrWalletNotOwned (403).
+func TestService_GetBalance_NotOwned(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	otherUser := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(otherUser, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetBalance(context.Background(), testUserID, testWalletID)
+
+	assert.ErrorIs(t, err, ErrWalletNotOwned)
+	assert.True(t, got.IsZero())
+	repo.AssertNotCalled(t, "GetBalance", mock.Anything, mock.Anything)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 

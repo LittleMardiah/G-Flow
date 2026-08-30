@@ -111,6 +111,7 @@ type WalletRepo interface {
 	GetByUserIDAndType(ctx context.Context, userID uuid.UUID, walletType string) (*Wallet, error)
 	GetByID(ctx context.Context, walletID uuid.UUID) (*Wallet, error)
 	GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
+	GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error)
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
@@ -459,8 +460,18 @@ func (s *Service) ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) erro
 	return s.markTopUpCompleted(ctx, s.db, txnID)
 }
 
-// GetBalance mengembalikan saldo wallet.
-func (s *Service) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error) {
+// GetBalance mengembalikan saldo wallet milik user yang terautentikasi.
+// Validasi kepemilikan: wallet harus dimiliki oleh userID (JWT claim), jika
+// tidak -> ErrWalletNotOwned (403). Mengembalikan ErrWalletNotFound jika
+// wallet tidak ada.
+func (s *Service) GetBalance(ctx context.Context, userID, walletID uuid.UUID) (decimal.Decimal, error) {
+	owner, err := s.repo.GetWalletOwner(ctx, walletID)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	if owner != userID {
+		return decimal.Zero, ErrWalletNotOwned
+	}
 	return s.repo.GetBalance(ctx, walletID)
 }
 

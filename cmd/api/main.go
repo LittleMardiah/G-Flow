@@ -214,7 +214,9 @@ func main() {
 
 	// Jalankan background worker auto-cancel G-Food & G-Send (3.7) sebagai
 	// goroutine. Loop 1 menit + Redis distributed lock (SET NX) memastikan
-	// hanya satu instance yang mengeksekusi sweep pada satu waktu.
+	// hanya satu instance yang mengeksekusi sweep pada satu waktu. Dalam loop
+	// yang sama juga berjalan purge idempotency_cache kedaluwarsa (TD-002,
+	// setiap 1 jam) sebelum/ketika sweep auto-cancel berjalan.
 	go autoCancelWorker.Run(workerCtx)
 
 	log.Printf("Server running on port %s (env=%s)", cfg.App.Port, cfg.App.Env)

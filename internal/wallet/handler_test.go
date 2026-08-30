@@ -38,8 +38,8 @@ func (m *mockWalletService) Transfer(ctx context.Context, req TransferRequest) (
 	return args.Get(0).(*TransferResponse), args.Error(1)
 }
 
-func (m *mockWalletService) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error) {
-	args := m.Called(ctx, walletID)
+func (m *mockWalletService) GetBalance(ctx context.Context, userID uuid.UUID, walletID uuid.UUID) (decimal.Decimal, error) {
+	args := m.Called(ctx, userID, walletID)
 	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
@@ -242,10 +242,11 @@ func TestHandler_GetBalance_Success(t *testing.T) {
 	svc := new(mockWalletService)
 	h := NewHandler(svc)
 
-	svc.On("GetBalance", mock.Anything, testHW).Return(decimal.NewFromInt(500000), nil)
+	svc.On("GetBalance", mock.Anything, testHU, testHW).Return(decimal.NewFromInt(500000), nil)
 
 	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/balance",
 		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
 
 	h.GetBalance(c)
 
@@ -258,10 +259,11 @@ func TestHandler_GetBalance_NotFound(t *testing.T) {
 	svc := new(mockWalletService)
 	h := NewHandler(svc)
 
-	svc.On("GetBalance", mock.Anything, testHW).Return(decimal.Zero, ErrWalletNotFound)
+	svc.On("GetBalance", mock.Anything, testHU, testHW).Return(decimal.Zero, ErrWalletNotFound)
 
 	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/balance",
 		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
 
 	h.GetBalance(c)
 
@@ -343,10 +345,11 @@ func TestGetBalance_NotFound(t *testing.T) {
 	svc := new(mockWalletService)
 	h := NewHandler(svc)
 
-	svc.On("GetBalance", mock.Anything, testHW).Return(decimal.Zero, ErrWalletNotFound)
+	svc.On("GetBalance", mock.Anything, testHU, testHW).Return(decimal.Zero, ErrWalletNotFound)
 
 	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/balance",
 		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
 
 	h.GetBalance(c)
 

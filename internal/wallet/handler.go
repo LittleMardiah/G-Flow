@@ -20,7 +20,7 @@ import (
 type WalletService interface {
 	TopUp(ctx context.Context, req TopUpRequest) (*TopUpResponse, error)
 	Transfer(ctx context.Context, req TransferRequest) (*TransferResponse, error)
-	GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
+	GetBalance(ctx context.Context, userID uuid.UUID, walletID uuid.UUID) (decimal.Decimal, error)
 	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
 }
 
@@ -149,7 +149,14 @@ func (h *Handler) GetBalance(c *gin.Context) {
 		return
 	}
 
-	balance, err := h.svc.GetBalance(c.Request.Context(), walletID)
+	// userID dari JWT claim (AuthMiddleware). tanpa identitas valid -> 401.
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	balance, err := h.svc.GetBalance(c.Request.Context(), userID, walletID)
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())
 		return

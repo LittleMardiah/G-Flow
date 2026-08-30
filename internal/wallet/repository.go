@@ -98,6 +98,27 @@ func (r *Repository) GetByID(ctx context.Context, walletID uuid.UUID) (*Wallet, 
 	return &w, nil
 }
 
+// GetWalletOwner mengambil user_id pemilik wallet. Mengembalikan
+// ErrWalletNotFound jika wallet tidak ada.
+func (r *Repository) GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error) {
+	query := `
+		SELECT user_id
+		FROM wallets
+		WHERE id = $1
+	`
+
+	var owner uuid.UUID
+	err := r.db.QueryRow(ctx, query, walletID).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrWalletNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	return owner, nil
+}
+
 // GetWalletsByUserID mengambil semua wallet milik user (bisa lebih dari satu
 // karena constraint UNIQUE(user_id, wallet_type)). Mengembalikan slice kosong
 // jika user belum punya wallet (bukan error), karena representasi normal.

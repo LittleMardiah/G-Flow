@@ -28,4 +28,7 @@ psql $DATABASE_URL -f migrations/006_food_settlement_guard.up.sql
 # Migration 007
 psql $DATABASE_URL -f migrations/007_auto_cancel_worker.up.sql
 
+# Migration 008
+psql $DATABASE_URL -f migrations/008_fix_idempotency_cache.up.sql
+
 echo "Migrations completed."

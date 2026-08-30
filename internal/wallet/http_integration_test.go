@@ -359,6 +359,25 @@ func TestWalletGetBalance_NotFound(t *testing.T) {
 	}
 }
 
+// TestWalletGetBalance_NotOwned: wallet milik user B diakses user A -> 403
+// WALLET_NOT_OWNED (TD-001 ownership check).
+func TestWalletGetBalance_NotOwned(t *testing.T) {
+	ctx := context.Background()
+	r, g := setupHTTPRouter(t)
+
+	tokenA, userA := registerAndLogin(t, r)
+	_, userB := registerAndLogin(t, r)
+	walletB := g.customerWalletID(t, ctx, userB)
+	if walletB == uuid.Nil || userA == userB {
+		t.Fatalf("setup invalid")
+	}
+
+	w := wDoJSON(r, http.MethodGet, "/api/v1/wallets/"+walletB.String()+"/balance", nil, tokenA)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
 // TestWalletTopUp_InvalidAmount: amount tidak positif -> 422.
 func TestWalletTopUp_InvalidAmount(t *testing.T) {
 	ctx := context.Background()

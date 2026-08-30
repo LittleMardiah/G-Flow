@@ -33,10 +33,12 @@ type Redis interface {
 	Eval(ctx context.Context, script string, keys []string, args ...any) *redis.Cmd
 }
 
-// DB adalah subset operasi pool untuk memulai transaksi (pgx.Tx). Dipenuhi
+// DB adalah subset operasi pool untuk memulai transaksi (pgx.Tx) dan
+// mengeksekusi DML di luar transaksi (purge idempotency cache). Dipenuhi
 // oleh *pgxpool.Pool (produksi) dan pgxmock (test).
 type DB interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Worker.
@@ -70,6 +72,9 @@ func (w *Worker) Run(ctx context.Context) {
 	// Jalankan sweep pertama segera, tanpa menunggu ticker pertama.
 	w.sweepOnce(ctx)
 
+	// Purge idempotency cache kedaluwarsa setiap jam (TD-002).
+	lastPurge := time.Now()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -77,6 +82,11 @@ func (w *Worker) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.sweepOnce(ctx)
+			if time.Since(lastPurge) >= IdempotencyPurgeInterval {
+				purged := w.purgeIdempotencyCache(ctx)
+				log.Printf("worker purge idempotency: selesai, dihapus=%d", purged)
+				lastPurge = time.Now()
+			}
 		}
 	}
 }
@@ -354,8 +364,28 @@ func (w *Worker) refundSendEscrow(ctx context.Context, tx pgx.Tx, order *SendOrd
 		},
 	})
 }
+// purgeIdempotencyCache menghapus baris idempotency_cache yang sudah kedaluwarsa
+// (expires_at < NOW()). Membatasi 1000 baris per eksekusi agar tidak memblokir
+// DB terlalu lama; dipanggil berkala setiap jam sebagai background task.
+// PostgreSQL tidak mendukung LIMIT pada DELETE langsung, sehingga batas
+// diterapkan lewat subquery ctid. Mengembalikan jumlah baris yang dihapus.
+func (w *Worker) purgeIdempotencyCache(ctx context.Context) int {
+	tag, err := w.db.Exec(ctx, `
+		DELETE FROM idempotency_cache
+		WHERE ctid IN (
+			SELECT ctid FROM idempotency_cache
+			WHERE expires_at < NOW()
+			LIMIT 1000
+		)
+	`)
+	if err != nil {
+		log.Printf("worker purge idempotency: gagal menghapus cache kedaluwarsa: %v", err)
+		return 0
+	}
+	return int(tag.RowsAffected())
+}
 
-// ---- helpers ----
+// 
 
 // lockWalletsAsc mengunci sejumlah wallet dengan urutan id menaik dalam satu
 // statement. ORDER BY id ASC menghindari deadlock antar transaksi.
