@@ -21,6 +21,7 @@ import (
 	"github.com/g-flow/g-flow/internal/location"
 	"github.com/g-flow/g-flow/internal/middleware"
 	"github.com/g-flow/g-flow/internal/ride"
+	"github.com/g-flow/g-flow/internal/send"
 	"github.com/g-flow/g-flow/internal/wallet"
 )
 
@@ -82,6 +83,15 @@ func main() {
 	foodLedger := wallet.NewLedgerService(pool)
 	foodService := food.NewService(foodRepository, pool, rdb, foodLedger)
 	foodHandler := food.NewHandler(foodService)
+
+	// Wire up dependencies send (Phase 3, Task 3.5: G-Send Order Creation &
+	// Pricing). Service memakai pool untuk transaksi (order + stops + escrow
+	// atomik), Redis untuk idempotency L1, dan LedgerService untuk double-entry
+	// escrow SEND_ESCROW / SEND_REFUND.
+	sendRepository := send.NewRepository(pool)
+	sendLedger := wallet.NewLedgerService(pool)
+	sendService := send.NewService(sendRepository, pool, rdb, sendLedger)
+	sendHandler := send.NewHandler(sendService)
 
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
 	// dan Logger (JSON terstruktur / F014) dipasang sebelum route apapun.
@@ -174,6 +184,16 @@ func main() {
 		foodOrders.GET("", auth.RBACMiddleware("customer"), foodHandler.GetFoodOrderHistory)
 		foodOrders.GET("/:id", foodHandler.GetFoodOrder)
 		foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)
+	}
+
+	// G-Send: send orders (Task 3.5). Auth wajib; POST hanya customer.
+	// Detail/status bisa diakses sender (pemilik) atau driver tertunjuk
+	// (ownership divalidasi di Service). GET history ditunda ke Task 3.6.
+	sendOrders := r.Group("/api/v1/send-orders", middleware.AuthMiddleware(jwtService, blacklistService))
+	{
+		sendOrders.POST("", auth.RBACMiddleware("customer"), sendHandler.CreateSendOrder)
+		sendOrders.GET("/:id", sendHandler.GetSendOrder)
+		sendOrders.PATCH("/:id", sendHandler.UpdateSendOrderStatus)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.
