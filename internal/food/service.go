@@ -1,40 +1,99 @@
-// Package food — Service Layer (Phase 3, G-Food, Task 3.2: Merchant Onboarding
-// & Catalog Management).
+// Package food — Service Layer (Phase 3, G-Food: Merchant Onboarding,
+// Catalog Management, Food Order Creation & Cart).
 //
-// Service menangani business logic modul G-Food 3.2:
+// Service menangani business logic modul G-Food 3.2 & 3.3:
 //   - Merchant onboarding (POST /merchants/register): validasi user merchant,
 //     buat merchant profile (status PENDING_VERIFICATION) dan wallet MERCHANT
 //     dalam satu transaksi atomik.
 //   - Merchant profile (GET /merchants/{id}, PATCH /merchants/{id}) dan
-//     ownership check (hanya pemilik yang boleh mengelola).
-//   - Catalog management (menu & item CRUD) — hanya pemilik merchant.
+//     catalog management (menu & item CRUD) — hanya pemilik merchant.
+//   - Catalog discovery publik (GET /merchants, GET /merchants/{id}/items):
+//     merchant ACTIVE, filter category/search, urut jarak (earthdistance).
+//   - Food order creation (POST /food-orders): dual-layer idempotency
+//     (Redis L1 + PostgreSQL L2 idempotency_cache), Debt Gate Universal
+//     (overdue_debt), kalkulasi harga (item_subtotal + delivery_fee 20rb +
+//     komisi platform 15%), escrow WALLET (lock wallet ORDER BY id ASC) dalam
+//     transaksi yang sama dengan pembuatan order.
+//   - Status update (PATCH /food-orders/{id}): SELECT ... FOR UPDATE NOWAIT
+//   - transisi status per aktor + audit trail food_order_events.
 //
 // Prinsip yang selaras dengan modul ride/wallet:
-//   - Otorisasi ownership merchant divalidasi di service (merchant.UserID ==
-//     auth user), bukan hanya via RBAC role.
-//   - Operasi bertransaksi (register) memakai satu transaksi DB untuk
-//     menghindari partial state (merchant tanpa wallet).
+//   - Otorisasi ownership merchant/order divalidasi di service, bukan hanya
+//     via RBAC role.
+//   - Operasi bertransaksi memakai satu transaksi DB untuk menghindari
+//     partial state (order tanpa escrow).
 //   - Semua query parameterized (tanpa interpolasi string).
+//   - Idempotency key wajib & response di-cache (L1 + L2).
 package food
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"math"
+	"sort"
+	"time"
 
+	"github.com/g-flow/g-flow/internal/wallet"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 )
 
-// Constanta domain & bisnis G-Food 3.2 (MIGRATION 005 / ROADMAP 03).
+// Constanta domain & bisnis G-Food (MIGRATION 005 / ROADMAP 03).
 const (
-	WalletTypeMerchant          = "MERCHANT"
-	userTypeMerchant            = "merchant"
-	statusActive                = "ACTIVE"
-	statusPendingVerification   = "PENDING_VERIFICATION"
+	WalletTypeMerchant        = "MERCHANT"
+	userTypeMerchant          = "merchant"
+	statusActive              = "ACTIVE"
+	statusPendingVerification = "PENDING_VERIFICATION"
 
 	defaultSeqOrder = 0
+
+	// Task 3.3 — Payment method (payment_method_enum).
+	PaymentMethodWallet = "WALLET"
+	PaymentMethodCash   = "CASH"
+
+	walletTypeCustomer     = "CUSTOMER"
+	walletTypeSystemEscrow = "SYSTEM_ESCROW"
+
+	userTypeCustomer = "customer"
+
+	// Status food order (food_order_status_enum, ROADMAP 3.3/3.4).
+	foodStatusCreated        = "CREATED"
+	foodStatusConfirmed      = "CONFIRMED"
+	foodStatusPreparing      = "PREPARING"
+	foodStatusReadyForPickup = "READY_FOR_PICKUP"
+	foodStatusPickedUp       = "PICKED_UP"
+	foodStatusInTransit      = "IN_TRANSIT"
+	foodStatusDelivered      = "DELIVERED"
+	foodStatusCancelled      = "CANCELLED"
+	foodStatusSettled        = "SETTLED"
+
+	// merchant_status pada food_orders (jalur proses merchant).
+	merchantStatusWaiting   = "WAITING"
+	merchantStatusConfirmed = "CONFIRMED"
+	merchantStatusPreparing = "PREPARING"
+	merchantStatusReady     = "READY"
+
+	// Idempotency dual-layer (L1 Redis + L2 idempotency_cache).
+	redisKeyPrefix = "idempotency:"
+	redisCompleted = "COMPLETED"
+	pgProcessing   = "PROCESSING"
+	redisTTL       = 24 * time.Hour
+
+	// Reference type double-entry ledger untuk food escrow & refund.
+	referenceTypeFoodEscrow = "FOOD_ESCROW"
+	referenceTypeFoodRefund = "FOOD_REFUND"
+)
+
+// Tarif G-Food (ROADMAP 3.3.3 langkah 3): delivery fee fixed Rp 20.000 dan
+// komisi platform 15% dari item_subtotal.
+var (
+	foodDeliveryFee            = decimal.NewFromInt(20000)
+	foodPlatformCommissionRate = decimal.RequireFromString("0.15")
+	foodEstimatedDelivery      = "30 minutes"
 )
 
 // Error definitions untuk service layer food.
@@ -47,6 +106,25 @@ var (
 	ErrInvalidMenu           = errors.New("menu must belong to the merchant")
 	ErrInvalidPrice          = errors.New("price must be greater than zero")
 	ErrEmptyName             = errors.New("name is required")
+
+	// Task 3.3 — Food Order errors.
+	ErrNotCustomer            = errors.New("user is not a customer")
+	ErrCustomerInactive       = errors.New("customer is not ACTIVE")
+	ErrOverdueDebt            = errors.New("customer has overdue debt (order rejected)")
+	ErrWalletInactive         = errors.New("customer wallet is not ACTIVE")
+	ErrMerchantWalletNotFound = errors.New("merchant wallet not found")
+	ErrInsufficientBalance    = errors.New("insufficient customer wallet balance for escrow")
+	ErrInvalidPaymentMethod   = errors.New("invalid payment method (must be WALLET or CASH)")
+	ErrIdempotencyKeyRequired = errors.New("idempotency key is required")
+	ErrIdempotencyInProgress  = errors.New("idempotency key is still processing")
+	ErrInvalidCachedResponse  = errors.New("cached idempotency response is invalid")
+	ErrInvalidItem            = errors.New("invalid item (not found, not in merchant, or unavailable)")
+	ErrInsufficientStock      = errors.New("item stock is less than requested quantity")
+	ErrEmptyItems             = errors.New("order must contain at least one item")
+	ErrInvalidDeliveryAddress = errors.New("delivery address is required")
+	ErrInvalidStatus          = errors.New("invalid status value")
+	ErrInvalidTransition      = errors.New("invalid status transition for current order state")
+	ErrNotAllowed             = errors.New("user is not allowed to access this order")
 )
 
 // Repo adalah kontrak repository yang dibutuhkan Service. Dipenuhi oleh
@@ -75,6 +153,31 @@ type Repo interface {
 		name *string, description *string, price *decimal.Decimal, imageURL *string,
 		stock *int, isAvailable *bool) (bool, error)
 	DeleteItem(ctx context.Context, itemID, merchantID uuid.UUID) (bool, error)
+
+	// Task 3.3 — Food Order Creation & Cart.
+	GetCustomer(ctx context.Context, userID uuid.UUID) (*FoodCustomer, error)
+	GetWalletByUserAndType(ctx context.Context, userID uuid.UUID, walletType string) (*FoodWallet, error)
+	SearchMerchants(ctx context.Context, category, search *string, lat, lng *float64) ([]*Merchant, error)
+	GetAvailableItems(ctx context.Context, merchantID uuid.UUID) ([]*Item, error)
+	GetItemsByIDs(ctx context.Context, ids []uuid.UUID) ([]*Item, error)
+
+	InsertFoodOrder(ctx context.Context, q Querier, o *FoodOrder) error
+	InsertFoodOrderItem(ctx context.Context, q Querier, it *FoodOrderItem) error
+	InsertFoodOrderEvent(ctx context.Context, q Querier, e FoodOrderEvent) error
+	GetFoodOrderByID(ctx context.Context, orderID uuid.UUID) (*FoodOrder, error)
+	LockFoodOrder(ctx context.Context, q Querier, orderID uuid.UUID) (*FoodOrder, error)
+	UpdateFoodOrderStatus(ctx context.Context, q Querier, orderID uuid.UUID,
+		fromStatus, toStatus string, merchantStatus *string, isRefunded *bool) (bool, error)
+	GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error)
+	GetFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID, limit, offset int) ([]*FoodOrder, error)
+	CountFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID) (int, error)
+	SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error)
+}
+
+// Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
+// Dipenuhi oleh *wallet.LedgerService (internal/wallet/ledger.go).
+type Ledger interface {
+	CreateLedgerEntries(ctx context.Context, tx pgx.Tx, entries []wallet.LedgerEntry) error
 }
 
 // DB adalah subset operasi pool yang dipakai Service. Dipenuhi oleh
@@ -86,15 +189,18 @@ type DB interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// Service adalah business logic untuk modul G-Food (merchant & catalog).
+// Service adalah business logic untuk modul G-Food (merchant, catalog &
+// food order).
 type Service struct {
-	repo Repo
-	db   DB
+	repo   Repo
+	db     DB
+	redis  *redis.Client
+	ledger Ledger
 }
 
 // NewService membuat Service baru dengan dependency injection.
-func NewService(repo Repo, db DB) *Service {
-	return &Service{repo: repo, db: db}
+func NewService(repo Repo, db DB, rdb *redis.Client, ledger Ledger) *Service {
+	return &Service{repo: repo, db: db, redis: rdb, ledger: ledger}
 }
 
 // ---- Merchant Onboarding (3.2.1) ----
@@ -289,12 +395,12 @@ type CreateMenuRequest struct {
 
 // MenuResponse representasi menu yang dikembalikan ke client.
 type MenuResponse struct {
-	ID             uuid.UUID  `json:"id"`
-	MerchantID     uuid.UUID  `json:"merchant_id"`
-	Name           string     `json:"name"`
-	Description    *string    `json:"description"`
-	SequenceOrder  int        `json:"sequence_order"`
-	IsActive       bool       `json:"is_active"`
+	ID            uuid.UUID `json:"id"`
+	MerchantID    uuid.UUID `json:"merchant_id"`
+	Name          string    `json:"name"`
+	Description   *string   `json:"description"`
+	SequenceOrder int       `json:"sequence_order"`
+	IsActive      bool      `json:"is_active"`
 }
 
 // CreateMenu membuat menu baru milik merchant (hanya owner). Mengembalikan
@@ -392,15 +498,15 @@ func (s *Service) GetMenus(ctx context.Context, merchantID, userID uuid.UUID) ([
 
 // CreateItemRequest input untuk POST /merchants/{id}/items (ROADMAP 3.2.3).
 type CreateItemRequest struct {
-	UserID       uuid.UUID
-	MerchantID   uuid.UUID
-	MenuID       uuid.UUID
-	Name         string
-	Description  string
-	Price        decimal.Decimal
-	ImageURL     string
-	Stock        int
-	IsAvailable  bool
+	UserID      uuid.UUID
+	MerchantID  uuid.UUID
+	MenuID      uuid.UUID
+	Name        string
+	Description string
+	Price       decimal.Decimal
+	ImageURL    string
+	Stock       int
+	IsAvailable bool
 }
 
 // ItemResponse representasi item yang dikembalikan ke client.
@@ -559,4 +665,917 @@ func toItemResponse(it *Item) *ItemResponse {
 		Stock:       it.Stock,
 		IsAvailable: it.IsAvailable,
 	}
+}
+
+// ---- Task 3.3: Catalog Discovery (Catalog Search & Retrieval) ----
+
+// MerchantSearchResult adalah satu merchant pada hasil GET /merchants,
+// dilengkapi distance_km opsional bila lat/lng dikirim.
+type MerchantSearchResult struct {
+	Merchant   *Merchant
+	DistanceKm *decimal.Decimal
+}
+
+// SearchMerchants menelusuri katalog merchant ACTIVE (ROADMAP 3.3.1).
+// Filter opsional: category, search (ILIKE merchant_name), dan sortir jarak
+// bila lat/lng valid diberikan (earthdistance di DB).
+func (s *Service) SearchMerchants(ctx context.Context, category, search string, lat, lng float64) ([]*MerchantSearchResult, error) {
+	var catPtr, searchPtr *string
+	if category != "" {
+		catPtr = &category
+	}
+	if search != "" {
+		searchPtr = &search
+	}
+
+	var latPtr, lngPtr *float64
+	if validLatLng(lat, lng) {
+		latPtr, lngPtr = &lat, &lng
+	}
+
+	merchants, err := s.repo.SearchMerchants(ctx, catPtr, searchPtr, latPtr, lngPtr)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*MerchantSearchResult, 0, len(merchants))
+	for _, m := range merchants {
+		res := &MerchantSearchResult{Merchant: m}
+		if latPtr != nil {
+			d := haversineKm(lat, lng, m.Latitude.InexactFloat64(), m.Longitude.InexactFloat64())
+			res.DistanceKm = decimalPtr(d.Round(3))
+		}
+		out = append(out, res)
+	}
+	return out, nil
+}
+
+// GetMerchantItems mengambil katalog item sebuah merchant (ROADMAP 3.3.2).
+//   - Pemilik merchant (userID sesuai merchant.user_id): seluruh item
+//     (termasuk yang tidak available) — menggantikan GET /:id/items Task 3.2.
+//   - Selain pemilik / anonymous: hanya item is_available=TRUE dari merchant
+//     ACTIVE.
+func (s *Service) GetMerchantItems(ctx context.Context, merchantID, userID uuid.UUID) ([]*ItemResponse, error) {
+	merchant, err := s.repo.GetMerchantByID(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []*Item
+	if userID != uuid.Nil && merchant.UserID == userID {
+		items, err = s.repo.GetItems(ctx, merchantID)
+	} else {
+		if merchant.Status != statusActive {
+			return nil, ErrMerchantInactive
+		}
+		items, err = s.repo.GetAvailableItems(ctx, merchantID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*ItemResponse, 0, len(items))
+	for _, it := range items {
+		out = append(out, toItemResponse(it))
+	}
+	return out, nil
+}
+
+// ---- Task 3.3: Food Order Creation (ROADMAP 3.3.3) ----
+
+// FoodOrderItemRequest satu baris item pada keranjang (cart).
+type FoodOrderItemRequest struct {
+	ItemID              uuid.UUID
+	Quantity            int
+	Options             map[string]string
+	SpecialInstructions string
+}
+
+// CreateFoodOrderRequest input untuk POST /food-orders.
+type CreateFoodOrderRequest struct {
+	UserID          uuid.UUID
+	MerchantID      uuid.UUID
+	DeliveryAddress string
+	DeliveryLat     float64
+	DeliveryLng     float64
+	PaymentMethod   string
+	Items           []FoodOrderItemRequest
+	IdempotencyKey  string
+	VoucherID       *uuid.UUID
+}
+
+// CreateFoodOrderResponse hasil POST /food-orders (ROADMAP 3.3.3 response).
+type CreateFoodOrderResponse struct {
+	ID                    uuid.UUID       `json:"id"`
+	Status                string          `json:"status"`
+	ItemSubtotal          decimal.Decimal `json:"item_subtotal"`
+	DeliveryFee           decimal.Decimal `json:"delivery_fee"`
+	DiscountAmount        decimal.Decimal `json:"discount_amount"`
+	TotalAmount           decimal.Decimal `json:"total_amount"`
+	EstimatedDeliveryTime string          `json:"estimated_delivery_time"`
+}
+
+// itemRecord hasil lookup item keranjang + subtotal per item.
+type itemRecord struct {
+	item     *Item
+	qty      int
+	subtotal decimal.Decimal
+	options  map[string]string
+	note     string
+}
+
+// CreateFoodOrder membuat food order dari keranjang (ROADMAP 3.3.3):
+//
+//  1. Validasi input (idempotency key, payment method, alamat, items).
+//  2. Idempotency L1 (Redis) → L2 (PostgreSQL idempotency_cache).
+//  3. Validasi customer + Debt Gate Universal (overdue_debt = 0) — berlaku
+//     untuk WALLET maupun CASH.
+//  4. Validasi merchant ACTIVE + wallet customer/merchant.
+//  5. Validasi semua item: milik merchant, is_available, stock >= quantity.
+//  6. Hitung harga: item_subtotal → delivery_fee (20rb) → komisi platform
+//     (15%) → total_amount (voucher belum didukung di tugas ini).
+//  7. Satu transaksi: INSERT food_orders (+items) → (WALLET) escrow dengan
+//     lock wallet ORDER BY id ASC & double-entry ledger FOOD_ESCROW.
+//  8. Cache response (L1 + L2 COMPLETED).
+func (s *Service) CreateFoodOrder(ctx context.Context, req CreateFoodOrderRequest) (*CreateFoodOrderResponse, error) {
+	if err := s.validateFoodOrderInput(req); err != nil {
+		return nil, err
+	}
+
+	// L1: Redis (scope per user agar tidak collision antar user).
+	if resp, ok := s.redisGetCachedResp(ctx, req.UserID, req.IdempotencyKey); ok {
+		var out CreateFoodOrderResponse
+		if err := json.Unmarshal(resp, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Validasi customer & Debt Gate Universal.
+	cust, err := s.repo.GetCustomer(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if cust.UserType != userTypeCustomer {
+		return nil, ErrNotCustomer
+	}
+	if cust.Status != statusActive {
+		return nil, ErrCustomerInactive
+	}
+	if cust.OverdueDebt.IsPositive() {
+		return nil, ErrOverdueDebt
+	}
+
+	customerWallet, err := s.repo.GetWalletByUserAndType(ctx, req.UserID, walletTypeCustomer)
+	if err != nil {
+		return nil, err
+	}
+	if customerWallet.Status != statusActive {
+		return nil, ErrWalletInactive
+	}
+
+	// Merchant harus ACTIVE.
+	merchant, err := s.repo.GetMerchantByID(ctx, req.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if merchant.Status != statusActive {
+		return nil, ErrMerchantInactive
+	}
+
+	merchantWallet, err := s.repo.GetWalletByUserAndType(ctx, merchant.UserID, WalletTypeMerchant)
+	if err != nil {
+		return nil, err
+	}
+	if merchantWallet.Status != statusActive {
+		return nil, ErrMerchantWalletNotFound
+	}
+
+	// Muat item & kalkulasi subtotal.
+	records, itemSubtotal, err := s.buildOrderRecords(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if !itemSubtotal.IsPositive() {
+		return nil, ErrEmptyItems
+	}
+
+	// L2: PostgreSQL idempotency.
+	if res, err := s.idemAcquire(ctx, req.UserID, req.IdempotencyKey); err != nil {
+		return nil, err
+	} else if !res.proceed {
+		s.redisSet(ctx, req.UserID, req.IdempotencyKey, redisCompleted, res.cached)
+		var out CreateFoodOrderResponse
+		if err := json.Unmarshal(res.cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Kalkulasi harga.
+	deliveryFee := foodDeliveryFee
+	platformCommission := itemSubtotal.Mul(foodPlatformCommissionRate).Round(2)
+	discountAmount := decimal.Zero // voucher belum didukung (tabel vouchers menyusul Task 3.4+)
+	totalAmount := itemSubtotal.Add(deliveryFee).Sub(discountAmount).Round(2)
+
+	initialStatus := foodStatusCreated
+	if req.PaymentMethod == PaymentMethodWallet {
+		initialStatus = foodStatusConfirmed // pembayaran sudah diamankan escrow
+	}
+
+	var dLat, dLng *decimal.Decimal
+	if req.DeliveryLat != 0 || req.DeliveryLng != 0 {
+		dLat = decimalPtr(decimal.NewFromFloat(req.DeliveryLat))
+		dLng = decimalPtr(decimal.NewFromFloat(req.DeliveryLng))
+	}
+
+	var specialNote *string
+	for _, it := range req.Items {
+		if it.SpecialInstructions != "" {
+			note := it.SpecialInstructions
+			specialNote = &note
+			break
+		}
+	}
+
+	orderID := uuid.New()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		return nil, err
+	}
+
+	order := &FoodOrder{
+		ID:                  orderID,
+		CustomerID:          req.UserID,
+		MerchantID:          req.MerchantID,
+		CustomerWalletID:    &customerWallet.ID,
+		MerchantWalletID:    &merchantWallet.ID,
+		DeliveryAddress:     req.DeliveryAddress,
+		DeliveryLat:         dLat,
+		DeliveryLng:         dLng,
+		SpecialInstructions: specialNote,
+		ItemSubtotal:        itemSubtotal,
+		DeliveryFee:         deliveryFee,
+		PlatformCommission:  decimalPtr(platformCommission),
+		DiscountAmount:      discountAmount,
+		VoucherID:           req.VoucherID,
+		PaymentMethod:       req.PaymentMethod,
+		TotalAmount:         totalAmount,
+		Status:              initialStatus,
+		MerchantStatus:      merchantStatusWaiting,
+	}
+	if err := s.repo.InsertFoodOrder(ctx, tx, order); err != nil {
+		return nil, err
+	}
+
+	// Insert item keranjang (order + items atomik).
+	for _, rec := range records {
+		optionsJSON, _ := json.Marshal(rec.options)
+		options := json.RawMessage(optionsJSON)
+		if rec.options == nil {
+			options = json.RawMessage(`{}`)
+		}
+		if err := s.repo.InsertFoodOrderItem(ctx, tx, &FoodOrderItem{
+			OrderID:             orderID,
+			ItemID:              rec.item.ID,
+			ItemName:            rec.item.Name,
+			ItemPrice:           rec.item.Price,
+			Quantity:            rec.qty,
+			Subtotal:            rec.subtotal,
+			Options:             options,
+			OptionsTotal:        decimal.Zero, // opsi item MVP disimpan mentah, dananya opsional
+			SpecialInstructions: strPtrOrNil(rec.note),
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	// Escrow conditional: hanya payment WALLET.
+	if req.PaymentMethod == PaymentMethodWallet {
+		if err := s.holdFoodEscrow(ctx, tx, order, totalAmount); err != nil {
+			return nil, err
+		}
+	}
+
+	// Audit trail pembuatan order.
+	if err := s.repo.InsertFoodOrderEvent(ctx, tx, FoodOrderEvent{
+		OrderID:     orderID,
+		ToStatus:    initialStatus,
+		TriggeredBy: &req.UserID,
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	resp := &CreateFoodOrderResponse{
+		ID:                    orderID,
+		Status:                initialStatus,
+		ItemSubtotal:          itemSubtotal,
+		DeliveryFee:           deliveryFee,
+		DiscountAmount:        discountAmount,
+		TotalAmount:           totalAmount,
+		EstimatedDeliveryTime: foodEstimatedDelivery,
+	}
+	if err := s.cacheResponse(ctx, req.UserID, req.IdempotencyKey, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// buildOrderRecords memuat item dari keranjang dan memvalidasi kepemilikan
+// merchant, ketersediaan, dan stok; sekaligus menghitung item_subtotal.
+func (s *Service) buildOrderRecords(ctx context.Context, req CreateFoodOrderRequest) ([]itemRecord, decimal.Decimal, error) {
+	ids := make([]uuid.UUID, 0, len(req.Items))
+	for _, it := range req.Items {
+		ids = append(ids, it.ItemID)
+	}
+	items, err := s.repo.GetItemsByIDs(ctx, ids)
+	if err != nil {
+		return nil, decimal.Zero, err
+	}
+	byID := make(map[uuid.UUID]*Item, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+
+	records := make([]itemRecord, 0, len(req.Items))
+	subtotal := decimal.Zero
+	for _, li := range req.Items {
+		it, ok := byID[li.ItemID]
+		if !ok {
+			return nil, decimal.Zero, ErrInvalidItem
+		}
+		if it.MerchantID != req.MerchantID {
+			return nil, decimal.Zero, ErrInvalidItem
+		}
+		if !it.IsAvailable {
+			return nil, decimal.Zero, ErrInvalidItem
+		}
+		if it.Stock < li.Quantity {
+			return nil, decimal.Zero, ErrInsufficientStock
+		}
+		line := it.Price.Mul(decimal.NewFromInt(int64(li.Quantity)))
+		subtotal = subtotal.Add(line)
+		records = append(records, itemRecord{
+			item:     it,
+			qty:      li.Quantity,
+			subtotal: line,
+			options:  li.Options,
+			note:     li.SpecialInstructions,
+		})
+	}
+	return records, subtotal, nil
+}
+
+// validateFoodOrderInput memvalidasi input POST /food-orders.
+func (s *Service) validateFoodOrderInput(req CreateFoodOrderRequest) error {
+	if req.IdempotencyKey == "" {
+		return ErrIdempotencyKeyRequired
+	}
+	if req.PaymentMethod != PaymentMethodWallet && req.PaymentMethod != PaymentMethodCash {
+		return ErrInvalidPaymentMethod
+	}
+	if req.DeliveryAddress == "" {
+		return ErrInvalidDeliveryAddress
+	}
+	if len(req.Items) == 0 {
+		return ErrEmptyItems
+	}
+	for _, it := range req.Items {
+		if it.Quantity <= 0 {
+			return ErrInvalidItem
+		}
+	}
+	if req.DeliveryLat != 0 || req.DeliveryLng != 0 {
+		if !validLatLng(req.DeliveryLat, req.DeliveryLng) {
+			return ErrInvalidCoordinates
+		}
+	}
+	return nil
+}
+
+// holdFoodEscrow memegang dana customer ke SYSTEM_ESCROW saat order WALLET.
+// Urutan lock (LOCKED): baris order sudah ditulis → lock wallets
+// ORDER BY id ASC FOR UPDATE → cek saldo → ledger double-entry FOOD_ESCROW:
+//   - DEBIT customer_wallet
+//   - CREDIT SYSTEM_ESCROW
+func (s *Service) holdFoodEscrow(ctx context.Context, tx pgx.Tx, order *FoodOrder, amount decimal.Decimal) error {
+	if order.CustomerWalletID == nil {
+		return ErrWalletNotFound
+	}
+	escrowID, err := s.repo.SystemWalletID(ctx, tx, walletTypeSystemEscrow)
+	if err != nil {
+		return err
+	}
+	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID); err != nil {
+		return err
+	}
+	balance, err := getWalletBalanceTx(ctx, tx, *order.CustomerWalletID)
+	if err != nil {
+		return err
+	}
+	if balance.LessThan(amount) {
+		return ErrInsufficientBalance
+	}
+	return s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+		{
+			WalletID:      *order.CustomerWalletID,
+			EntryType:     wallet.EntryDebit,
+			Amount:        amount,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeFoodEscrow,
+			Description:   "FOOD_ESCROW - DEBIT customer wallet",
+		},
+		{
+			WalletID:      escrowID,
+			EntryType:     wallet.EntryCredit,
+			Amount:        amount,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeFoodEscrow,
+			Description:   "FOOD_ESCROW - CREDIT SYSTEM_ESCROW",
+		},
+	})
+}
+
+// refundFoodEscrow mengembalikan dana escrow ke customer saat order WALLET
+// dibatalkan (CREATED/CONFIRMED). Pasangan entry FOOD_REFUND membuat total
+// DEBIT == CREDIT per reference_id tetap seimbang. Dipanggil dalam transaksi
+// yang sama dengan transisi status.
+func (s *Service) refundFoodEscrow(ctx context.Context, tx pgx.Tx, order *FoodOrder) error {
+	if order.CustomerWalletID == nil {
+		return ErrWalletNotFound
+	}
+	escrowID, err := s.repo.SystemWalletID(ctx, tx, walletTypeSystemEscrow)
+	if err != nil {
+		return err
+	}
+	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID); err != nil {
+		return err
+	}
+	return s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+		{
+			WalletID:      escrowID,
+			EntryType:     wallet.EntryDebit,
+			Amount:        order.TotalAmount,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeFoodRefund,
+			Description:   "FOOD_REFUND - escrow release to customer",
+		},
+		{
+			WalletID:      *order.CustomerWalletID,
+			EntryType:     wallet.EntryCredit,
+			Amount:        order.TotalAmount,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeFoodRefund,
+			Description:   "FOOD_REFUND - full refund customer wallet",
+		},
+	})
+}
+
+// ---- Task 3.3: Status Update (ROADMAP 3.3.4) ----
+
+// UpdateFoodOrderStatusRequest input untuk PATCH /food-orders/{id}.
+type UpdateFoodOrderStatusRequest struct {
+	OrderID uuid.UUID
+	UserID  uuid.UUID
+	Status  string
+	Reason  string
+}
+
+// UpdateFoodOrderStatusResponse hasil PATCH /food-orders/{id}.
+type UpdateFoodOrderStatusResponse struct {
+	OrderID uuid.UUID `json:"order_id"`
+	Status  string    `json:"status"`
+}
+
+// Actor kinds pada order.
+const (
+	actorKindCustomer = iota
+	actorKindMerchant
+	actorKindDriver
+)
+
+// UpdateFoodOrderStatus memproses PATCH /food-orders/{id} dengan FOR UPDATE
+// NOWAIT (ROADMAP 3.3.4):
+//
+//   - Customer (pemilik order): CREATED/CONFIRMED → CANCELLED, dengan refund
+//     escrow penuh jika payment WALLET (is_refunded = TRUE).
+//   - Merchant (pemilik merchant): CREATED → CONFIRMED → PREPARING →
+//     READY_FOR_PICKUP (merchant_status ikut maju).
+//   - Driver tertunjuk: READY_FOR_PICKUP → PICKED_UP → IN_TRANSIT →
+//     DELIVERED (implementasi penuh di Task 3.4).
+//
+// Settlement (DELIVERED → SETTLED) belum diimplementasi di Task 3.3.
+func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrderStatusRequest) (*UpdateFoodOrderStatusResponse, error) {
+	if !validFoodStatusTarget(req.Status) {
+		return nil, ErrInvalidStatus
+	}
+
+	order, err := s.repo.GetFoodOrderByID(ctx, req.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.Status == foodStatusCancelled || order.Status == foodStatusSettled {
+		return nil, ErrInvalidTransition
+	}
+
+	// Tentukan aktor: customer, merchant owner, atau driver tertunjuk.
+	merchant, err := s.repo.GetMerchantByID(ctx, order.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	actor := actorKindCustomer
+	switch {
+	case order.CustomerID == req.UserID:
+		actor = actorKindCustomer
+	case merchant.UserID == req.UserID:
+		actor = actorKindMerchant
+	case order.DriverID != nil && *order.DriverID == req.UserID:
+		actor = actorKindDriver
+	default:
+		return nil, ErrNotAllowed
+	}
+
+	if err := validateFoodTransition(order, actor, req.Status); err != nil {
+		return nil, err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		return nil, err
+	}
+
+	// FOR UPDATE NOWAIT: dua transisi bersamaan tidak bisa saling menimpa.
+	locked, err := s.repo.LockFoodOrder(ctx, tx, req.OrderID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return nil, ErrLockTimeout
+		}
+		return nil, err
+	}
+	if locked.Status != order.Status {
+		return nil, ErrInvalidTransition
+	}
+
+	// merchant_status hanya maju pada transisi yang dilakukan merchant.
+	var merchantStatus *string
+	switch actor {
+	case actorKindMerchant:
+		switch req.Status {
+		case foodStatusConfirmed:
+			merchantStatus = strPtr(merchantStatusConfirmed)
+		case foodStatusPreparing:
+			merchantStatus = strPtr(merchantStatusPreparing)
+		case foodStatusReadyForPickup:
+			merchantStatus = strPtr(merchantStatusReady)
+		}
+	}
+
+	// Refund escrow + tandai is_refunded saat customer membatalkan order
+	// WALLET yang belum disettel / belum di-refund.
+	var isRefunded *bool
+	needRefund := false
+	if req.Status == foodStatusCancelled && locked.PaymentMethod == PaymentMethodWallet &&
+		!locked.IsRefunded && !locked.IsSettled {
+		t := true
+		isRefunded = &t
+		needRefund = true
+	}
+
+	ok, err := s.repo.UpdateFoodOrderStatus(ctx, tx, req.OrderID, locked.Status, req.Status, merchantStatus, isRefunded)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrInvalidTransition
+	}
+
+	if needRefund {
+		if err := s.refundFoodEscrow(ctx, tx, locked); err != nil {
+			return nil, err
+		}
+	}
+
+	fromStatus := locked.Status
+	event := FoodOrderEvent{
+		OrderID:     req.OrderID,
+		FromStatus:  &fromStatus,
+		ToStatus:    req.Status,
+		TriggeredBy: &req.UserID,
+	}
+	if req.Reason != "" {
+		event.Reason = strPtr(req.Reason)
+	}
+	if err := s.repo.InsertFoodOrderEvent(ctx, tx, event); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &UpdateFoodOrderStatusResponse{OrderID: req.OrderID, Status: req.Status}, nil
+}
+
+// validFoodStatusTarget memvalidasi nilai status yang boleh dikirim ke
+// PATCH /food-orders/{id}.
+func validFoodStatusTarget(s string) bool {
+	switch s {
+	case foodStatusConfirmed, foodStatusPreparing, foodStatusReadyForPickup,
+		foodStatusPickedUp, foodStatusInTransit, foodStatusDelivered, foodStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateFoodTransition memvalidasi transisi status per aktor sesuai state
+// machine food order (ROADMAP 3.4 status flow + batasan Task 3.3).
+func validateFoodTransition(order *FoodOrder, actor int, target string) error {
+	from := order.Status
+	switch actor {
+	case actorKindCustomer:
+		if target == foodStatusCancelled && (from == foodStatusCreated || from == foodStatusConfirmed) {
+			return nil
+		}
+	case actorKindMerchant:
+		switch target {
+		case foodStatusConfirmed:
+			if from == foodStatusCreated {
+				return nil
+			}
+		case foodStatusPreparing:
+			if from == foodStatusConfirmed {
+				return nil
+			}
+		case foodStatusReadyForPickup:
+			if from == foodStatusPreparing {
+				return nil
+			}
+		}
+	case actorKindDriver:
+		switch target {
+		case foodStatusPickedUp:
+			if from == foodStatusReadyForPickup {
+				return nil
+			}
+		case foodStatusInTransit:
+			if from == foodStatusPickedUp {
+				return nil
+			}
+		case foodStatusDelivered:
+			if from == foodStatusInTransit {
+				return nil
+			}
+		case foodStatusCancelled:
+			if from == foodStatusReadyForPickup || from == foodStatusPickedUp {
+				return nil
+			}
+		}
+	default:
+		return ErrNotAllowed
+	}
+	return ErrInvalidTransition
+}
+
+// ---- Task 3.3: Retrieval & History ----
+
+// GetFoodOrder mengambil food order lengkap dengan pemeriksaan kepemilikan:
+// customer pemilik, merchant owner, atau driver tertunjuk.
+func (s *Service) GetFoodOrder(ctx context.Context, orderID, userID uuid.UUID) (*FoodOrder, error) {
+	order, err := s.repo.GetFoodOrderByID(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	merchant, err := s.repo.GetMerchantByID(ctx, order.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if order.CustomerID == userID || merchant.UserID == userID ||
+		(order.DriverID != nil && *order.DriverID == userID) {
+		return order, nil
+	}
+	return nil, ErrNotAllowed
+}
+
+// GetFoodOrderItems mengambil daftar item sebuah food order (untuk detail).
+func (s *Service) GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error) {
+	return s.repo.GetFoodOrderItems(ctx, orderID)
+}
+
+// GetFoodOrderHistory mengembalikan riwayat order customer dengan pagination
+// (page mulai 1, page_size 1..50, default 20).
+func (s *Service) GetFoodOrderHistory(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]*FoodOrder, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 20
+	}
+	total, err := s.repo.CountFoodOrdersByCustomer(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	orders, err := s.repo.GetFoodOrdersByCustomer(ctx, userID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+// ---- idempotency dual-layer (selaras dengan modul ride/wallet) ----
+
+// redisKey membangun namespace Redis per user: idempotency:{userID}:{key}.
+func redisKey(userID uuid.UUID, key string) string {
+	return redisKeyPrefix + userID.String() + ":" + key
+}
+
+// redisCache adalah bentuk yang disimpan di Redis L1.
+type redisCache struct {
+	State    string          `json:"state"`
+	Response json.RawMessage `json:"response"`
+}
+
+// redisGetCachedResp mengecek L1 Redis. Mengembalikan raw response JSON jika
+// state COMPLETED.
+func (s *Service) redisGetCachedResp(ctx context.Context, userID uuid.UUID, key string) (json.RawMessage, bool) {
+	if s.redis == nil {
+		return nil, false
+	}
+	val, err := s.redis.Get(ctx, redisKey(userID, key)).Result()
+	if err != nil {
+		return nil, false
+	}
+	var cached redisCache
+	if err := json.Unmarshal([]byte(val), &cached); err != nil {
+		return nil, false
+	}
+	if cached.State != redisCompleted || len(cached.Response) == 0 {
+		return nil, false
+	}
+	return cached.Response, true
+}
+
+// redisSet menulis nilai ke Redis (state COMPLETED) dengan TTL 24 jam.
+func (s *Service) redisSet(ctx context.Context, userID uuid.UUID, key string, state string, raw json.RawMessage) {
+	if s.redis == nil {
+		return
+	}
+	cached := redisCache{State: state, Response: raw}
+	if b, err := json.Marshal(cached); err == nil {
+		s.redis.Set(ctx, redisKey(userID, key), b, redisTTL)
+	}
+}
+
+// idemResult hasil idempotency L2.
+type idemResult struct {
+	cached  json.RawMessage
+	proceed bool
+}
+
+// idemAcquire adalah logika L2 idempotency (idempotency_cache).
+//
+//   - Tidak ditemukan  -> insert PROCESSING (debounce 5 menit) -> proceed.
+//   - COMPLETED        -> kembalikan response tersimpan (proceed=false).
+//   - PROCESSING stale -> proceed (anggap requester sebelumnya crash).
+//   - PROCESSING fresh -> error ErrIdempotencyInProgress.
+func (s *Service) idemAcquire(ctx context.Context, owner uuid.UUID, key string) (idemResult, error) {
+	var st string
+	var body []byte
+	var debounce *time.Time
+
+	qErr := s.db.QueryRow(ctx, `
+		SELECT state, response_body, debounce_at FROM idempotency_cache
+		WHERE key = $1 AND user_id = $2
+	`, key, owner).Scan(&st, &body, &debounce)
+
+	if errors.Is(qErr, pgx.ErrNoRows) {
+		if err := s.pgInsertProcessing(ctx, owner, key); err != nil {
+			return idemResult{}, err
+		}
+		return idemResult{proceed: true}, nil
+	}
+	if qErr != nil {
+		return idemResult{}, qErr
+	}
+
+	switch st {
+	case redisCompleted:
+		return idemResult{cached: json.RawMessage(body)}, nil
+	case pgProcessing:
+		if debounce != nil && debounce.Before(time.Now()) {
+			return idemResult{proceed: true}, nil
+		}
+		return idemResult{}, ErrIdempotencyInProgress
+	default:
+		return idemResult{proceed: true}, nil
+	}
+}
+
+// pgInsertProcessing menulis baris PROCESSING (L2). Jika key sudah ada
+// (kompetisi user lain), return ErrIdempotencyInProgress.
+func (s *Service) pgInsertProcessing(ctx context.Context, owner uuid.UUID, key string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO idempotency_cache
+			(key, user_id, response_body, status_code, state, debounce_at, expires_at)
+		VALUES ($1, $2, '{}'::jsonb, 0, 'PROCESSING', NOW() + INTERVAL '5 minutes', NOW() + INTERVAL '24 hours')
+	`, key, owner)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrIdempotencyInProgress
+		}
+		return err
+	}
+	return nil
+}
+
+// cacheResponse menulis hasil sukses ke Redis L1 dan update L2 COMPLETED.
+func (s *Service) cacheResponse(ctx context.Context, owner uuid.UUID, key string, resp any) error {
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	s.redisSet(ctx, owner, key, redisCompleted, raw)
+	if _, err := s.db.Exec(ctx, `
+		UPDATE idempotency_cache
+		SET state = 'COMPLETED', debounce_at = NULL, response_body = $3, status_code = 201
+		WHERE key = $1 AND user_id = $2
+	`, key, owner, raw); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ---- helpers internal ----
+
+// lockWalletsAsc mengunci sejumlah wallet dengan urutan id menaik dalam satu
+// statement (ORDER BY id ASC FOR UPDATE) untuk mencegah deadlock.
+func lockWalletsAsc(ctx context.Context, tx pgx.Tx, walletIDs ...uuid.UUID) error {
+	ids := make([]uuid.UUID, len(walletIDs))
+	copy(ids, walletIDs)
+	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
+	_, err := tx.Exec(ctx, `
+		SELECT id FROM wallets WHERE id = ANY($1) ORDER BY id ASC FOR UPDATE
+	`, ids)
+	return err
+}
+
+// getWalletBalanceTx membaca saldo wallet dalam transaksi yang sudah terkunci.
+func getWalletBalanceTx(ctx context.Context, tx pgx.Tx, walletID uuid.UUID) (decimal.Decimal, error) {
+	var balance decimal.Decimal
+	err := tx.QueryRow(ctx, `
+		SELECT balance FROM wallets WHERE id = $1
+	`, walletID).Scan(&balance)
+	return balance, err
+}
+
+// haversineKm menghitung jarak geodesik (km) antara dua koordinat dengan
+// rumus haversine (earth radius 6371 km).
+func haversineKm(lat1, lng1, lat2, lng2 float64) decimal.Decimal {
+	const earthRadiusKm = 6371.0
+	degToRad := math.Pi / 180
+
+	dLat := (lat2 - lat1) * degToRad
+	dLng := (lng2 - lng1) * degToRad
+
+	lat1Rad := lat1 * degToRad
+	lat2Rad := lat2 * degToRad
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLng/2)*math.Sin(dLng/2)
+	c := 2 * math.Asin(math.Sqrt(a))
+
+	return decimal.NewFromFloat(earthRadiusKm * c)
+}
+
+// strPtr mengembalikan pointer string untuk kolom nullable.
+func strPtr(s string) *string {
+	return &s
+}
+
+// strPtrOrNil mengembalikan pointer string, atau nil bila string kosong.
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// decimalPtr mengembalikan pointer decimal.
+func decimalPtr(d decimal.Decimal) *decimal.Decimal {
+	return &d
 }

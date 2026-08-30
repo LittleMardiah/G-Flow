@@ -74,10 +74,13 @@ func main() {
 	locationWorker := location.NewWorker(locationService, rdb, locationRepo)
 
 	// Wire up dependencies food (Phase 3, Task 3.2: Merchant Onboarding &
-	// Catalog Management). Service memakai pool langsung untuk transaksi
-	// merchant register (membuat merchant + wallet MERCHANT secara atomik).
+	// Catalog Management; Task 3.3: Food Order Creation & Cart). Service
+	// memakai pool untuk transaksi (merchant register atomik; food order +
+	// escrow atomik), Redis untuk idempotency L1, dan LedgerService untuk
+	// double-entry escrow FOOD_ESCROW / FOOD_REFUND.
 	foodRepository := food.NewRepository(pool)
-	foodService := food.NewService(foodRepository, pool)
+	foodLedger := wallet.NewLedgerService(pool)
+	foodService := food.NewService(foodRepository, pool, rdb, foodLedger)
 	foodHandler := food.NewHandler(foodService)
 
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
@@ -132,10 +135,22 @@ func main() {
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
 	}
 
-	// G-Food: Merchant Onboarding & Catalog Management (Task 3.2).
+	// G-Food: catalog discovery publik (Task 3.3 catalog search & retrieval).
+	// Auth OPSIONAL: pemilik merchant (token valid) melihat item penuh miliknya;
+	// public hanya merchant ACTIVE + item is_available.
+	catalog := r.Group("/api/v1", middleware.OptionalAuthMiddleware(jwtService, blacklistService))
+	{
+		catalog.GET("/merchants", foodHandler.GetMerchants)
+		catalog.GET("/merchants/:id/items", foodHandler.GetMerchantItems)
+	}
+
+	// G-Food: merchant onboarding & catalog management (Task 3.2).
 	// Semua resource merchant dilindungi Auth + RBAC role 'merchant' agar
 	// hanya akun merchant yang bisa mengelola. Ownership per-resource (apakah
 	// merchant tersebut milik user yang login) divalidasi di Service.
+	// Catatan: GET /merchants/:id/items menabrak route publik di atas,
+	// sehingga katalog item owner sekarang dilayani oleh /:id/items publik
+	// (GetMerchantItems) — dihapus dari grup RBAC.
 	merchants := r.Group("/api/v1/merchants", middleware.AuthMiddleware(jwtService, blacklistService), auth.RBACMiddleware("merchant"))
 	{
 		merchants.POST("/register", foodHandler.RegisterMerchant)
@@ -148,7 +163,17 @@ func main() {
 		merchants.POST("/:id/items", foodHandler.CreateItem)
 		merchants.PATCH("/:id/items/:item_id", foodHandler.UpdateItem)
 		merchants.DELETE("/:id/items/:item_id", foodHandler.DeleteItem)
-		merchants.GET("/:id/items", foodHandler.GetItems)
+	}
+
+	// G-Food: food orders (Task 3.3). Auth wajib; RBAC: POST & GET "" hanya
+	// customer. Detail/status bisa diakses customer, merchant owner, atau
+	// driver tertunjuk (ownership divalidasi di Service).
+	foodOrders := r.Group("/api/v1/food-orders", middleware.AuthMiddleware(jwtService, blacklistService))
+	{
+		foodOrders.POST("", auth.RBACMiddleware("customer"), foodHandler.CreateFoodOrder)
+		foodOrders.GET("", auth.RBACMiddleware("customer"), foodHandler.GetFoodOrderHistory)
+		foodOrders.GET("/:id", foodHandler.GetFoodOrder)
+		foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.

@@ -9,6 +9,7 @@ package food
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -25,6 +26,8 @@ var (
 	ErrMerchantNotFound  = errors.New("merchant not found")
 	ErrMenuNotFound      = errors.New("menu not found")
 	ErrItemNotFound      = errors.New("item not found")
+	ErrFoodOrderNotFound = errors.New("food order not found")
+	ErrLockTimeout       = errors.New("food order lock not available (NOWAIT timeout)")
 )
 
 // RepoDB adalah subset operasi pool yang dipakai Repository untuk query di
@@ -66,26 +69,26 @@ type FoodWallet struct {
 // Merchant adalah representasi baris tabel food_merchants (MIGRATION 005).
 // Kolom nullable direpresentasikan sebagai pointer; nil berarti SQL NULL.
 type Merchant struct {
-	ID                uuid.UUID
-	UserID            uuid.UUID
-	Name              string
-	Description       *string
-	Category          string
-	Latitude          decimal.Decimal
-	Longitude         decimal.Decimal
-	Address           string
-	Phone             *string
-	AvgRating         decimal.Decimal
-	TotalReviews      int
-	TotalOrders       int
-	OpeningTime       *string
-	ClosingTime       *string
-	IsOpen            bool
-	Status            string
-	VerifiedAt        *time.Time
-	LogoURL           *string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	Name         string
+	Description  *string
+	Category     string
+	Latitude     decimal.Decimal
+	Longitude    decimal.Decimal
+	Address      string
+	Phone        *string
+	AvgRating    decimal.Decimal
+	TotalReviews int
+	TotalOrders  int
+	OpeningTime  *string
+	ClosingTime  *string
+	IsOpen       bool
+	Status       string
+	VerifiedAt   *time.Time
+	LogoURL      *string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Menu adalah representasi baris tabel merchant_menus (MIGRATION 005).
@@ -141,6 +144,40 @@ func (r *Repository) GetMerchantUser(ctx context.Context, userID uuid.UUID) (*Me
 		return nil, err
 	}
 	return &u, nil
+}
+
+// GetCustomer mengambil data customer untuk validasi food order (user_type,
+// status, dan overdue_debt sebagai Debt Gate Universal).
+func (r *Repository) GetCustomer(ctx context.Context, userID uuid.UUID) (*FoodCustomer, error) {
+	var c FoodCustomer
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_type, status, COALESCE(overdue_debt, 0)
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(&c.ID, &c.UserType, &c.Status, &c.OverdueDebt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// SystemWalletID mengambil id wallet sistem (user_id IS NULL) berdasar tipe,
+// misal SYSTEM_ESCROW. Mengembalikan ErrWalletNotFound jika belum di-seed.
+func (r *Repository) SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := q.QueryRow(ctx, `
+		SELECT id FROM wallets WHERE wallet_type = $1 AND user_id IS NULL
+	`, walletType).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrWalletNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
 }
 
 // GetMerchantByUserID mengambil merchant milik user (pemilik). Mengembalikan
@@ -447,4 +484,362 @@ func scanItemRow(scanner interface{ Scan(dest ...any) error }) (*Item, error) {
 		return nil, err
 	}
 	return &it, nil
+}
+
+// ---- Catalog discovery (Task 3.3: 3.3.1 & 3.3.2) ----
+
+// FoodCustomer adalah representasi subset baris users yang dibutuhkan untuk
+// validasi food order (user_type, status, dan overdue_debt sebagai Debt Gate
+// Universal — ROADMAP 3.3.3 langkah 1).
+type FoodCustomer struct {
+	ID          uuid.UUID
+	UserType    string
+	Status      string
+	OverdueDebt decimal.Decimal
+}
+
+// SearchMerchants menelusuri katalog merchant berstatus ACTIVE dengan filter
+// opsional (category, search ILIKE pada merchant_name). Jika lat/lng diberikan,
+// hasil diurutkan berdasarkan jarak (earthdistance). Semua nilai parameterized;
+// bagian ORDER BY hanya dipilih dari dua cabang statis (bukan input user).
+func (r *Repository) SearchMerchants(ctx context.Context, category, search *string, lat, lng *float64) ([]*Merchant, error) {
+	query := `SELECT ` + merchantColumns + `
+		FROM food_merchants
+		WHERE status = 'ACTIVE'
+		  AND ($1::text IS NULL OR category = $1)
+		  AND ($2::text IS NULL OR merchant_name ILIKE '%' || $2 || '%')`
+
+	args := []any{category, search}
+	if lat != nil && lng != nil {
+		query += `
+		  ORDER BY earth_distance(ll_to_earth($3::float8, $4::float8),
+		                          ll_to_earth(latitude, longitude)) ASC`
+		args = append(args, *lat, *lng)
+	} else {
+		query += `
+		  ORDER BY avg_rating DESC, total_orders DESC`
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	merchants := make([]*Merchant, 0)
+	for rows.Next() {
+		m, err := scanMerchantRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		merchants = append(merchants, m)
+	}
+	return merchants, rows.Err()
+}
+
+// GetAvailableItems mengambil item merchant yang sedang dijual
+// (is_available = TRUE) untuk katalog publik (ROADMAP 3.3.2).
+func (r *Repository) GetAvailableItems(ctx context.Context, merchantID uuid.UUID) ([]*Item, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, menu_id, merchant_id, name, description, price, image_url, stock, is_available, created_at, updated_at
+		FROM merchant_items
+		WHERE merchant_id = $1 AND is_available = TRUE
+		ORDER BY created_at ASC
+	`, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]*Item, 0)
+	for rows.Next() {
+		it, err := scanItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+// GetItemsByIDs mengambil banyak item sekaligus (untuk validasi & kalkulasi
+// keranjang — ROADMAP 3.3.3) berdasarkan id.
+func (r *Repository) GetItemsByIDs(ctx context.Context, ids []uuid.UUID) ([]*Item, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, menu_id, merchant_id, name, description, price, image_url, stock, is_available, created_at, updated_at
+		FROM merchant_items
+		WHERE id = ANY($1)
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]*Item, 0)
+	for rows.Next() {
+		it, err := scanItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+// FoodOrder adalah representasi baris tabel food_orders (MIGRATION 005).
+// Kolom nullable direpresentasikan sebagai pointer; nil berarti SQL NULL.
+type FoodOrder struct {
+	ID                  uuid.UUID        `json:"id"`
+	CustomerID          uuid.UUID        `json:"customer_id"`
+	MerchantID          uuid.UUID        `json:"merchant_id"`
+	DriverID            *uuid.UUID       `json:"driver_id,omitempty"`
+	CustomerWalletID    *uuid.UUID       `json:"customer_wallet_id,omitempty"`
+	MerchantWalletID    *uuid.UUID       `json:"merchant_wallet_id,omitempty"`
+	DriverWalletID      *uuid.UUID       `json:"driver_wallet_id,omitempty"`
+	DeliveryAddress     string           `json:"delivery_address"`
+	DeliveryLat         *decimal.Decimal `json:"delivery_lat,omitempty"`
+	DeliveryLng         *decimal.Decimal `json:"delivery_lng,omitempty"`
+	SpecialInstructions *string          `json:"special_instructions,omitempty"`
+	ItemSubtotal        decimal.Decimal  `json:"item_subtotal"`
+	DeliveryFee         decimal.Decimal  `json:"delivery_fee"`
+	PlatformCommission  *decimal.Decimal `json:"platform_commission,omitempty"`
+	DriverEarning       *decimal.Decimal `json:"driver_earning,omitempty"`
+	DiscountAmount      decimal.Decimal  `json:"discount_amount"`
+	VoucherID           *uuid.UUID       `json:"voucher_id,omitempty"`
+	PaymentMethod       string           `json:"payment_method"`
+	CutleryIncluded     bool             `json:"cutlery_included"`
+	TotalAmount         decimal.Decimal  `json:"total_amount"`
+	Status              string           `json:"status"`
+	MerchantStatus      string           `json:"merchant_status"`
+	MerchantNotes       *string          `json:"merchant_notes,omitempty"`
+	CreatedAt           time.Time        `json:"created_at"`
+	ConfirmedAt         *time.Time       `json:"confirmed_at,omitempty"`
+	PickupAt            *time.Time       `json:"pickup_at,omitempty"`
+	DeliveredAt         *time.Time       `json:"delivered_at,omitempty"`
+	SettledAt           *time.Time       `json:"settled_at,omitempty"`
+	IsSettled           bool             `json:"is_settled"`
+	IsRefunded          bool             `json:"is_refunded"`
+}
+
+// FoodOrderItem adalah representasi baris tabel food_order_items.
+type FoodOrderItem struct {
+	ID                  uuid.UUID       `json:"id"`
+	OrderID             uuid.UUID       `json:"order_id"`
+	ItemID              uuid.UUID       `json:"item_id"`
+	ItemName            string          `json:"item_name"`
+	ItemPrice           decimal.Decimal `json:"item_price"`
+	Quantity            int             `json:"quantity"`
+	Subtotal            decimal.Decimal `json:"subtotal"`
+	Options             json.RawMessage `json:"options"`
+	OptionsTotal        decimal.Decimal `json:"options_total"`
+	SpecialInstructions *string         `json:"special_instructions,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
+// FoodOrderEvent adalah representasi baris tabel food_order_events (audit
+// trail transisi status).
+type FoodOrderEvent struct {
+	ID          uuid.UUID
+	OrderID     uuid.UUID
+	FromStatus  *string
+	ToStatus    string
+	Reason      *string
+	TriggeredBy *uuid.UUID
+	Metadata    []byte
+}
+
+// InsertFoodOrder membuat baris food_orders (status awal CREATED untuk CASH
+// atau CONFIRMED untuk WALLET; merchant_status selalu WAITING). Dipanggil
+// dalam transaksi yang sama dengan escrow agar order + escrow atomik.
+func (r *Repository) InsertFoodOrder(ctx context.Context, q Querier, o *FoodOrder) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO food_orders (
+			id, customer_id, merchant_id,
+			customer_wallet_id, merchant_wallet_id,
+			delivery_address, delivery_lat, delivery_lng, special_instructions,
+			item_subtotal, delivery_fee, platform_commission,
+			discount_amount, voucher_id,
+			payment_method, total_amount,
+			status, merchant_status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+	`,
+		o.ID,
+		o.CustomerID,
+		o.MerchantID,
+		o.CustomerWalletID,
+		o.MerchantWalletID,
+		o.DeliveryAddress,
+		o.DeliveryLat,
+		o.DeliveryLng,
+		o.SpecialInstructions,
+		o.ItemSubtotal,
+		o.DeliveryFee,
+		o.PlatformCommission,
+		o.DiscountAmount,
+		o.VoucherID,
+		o.PaymentMethod,
+		o.TotalAmount,
+		o.Status,
+		o.MerchantStatus,
+	)
+	return err
+}
+
+// InsertFoodOrderItem membuat baris food_order_items (loop items keranjang).
+// Options (JSONB) dikirim sebagai []byte yang sudah ter-marshal.
+func (r *Repository) InsertFoodOrderItem(ctx context.Context, q Querier, it *FoodOrderItem) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO food_order_items (
+			id, order_id, item_id, item_name, item_price, quantity, subtotal,
+			options, options_total, special_instructions
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`,
+		it.ID, it.OrderID, it.ItemID, it.ItemName, it.ItemPrice, it.Quantity, it.Subtotal,
+		it.Options, it.OptionsTotal, it.SpecialInstructions,
+	)
+	return err
+}
+
+// InsertFoodOrderEvent mencatat audit trail transisi status
+// (food_order_events).
+func (r *Repository) InsertFoodOrderEvent(ctx context.Context, q Querier, e FoodOrderEvent) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO food_order_events (order_id, from_status, to_status, reason, triggered_by, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, e.OrderID, e.FromStatus, e.ToStatus, e.Reason, e.TriggeredBy, e.Metadata)
+	return err
+}
+
+// foodOrderColumns daftar kolom food_orders untuk SELECT lengkap. Dipakai
+// bersama oleh GetFoodOrderByID dan LockFoodOrder agar satu sumber.
+const foodOrderColumns = `id, customer_id, merchant_id, driver_id,
+	customer_wallet_id, merchant_wallet_id, driver_wallet_id,
+	delivery_address, delivery_lat, delivery_lng, special_instructions,
+	item_subtotal, delivery_fee, platform_commission, driver_earning,
+	discount_amount, voucher_id, payment_method, cutlery_included, total_amount,
+	status, merchant_status, merchant_notes,
+	created_at, confirmed_at, pickup_at, delivered_at, settled_at,
+	is_settled, is_refunded`
+
+// GetFoodOrderByID mengambil food order lengkap berdasarkan id.
+func (r *Repository) GetFoodOrderByID(ctx context.Context, orderID uuid.UUID) (*FoodOrder, error) {
+	return scanFoodOrderRow(r.db.QueryRow(ctx, `SELECT `+foodOrderColumns+` FROM food_orders WHERE id = $1`, orderID))
+}
+
+// LockFoodOrder mengambil + mengunci baris food_orders dengan SELECT ...
+// FOR UPDATE NOWAIT (ROADMAP 3.3.4): dua transisi bersamaan tidak bisa saling
+// menimpa. Mengembalikan ErrLockTimeout (SQLSTATE 55P03) jika lock tidak
+// tersedia, atau ErrFoodOrderNotFound jika order tidak ada.
+func (r *Repository) LockFoodOrder(ctx context.Context, q Querier, orderID uuid.UUID) (*FoodOrder, error) {
+	return scanFoodOrderRow(q.QueryRow(ctx, `SELECT `+foodOrderColumns+` FROM food_orders WHERE id = $1 FOR UPDATE NOWAIT`, orderID))
+}
+
+// UpdateFoodOrderStatus mengubah status food order secara atomik (CAS) dengan
+// guard WHERE status = $from. Field merchant_status/is_refunded hanya diubah
+// bila pointer tidak nil (COALESCE). Timestamp terkait di-set sekali saat
+// transisi yang tepat. Return true jika baris berubah.
+func (r *Repository) UpdateFoodOrderStatus(ctx context.Context, q Querier, orderID uuid.UUID,
+	fromStatus, toStatus string, merchantStatus *string, isRefunded *bool) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE food_orders
+		SET status = $3,
+		    merchant_status = COALESCE($4, merchant_status),
+		    is_refunded = COALESCE($5, is_refunded),
+		    confirmed_at = CASE WHEN $3 = 'CONFIRMED' AND confirmed_at IS NULL THEN NOW() ELSE confirmed_at END,
+		    pickup_at = CASE WHEN $3 = 'PICKED_UP' AND pickup_at IS NULL THEN NOW() ELSE pickup_at END,
+		    delivered_at = CASE WHEN $3 = 'DELIVERED' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
+		    updated_at = NOW()
+		WHERE id = $1 AND status = $2
+	`, orderID, fromStatus, toStatus, merchantStatus, isRefunded)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// GetFoodOrderItems mengambil semua item sebuah food order (urut insert).
+func (r *Repository) GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, order_id, item_id, item_name, item_price, quantity, subtotal,
+		       options, options_total, special_instructions, created_at
+		FROM food_order_items
+		WHERE order_id = $1
+		ORDER BY created_at ASC
+	`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]*FoodOrderItem, 0)
+	for rows.Next() {
+		var it FoodOrderItem
+		if err := rows.Scan(
+			&it.ID, &it.OrderID, &it.ItemID, &it.ItemName, &it.ItemPrice, &it.Quantity, &it.Subtotal,
+			&it.Options, &it.OptionsTotal, &it.SpecialInstructions, &it.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &it)
+	}
+	return items, rows.Err()
+}
+
+// GetFoodOrdersByCustomer mengambil riwayat order milik customer (pagination,
+// urut terbaru). Dipakai GET /food-orders.
+func (r *Repository) GetFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID, limit, offset int) ([]*FoodOrder, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+foodOrderColumns+`
+		FROM food_orders
+		WHERE customer_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, customerID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	orders := make([]*FoodOrder, 0)
+	for rows.Next() {
+		o, err := scanFoodOrderRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	return orders, rows.Err()
+}
+
+// CountFoodOrdersByCustomer menghitung total order milik customer (untuk
+// pagination meta).
+func (r *Repository) CountFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM food_orders WHERE customer_id = $1
+	`, customerID).Scan(&count)
+	return count, err
+}
+
+// --- scanner food orders ---
+
+func scanFoodOrderRow(row pgx.Row) (*FoodOrder, error) {
+	var o FoodOrder
+	err := row.Scan(
+		&o.ID, &o.CustomerID, &o.MerchantID, &o.DriverID,
+		&o.CustomerWalletID, &o.MerchantWalletID, &o.DriverWalletID,
+		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng, &o.SpecialInstructions,
+		&o.ItemSubtotal, &o.DeliveryFee, &o.PlatformCommission, &o.DriverEarning,
+		&o.DiscountAmount, &o.VoucherID, &o.PaymentMethod, &o.CutleryIncluded, &o.TotalAmount,
+		&o.Status, &o.MerchantStatus, &o.MerchantNotes,
+		&o.CreatedAt, &o.ConfirmedAt, &o.PickupAt, &o.DeliveredAt, &o.SettledAt,
+		&o.IsSettled, &o.IsRefunded,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrFoodOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
 }
