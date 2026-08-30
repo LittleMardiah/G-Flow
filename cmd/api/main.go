@@ -194,6 +194,8 @@ func main() {
 		sendOrders.POST("", auth.RBACMiddleware("customer"), sendHandler.CreateSendOrder)
 		sendOrders.GET("/:id", sendHandler.GetSendOrder)
 		sendOrders.PATCH("/:id", sendHandler.UpdateSendOrderStatus)
+		sendOrders.POST("/:id/accept", auth.RBACMiddleware("driver"), sendHandler.AcceptSendOrder)
+		sendOrders.PATCH("/:id/stops/:stop_id", auth.RBACMiddleware("driver"), sendHandler.UpdateSendOrderStop)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.

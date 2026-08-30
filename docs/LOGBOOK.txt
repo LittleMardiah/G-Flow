@@ -758,3 +758,86 @@ Referensi:
 - docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.5.1, F010 — G-Send)
 - docs/DATABASE SCHEMA.txt (send_orders, send_order_stops §21-22)
 - docs/API CONTRACT.txt (Section 9.1 CREATE SEND ORDER)
+
+===============================================================================
+TASK 3.6 - G-Send Multi-Stop Delivery & Settlement + Driver Capacity Check
+===============================================================================
+Status: ✅ IMPLEMENTED (2026-08-30)
+
+Apa yang dilakukan:
+1. POST /api/v1/send-orders/:id/accept (RBAC driver) — AcceptSendOrder:
+   - Dual-layer idempotency: L1 Redis + L2 idempotency_cache (opsi sama dgn 3.5).
+   - Validasi driver: user_type='driver', status='ACTIVE', working_status='IDLE',
+     wallet DRIVER ACTIVE, balance >= min_balance_threshold.
+   - Capacity check: jumlah order aktif (DRIVER_ASSIGNED/PICKED_UP/IN_TRANSIT)
+     < 3 → bila >= 3 return 422 DRIVER_CAPACITY_EXCEEDED.
+   - Transaksi atomik: lock users driver FOR UPDATE NOWAIT (guard ACTIVE+IDLE)
+     → lock send_orders FOR UPDATE NOWAIT (guard SEARCHING_DRIVER) → assign
+     driver_id + driver_wallet_id + status DRIVER_ASSIGNED + assigned_at →
+     users.working_status='BUSY' → audit send_order_events (SEARCHING_DRIVER →
+     DRIVER_ASSIGNED). Response: id, status, stops (stop_sequence, address,
+     allocated_fare).
+2. PATCH /api/v1/send-orders/:id — UpdateSendOrderStatus diperluas (Task 3.6.2):
+   - DRIVER_ASSIGNED → PICKED_UP → IN_TRANSIT (transisi murni + audit).
+   - IN_TRANSIT → DELIVERED: validasi SEMUA stop COMPLETED (ErrStopsNotDelivered
+     bila belum), mark DELIVERED + delivered_at, lalu TRIGGER 3-way settlement
+     dalam transaksi yang sama (response status = SETTLED).
+   - CANCELLED (driver emergency dari DRIVER_ASSIGNED/PICKED_UP/IN_TRANSIT):
+     refund escrow penuh SEND_REFUND bila WALLET & belum settled + reset
+     users.working_status='IDLE' + audit dengan metadata reason.
+3. settleSendOrderTx — 3-way settlement (ROADMAP 3.6.4):
+   - WALLET: DEBIT SYSTEM_ESCROW (total_fare) → CREDIT driver (×0.90) +
+     CREDIT SYSTEM_PLATFORM (×0.10). Driver kembali IDLE.
+   - CASH: DEBIT driver_wallet (komisi 10%) → CREDIT SYSTEM_PLATFORM. Cek
+     balance SETELAH settlement; bila < -50.000 → driver SUSPENDED, bila aman
+     → IDLE.
+   - Lock wallet ORDER BY id ASC FOR UPDATE (deadlock-free), double-entry
+     SEND_SETTLEMENT via wallet.LedgerService.CreateLedgerEntries.
+   - Mark send_orders SETTLED + is_settled + settled_at + audit (DELIVERED →
+     SETTLED).
+4. PATCH /api/v1/send-orders/:id/stops/:stop_id (RBAC driver) — stop-level
+   update (Task 3.6.3, optional MVP):
+   - Driver menandai stop COMPLETED (input "DELIVERED" dinormalisasi ke
+     "COMPLETED" sesuai CHECK constraint send_order_stops.status) + simpan
+     delivery_photo_url (proof). Ketika SEMUA stop COMPLETED → auto-transition
+     DELIVERED → SETTLED (3-way settlement) dalam transaksi yang sama.
+   - Lock baris order FOR UPDATE NOWAIT agar update stop + auto-transition
+     terserialisasi.
+
+File yang diubah:
+- internal/send/repository.go — GetDriver, GetDriverActiveSendOrdersCount,
+  LockSendOrderForAccept, LockDriverUserForAccept, AssignDriverToSendOrder
+  (isi driver_wallet_id), UpdateDriverWorkingStatus, MarkDriverSuspended,
+  MarkSendOrderDelivered, MarkSendOrderSettled, GetSendOrderStopsByOrderID,
+  UpdateSendOrderStopStatus.
+- internal/send/service.go — AcceptSendOrder (idempotency L1+L2, capacity,
+  atomic lock+assign), UpdateSendOrderStatus (DELIVERED→settlement,
+  driver emergency cancel + reset working_status), settleSendOrderTx
+  (3-way WALLET/CASH + ceiling negatif -50.000 → SUSPENDED),
+  UpdateSendOrderStop (auto-transition all stops COMPLETED).
+- internal/send/handler.go — AcceptSendOrder, UpdateSendOrderStop + error
+  mapping baru (DRIVER_BUSY, INSUFFICIENT_DRIVER_BALANCE,
+  DRIVER_CAPACITY_EXCEEDED, ORDER_NOT_SEARCHING_DRIVER, STOPS_NOT_DELIVERED,
+  STOP_NOT_FOUND, dst) + map ErrUserNotFound → 404 USER_NOT_FOUND.
+- cmd/api/main.go — route POST /:id/accept (RBAC driver) +
+  PATCH /:id/stops/:stop_id (RBAC driver).
+
+Hasil Verifikasi:
+- ✅ go build ./... clean.
+- ✅ go vet ./... clean.
+- ✅ gofmt clean (internal/send, cmd/api).
+- ✅ go test ./... PASS (wallet & auth; ride integration butuh -tags integration).
+- ✅ Commit & push ke origin/main.
+
+Catatan:
+- 🧭 DISCREPANCY SCHEMA: ROADMAP 3.6.3 menuliskan status stop "DELIVERED",
+  namun CHECK constraint send_order_stops.status (MIGRATION 005, LOCKED) hanya
+  mengizinkan PENDING/ARRIVED/COMPLETED/SKIPPED. Implementasi memakai nilai
+  DB-valid 'COMPLETED' dan menormalkan input "DELIVERED" → "COMPLETED" di
+  normalizeStopStatus (tanpa migrasi). Order utama tetap bertransisi DELIVERED.
+- Partial stop cancellation TIDAK didukung (MVP, ROADMAP 3.6.5): hanya cancel
+  seluruh order. Sepenuhnya otomatis: settlement hanya terjadi saat seluruh
+  stop COMPLETED.
+- Driver capacity hanya menghitung order ber-status aktif
+  (DRIVER_ASSIGNED/PICKED_UP/IN_TRANSIT); CANCELLED/DELIVERED/SETTLED — slot
+  terisi kembali (CAPACITY filter fix, LOGIC_FLOW #59).

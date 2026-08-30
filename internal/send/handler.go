@@ -26,6 +26,8 @@ type SendService interface {
 	CreateSendOrder(ctx context.Context, req CreateSendOrderRequest) (*CreateSendOrderResponse, error)
 	GetSendOrder(ctx context.Context, orderID, userID uuid.UUID) (*SendOrderDetail, error)
 	UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error)
+	AcceptSendOrder(ctx context.Context, req AcceptSendOrderRequest) (*AcceptSendOrderResponse, error)
+	UpdateSendOrderStop(ctx context.Context, req UpdateSendOrderStopRequest) (*UpdateSendOrderStopResponse, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -185,6 +187,90 @@ func (h *Handler) UpdateSendOrderStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
 }
 
+// AcceptSendOrder POST /api/v1/send-orders/:id/accept
+// Auth: driver. Idempotency key wajib di header X-Idempotency-Key.
+// Capacity check + atomic assign (SEARCHING_DRIVER → DRIVER_ASSIGNED).
+func (h *Handler) AcceptSendOrder(c *gin.Context) {
+	key := c.GetHeader("X-Idempotency-Key")
+	if key == "" {
+		writeError(c, http.StatusUnprocessableEntity, "IDEMPOTENCY_KEY_REQUIRED", "X-Idempotency-Key header is required")
+		return
+	}
+
+	orderID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_ORDER_ID", "invalid order id")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	resp, err := h.svc.AcceptSendOrder(c.Request.Context(), AcceptSendOrderRequest{
+		OrderID:        orderID,
+		DriverID:       userID,
+		IdempotencyKey: key,
+	})
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
+// updateSendOrderStopRequestBody input JSON dari PATCH /send-orders/{id}/stops/{stop_id}.
+type updateSendOrderStopRequestBody struct {
+	Status           string `json:"status" binding:"required"`
+	DeliveryPhotoURL string `json:"delivery_photo_url"`
+}
+
+// UpdateSendOrderStop PATCH /api/v1/send-orders/:id/stops/:stop_id
+// Auth: driver tertunjuk. Menandai stop COMPLETED + proof photo; ketika semua
+// stop selesai, order otomatis DELIVERED → SETTLED.
+func (h *Handler) UpdateSendOrderStop(c *gin.Context) {
+	orderID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_ORDER_ID", "invalid order id")
+		return
+	}
+
+	stopID, err := uuid.Parse(c.Param("stop_id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_STOP_ID", "invalid stop id")
+		return
+	}
+
+	var body updateSendOrderStopRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	resp, err := h.svc.UpdateSendOrderStop(c.Request.Context(), UpdateSendOrderStopRequest{
+		OrderID:          orderID,
+		StopID:           stopID,
+		UserID:           userID,
+		Status:           strings.ToUpper(body.Status),
+		DeliveryPhotoURL: body.DeliveryPhotoURL,
+	})
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
 // --- helpers ---
 
 // userIDFromContext mengambil user_id dari Gin context (diset oleh
@@ -211,17 +297,24 @@ func statusForError(err error) int {
 	switch {
 	case errors.Is(err, ErrSendOrderNotFound),
 		errors.Is(err, ErrWalletNotFound),
-		errors.Is(err, ErrDriverNotFound):
+		errors.Is(err, ErrUserNotFound),
+		errors.Is(err, ErrDriverNotFound),
+		errors.Is(err, ErrStopNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrNotAllowed),
-		errors.Is(err, ErrNotCustomer):
+		errors.Is(err, ErrNotCustomer),
+		errors.Is(err, ErrNotDriver):
 		return http.StatusForbidden
 	case errors.Is(err, ErrIdempotencyInProgress),
 		errors.Is(err, ErrInvalidCachedResponse),
 		errors.Is(err, ErrInvalidTransition),
-		errors.Is(err, ErrLockTimeout):
+		errors.Is(err, ErrLockTimeout),
+		errors.Is(err, ErrDriverBusy),
+		errors.Is(err, ErrOrderNotSearching),
+		errors.Is(err, ErrStopsNotDelivered):
 		return http.StatusConflict
-	case errors.Is(err, ErrInvalidStatus):
+	case errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrInvalidStopStatus):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrCustomerInactive),
 		errors.Is(err, ErrOverdueDebt),
@@ -234,7 +327,10 @@ func statusForError(err error) int {
 		errors.Is(err, ErrInvalidStopsCount),
 		errors.Is(err, ErrInvalidRecipient),
 		errors.Is(err, ErrInvalidCoordinates),
-		errors.Is(err, ErrIdempotencyKeyRequired):
+		errors.Is(err, ErrIdempotencyKeyRequired),
+		errors.Is(err, ErrDriverInactive),
+		errors.Is(err, ErrInsufficientDriverBalance),
+		errors.Is(err, ErrDriverCapacityExceeded):
 		return http.StatusUnprocessableEntity
 	default:
 		return http.StatusInternalServerError
@@ -248,12 +344,18 @@ func codeForError(err error) string {
 		return "SEND_ORDER_NOT_FOUND"
 	case errors.Is(err, ErrWalletNotFound):
 		return "WALLET_NOT_FOUND"
+	case errors.Is(err, ErrUserNotFound):
+		return "USER_NOT_FOUND"
 	case errors.Is(err, ErrDriverNotFound):
 		return "DRIVER_NOT_FOUND"
+	case errors.Is(err, ErrStopNotFound):
+		return "STOP_NOT_FOUND"
 	case errors.Is(err, ErrNotAllowed):
 		return "FORBIDDEN"
 	case errors.Is(err, ErrNotCustomer):
 		return "NOT_CUSTOMER"
+	case errors.Is(err, ErrNotDriver):
+		return "NOT_DRIVER"
 	case errors.Is(err, ErrCustomerInactive):
 		return "CUSTOMER_INACTIVE"
 	case errors.Is(err, ErrOverdueDebt):
@@ -284,10 +386,24 @@ func codeForError(err error) string {
 		return "IDEMPOTENCY_INVALID_CACHE"
 	case errors.Is(err, ErrInvalidStatus):
 		return "INVALID_STATUS"
+	case errors.Is(err, ErrInvalidStopStatus):
+		return "INVALID_STOP_STATUS"
 	case errors.Is(err, ErrInvalidTransition):
 		return "INVALID_TRANSITION"
 	case errors.Is(err, ErrLockTimeout):
 		return "LOCK_TIMEOUT"
+	case errors.Is(err, ErrDriverBusy):
+		return "DRIVER_BUSY"
+	case errors.Is(err, ErrDriverInactive):
+		return "DRIVER_INACTIVE"
+	case errors.Is(err, ErrInsufficientDriverBalance):
+		return "INSUFFICIENT_DRIVER_BALANCE"
+	case errors.Is(err, ErrDriverCapacityExceeded):
+		return "DRIVER_CAPACITY_EXCEEDED"
+	case errors.Is(err, ErrOrderNotSearching):
+		return "ORDER_NOT_SEARCHING_DRIVER"
+	case errors.Is(err, ErrStopsNotDelivered):
+		return "STOPS_NOT_DELIVERED"
 	default:
 		return "INTERNAL_SERVER_ERROR"
 	}

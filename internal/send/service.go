@@ -40,10 +40,13 @@ import (
 
 // Constanta domain & bisnis G-Send (ROADMAP 3.5.1 / MIGRATION 005).
 const (
-	walletTypeCustomer     = "CUSTOMER"
-	walletTypeSystemEscrow = "SYSTEM_ESCROW"
-	userTypeCustomer       = "customer"
-	statusActive           = "ACTIVE"
+	walletTypeCustomer       = "CUSTOMER"
+	walletTypeDriver         = "DRIVER"
+	walletTypeSystemEscrow   = "SYSTEM_ESCROW"
+	walletTypeSystemPlatform = "SYSTEM_PLATFORM"
+	userTypeCustomer         = "customer"
+	userTypeDriver           = "driver"
+	statusActive             = "ACTIVE"
 
 	// Payment method (payment_method_enum).
 	PaymentMethodWallet = "WALLET"
@@ -59,8 +62,18 @@ const (
 	sendStatusCancelled       = "CANCELLED"
 	sendStatusSettled         = "SETTLED"
 
-	// Stop status (send_order_stops.status).
-	stopStatusPending = "PENDING"
+	// Stop status (send_order_stops.status — CHECK constraint DB:
+	// PENDING | ARRIVED | COMPLETED | SKIPPED). Endpoint menerima "DELIVERED"
+	// (dokumentasi API) yang dinormalisasi menjadi COMPLETED.
+	stopStatusPending   = "PENDING"
+	stopStatusCompleted = "COMPLETED"
+
+	// Working status driver (users.working_status).
+	workingStatusIdle = "IDLE"
+	workingStatusBusy = "BUSY"
+
+	// Capacity driver (Task 3.6.1): maksimal 3 order aktif serentak.
+	driverMaxActiveOrders = 3
 
 	// Idempotency dual-layer (L1 Redis + L2 idempotency_cache).
 	redisKeyPrefix = "idempotency:"
@@ -71,6 +84,7 @@ const (
 	// Reference type double-entry ledger untuk escrow & refund G-Send.
 	referenceTypeSendEscrow = "SEND_ESCROW"
 	referenceTypeSendRefund = "SEND_REFUND"
+	referenceTypeSendSettle = "SEND_SETTLEMENT"
 
 	// Estimasi pickup (ROADMAP 3.5.1 response).
 	sendEstimatedPickup = "5 minutes"
@@ -90,6 +104,13 @@ var (
 	insuranceThreshold       = decimal.NewFromInt(100000)
 	insuranceRate            = decimal.RequireFromString("0.01")
 	insuranceMax             = decimal.NewFromInt(50000)
+
+	// Revenue split settlement 3-way (ROADMAP 3.6.4): driver 90%, platform 10%.
+	sendPlatformCommissionRate = decimal.RequireFromString("0.10")
+
+	// Ceiling saldo negatif driver (LOGIC_FLOW 5.5): setelah CASH settlement,
+	// jika balance < -Rp 50.000 → driver di-SUSPENDED.
+	sendMaxDriverNegativeBalance = decimal.NewFromInt(-50000)
 )
 
 // Error definitions untuk service layer send.
@@ -113,6 +134,18 @@ var (
 	ErrInvalidStatus          = errors.New("invalid status value")
 	ErrInvalidTransition      = errors.New("invalid status transition for current order state")
 	ErrDriverNotFound         = errors.New("driver not found or has no DRIVER wallet")
+
+	// Task 3.6 — accept order & driver capacity.
+	ErrNotDriver                 = errors.New("user is not a driver")
+	ErrDriverInactive            = errors.New("driver is not ACTIVE")
+	ErrDriverBusy                = errors.New("driver is busy (working_status not IDLE)")
+	ErrInsufficientDriverBalance = errors.New("insufficient driver balance (below min_balance_threshold)")
+	ErrDriverCapacityExceeded    = errors.New("driver has reached maximum 3 active orders")
+	ErrOrderNotSearching         = errors.New("order is not in SEARCHING_DRIVER state")
+	ErrStopsNotDelivered         = errors.New("all stops must be DELIVERED before main order is DELIVERED")
+	ErrStopNotFound              = errors.New("send order stop not found")
+	ErrInvalidStopStatus         = errors.New("invalid stop status value")
+	ErrStopAlreadyCompleted      = errors.New("stop is already COMPLETED")
 )
 
 // Repo adalah kontrak repository yang dibutuhkan Service. Dipenuhi oleh
@@ -132,6 +165,19 @@ type Repo interface {
 	UpdateSendOrderStatus(ctx context.Context, q Querier, orderID uuid.UUID,
 		fromStatus, toStatus string) (bool, error)
 	GetSendOrderStops(ctx context.Context, orderID uuid.UUID) ([]*SendOrderStop, error)
+
+	// Task 3.6 — accept order, status machine lanjutan & settlement.
+	GetDriver(ctx context.Context, driverID uuid.UUID) (*SendDriver, error)
+	GetDriverActiveSendOrdersCount(ctx context.Context, driverID uuid.UUID) (int, error)
+	LockSendOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) (*SendOrder, error)
+	LockDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) error
+	AssignDriverToSendOrder(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error)
+	UpdateDriverWorkingStatus(ctx context.Context, q Querier, driverID uuid.UUID, status string) error
+	MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error
+	MarkSendOrderDelivered(ctx context.Context, q Querier, orderID uuid.UUID) (bool, error)
+	MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
+	GetSendOrderStopsByOrderID(ctx context.Context, q Querier, orderID uuid.UUID) ([]*SendOrderStop, error)
+	UpdateSendOrderStopStatus(ctx context.Context, q Querier, stopID uuid.UUID, status string, proof *string) (bool, error)
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
@@ -413,6 +459,203 @@ func (s *Service) CreateSendOrder(ctx context.Context, req CreateSendOrderReques
 	return response, nil
 }
 
+// ---- Task 3.6: Accept Order (ROADMAP 3.6.1) ----
+
+// AcceptSendOrderRequest input untuk POST /send-orders/{id}/accept.
+type AcceptSendOrderRequest struct {
+	OrderID        uuid.UUID
+	DriverID       uuid.UUID
+	IdempotencyKey string
+}
+
+// AcceptSendOrderStop satu baris stop pada response accept (ROADMAP 3.6.1
+// response: stop_sequence, address, allocated_fare).
+type AcceptSendOrderStop struct {
+	StopSequence  int             `json:"stop_sequence"`
+	Address       string          `json:"address"`
+	AllocatedFare decimal.Decimal `json:"allocated_fare"`
+}
+
+// AcceptSendOrderResponse hasil POST /send-orders/{id}/accept.
+type AcceptSendOrderResponse struct {
+	ID     uuid.UUID             `json:"id"`
+	Status string                `json:"status"`
+	Stops  []AcceptSendOrderStop `json:"stops"`
+}
+
+// AcceptSendOrder menetapkan driver ke send order (SEARCHING_DRIVER →
+// DRIVER_ASSIGNED) dengan dual-layer idempotency (ROADMAP 3.6.1):
+//
+//  1. Idempotency L1 (Redis) + L2 (PostgreSQL idempotency_cache).
+//  2. Validasi driver: user_type='driver', status='ACTIVE',
+//     working_status='IDLE', min_balance_threshold <= balance driver.
+//  3. Capacity check: jumlah order aktif (DRIVER_ASSIGNED/PICKED_UP/IN_TRANSIT)
+//     harus < 3 (max 3 order serentak).
+//  4. Transaksi: lock driver user + order FOR UPDATE NOWAIT, atomic assign
+//     (driver_id, driver_wallet_id, status DRIVER_ASSIGNED, assigned_at),
+//     users.working_status → BUSY, audit send_order_events.
+//  5. Cache response (L1 + L2 COMPLETED).
+func (s *Service) AcceptSendOrder(ctx context.Context, req AcceptSendOrderRequest) (*AcceptSendOrderResponse, error) {
+	if req.IdempotencyKey == "" {
+		return nil, ErrIdempotencyKeyRequired
+	}
+
+	// L1: Redis idempotency.
+	if resp, ok := s.redisGetCachedResp(ctx, req.DriverID, req.IdempotencyKey); ok {
+		var out AcceptSendOrderResponse
+		if err := json.Unmarshal(resp, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Validasi driver (status, working_status, threshold).
+	driver, err := s.repo.GetDriver(ctx, req.DriverID)
+	if err != nil {
+		return nil, err
+	}
+	if driver.UserType != userTypeDriver {
+		return nil, ErrNotDriver
+	}
+	if driver.Status != statusActive {
+		return nil, ErrDriverInactive
+	}
+	if driver.WorkingStatus != workingStatusIdle {
+		return nil, ErrDriverBusy
+	}
+
+	driverWallet, err := s.repo.GetWalletByUserAndType(ctx, req.DriverID, walletTypeDriver)
+	if err != nil {
+		return nil, err
+	}
+	if driverWallet.Status != statusActive {
+		return nil, ErrWalletInactive
+	}
+	if driverWallet.Balance.LessThan(driver.MinBalanceThreshold) {
+		return nil, ErrInsufficientDriverBalance
+	}
+
+	// Capacity check: max 3 order aktif per driver.
+	active, err := s.repo.GetDriverActiveSendOrdersCount(ctx, req.DriverID)
+	if err != nil {
+		return nil, err
+	}
+	if active >= driverMaxActiveOrders {
+		return nil, ErrDriverCapacityExceeded
+	}
+
+	// L2: PostgreSQL idempotency.
+	if res, err := s.idemAcquire(ctx, req.DriverID, req.IdempotencyKey); err != nil {
+		return nil, err
+	} else if !res.proceed {
+		s.redisSet(ctx, req.DriverID, req.IdempotencyKey, redisCompleted, res.cached)
+		var out AcceptSendOrderResponse
+		if err := json.Unmarshal(res.cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		return nil, err
+	}
+
+	// Lock driver user terlebih dahulu (guard working_status IDLE atomik),
+	// lalu lock order FOR UPDATE NOWAIT + guard status SEARCHING_DRIVER.
+	if err := s.lockDriverForAccept(ctx, tx, req.DriverID); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.LockSendOrderForAccept(ctx, tx, req.OrderID); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return nil, ErrLockTimeout
+		}
+		if errors.Is(err, ErrSendOrderNotFound) {
+			if _, gErr := s.repo.GetSendOrderByID(ctx, req.OrderID); gErr != nil {
+				return nil, gErr
+			}
+			return nil, ErrOrderNotSearching
+		}
+		return nil, err
+	}
+
+	// Atomic assign: order → DRIVER_ASSIGNED + driver data.
+	ok, err := s.repo.AssignDriverToSendOrder(ctx, tx, req.OrderID, req.DriverID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrOrderNotSearching
+	}
+
+	// Driver working_status → BUSY.
+	if err := s.repo.UpdateDriverWorkingStatus(ctx, tx, req.DriverID, workingStatusBusy); err != nil {
+		return nil, err
+	}
+
+	// Audit trail SEARCHING_DRIVER → DRIVER_ASSIGNED.
+	from := sendStatusSearchingDriver
+	if err := s.repo.InsertSendOrderEvent(ctx, tx, SendOrderEvent{
+		OrderID:     req.OrderID,
+		FromStatus:  &from,
+		ToStatus:    sendStatusDriverAssigned,
+		TriggeredBy: &req.DriverID,
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	stops, err := s.repo.GetSendOrderStops(ctx, req.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	resp := &AcceptSendOrderResponse{
+		ID:     req.OrderID,
+		Status: sendStatusDriverAssigned,
+	}
+	for _, st := range stops {
+		resp.Stops = append(resp.Stops, AcceptSendOrderStop{
+			StopSequence:  st.StopNumber,
+			Address:       st.DropoffAddress,
+			AllocatedFare: derefDecimal(st.AllocatedFare),
+		})
+	}
+
+	if err := s.cacheResponse(ctx, req.DriverID, req.IdempotencyKey, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// lockDriverForAccept mengunci baris users driver dengan FOR UPDATE NOWAIT
+// sekaligus guard atomik status ACTIVE + working_status IDLE. Mengembalikan
+// ErrLockTimeout (55P03) bila lock tidak tersedia.
+func (s *Service) lockDriverForAccept(ctx context.Context, tx pgx.Tx, driverID uuid.UUID) error {
+	err := s.repo.LockDriverUserForAccept(ctx, tx, driverID)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+		return ErrLockTimeout
+	}
+	return err
+}
+
+// derefDecimal mengembalikan nilai decimal dari pointer (nil → decimal.Zero).
+func derefDecimal(d *decimal.Decimal) decimal.Decimal {
+	if d == nil {
+		return decimal.Zero
+	}
+	return *d
+}
+
 // calculateDistances menghitung jarak antar titik untuk tiap stop:
 // pickup → stop1 → stop2 → ... (rumus haversine). Mengembalikan total jarak
 // dan jarak per stop.
@@ -670,14 +913,15 @@ type UpdateSendOrderStatusResponse struct {
 }
 
 // UpdateSendOrderStatus memproses PATCH /send-orders/{id} dengan FOR UPDATE
-// NOWAIT (Task 3.5):
+// NOWAIT (Task 3.5 + 3.6):
 //
 //   - Sender (pemilik order): CREATED/SEARCHING_DRIVER → CANCELLED, dengan
 //     refund escrow penuh jika payment WALLET (SEND_REFUND).
 //   - Driver tertunjuk: DRIVER_ASSIGNED → PICKED_UP → IN_TRANSIT → DELIVERED.
-//     Settlement DELIVERED → SETTLED ditangani Task 3.6.
-//
-// Transisi DRIVER_ASSIGNED (accept) diimplementasi di Task 3.6.
+//     Transisi ke DELIVERED divalidasi semua stops COMPLETED lalu memicu
+//     3-way settlement dalam transaksi yang sama (DELIVERED → SETTLED).
+//   - CANCELLED oleh driver (emergency, dari DRIVER_ASSIGNED/PICKED_UP/
+//     IN_TRANSIT): refund escrow penuh jika WALLET + reset working_status IDLE.
 func (s *Service) UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error) {
 	if !validSendStatusTarget(req.Status) {
 		return nil, ErrInvalidStatus
@@ -729,11 +973,50 @@ func (s *Service) UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrder
 		return nil, ErrInvalidTransition
 	}
 
-	// Refund escrow saat sender membatalkan order WALLET yang belum disettel.
-	needRefund := actor == actorKindSender && req.Status == sendStatusCancelled &&
-		locked.PaymentMethod == PaymentMethodWallet && !locked.IsSettled
+	switch req.Status {
+	case sendStatusCancelled:
+		return s.cancelSendOrderTx(ctx, tx, locked, req)
+	case sendStatusDelivered:
+		return s.deliverSendOrderTx(ctx, tx, locked, req)
+	default:
+		// PICKED_UP / IN_TRANSIT — transisi murni + audit event.
+		from := locked.Status
+		ok, err := s.repo.UpdateSendOrderStatus(ctx, tx, req.OrderID, locked.Status, req.Status)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrInvalidTransition
+		}
+		if err := s.repo.InsertSendOrderEvent(ctx, tx, SendOrderEvent{
+			OrderID:     req.OrderID,
+			FromStatus:  &from,
+			ToStatus:    req.Status,
+			TriggeredBy: &req.UserID,
+		}); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return &UpdateSendOrderStatusResponse{OrderID: req.OrderID, Status: req.Status}, nil
+	}
+}
 
-	ok, err := s.repo.UpdateSendOrderStatus(ctx, tx, req.OrderID, locked.Status, req.Status)
+// cancelSendOrderTx meng-cancel send order dalam transaksi yang sudah mengunci
+// baris order: set status CANCELLED, refund escrow penuh (WALLET + belum
+// SETTLED), reset working_status driver ke IDLE (jika sudah ditunjuk), dan
+// mencatat audit event dengan metadata reason.
+func (s *Service) cancelSendOrderTx(ctx context.Context, tx pgx.Tx, order *SendOrder, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error) {
+	reason := req.Reason
+	if reason == "" {
+		reason = "DRIVER_EMERGENCY_CANCEL"
+		if order.DriverID == nil || req.UserID != *order.DriverID {
+			reason = "SENDER_CANCEL"
+		}
+	}
+
+	ok, err := s.repo.UpdateSendOrderStatus(ctx, tx, order.ID, order.Status, sendStatusCancelled)
 	if err != nil {
 		return nil, err
 	}
@@ -741,24 +1024,34 @@ func (s *Service) UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrder
 		return nil, ErrInvalidTransition
 	}
 
-	if needRefund {
-		if locked.SenderWalletID == nil {
+	// Refund escrow penuh jika payment WALLET dan belum disettel.
+	if order.PaymentMethod == PaymentMethodWallet && !order.IsSettled {
+		if order.SenderWalletID == nil {
 			return nil, ErrWalletNotFound
 		}
-		if err := s.refundSendEscrow(ctx, tx, locked, *locked.SenderWalletID); err != nil {
+		if err := s.refundSendEscrow(ctx, tx, order, *order.SenderWalletID); err != nil {
 			return nil, err
 		}
 	}
 
-	fromStatus := locked.Status
+	// Driver lepas dari order → kembali IDLE.
+	if order.DriverID != nil {
+		if err := s.repo.UpdateDriverWorkingStatus(ctx, tx, *order.DriverID, workingStatusIdle); err != nil {
+			return nil, err
+		}
+	}
+
 	event := SendOrderEvent{
-		OrderID:     req.OrderID,
-		FromStatus:  &fromStatus,
-		ToStatus:    req.Status,
+		OrderID:     order.ID,
+		FromStatus:  &order.Status,
+		ToStatus:    sendStatusCancelled,
 		TriggeredBy: &req.UserID,
 	}
-	if req.Reason != "" {
-		event.Reason = strPtr(req.Reason)
+	if reason != "" {
+		event.Reason = strPtr(reason)
+	}
+	if md, err := json.Marshal(map[string]string{"reason": reason}); err == nil {
+		event.Metadata = md
 	}
 	if err := s.repo.InsertSendOrderEvent(ctx, tx, event); err != nil {
 		return nil, err
@@ -767,7 +1060,344 @@ func (s *Service) UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrder
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &UpdateSendOrderStatusResponse{OrderID: req.OrderID, Status: req.Status}, nil
+	return &UpdateSendOrderStatusResponse{OrderID: order.ID, Status: sendStatusCancelled}, nil
+}
+
+// deliverSendOrderTx menandai send order DELIVERED lalu memicu 3-way
+// settlement otomatis dalam transaksi yang sama (Task 3.6.2c/3.6.4). Semua
+// stop wajib COMPLETED sebelum order utama boleh DELIVERED.
+func (s *Service) deliverSendOrderTx(ctx context.Context, tx pgx.Tx, order *SendOrder, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error) {
+	stops, err := s.repo.GetSendOrderStopsByOrderID(ctx, tx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, st := range stops {
+		if st.Status != stopStatusCompleted {
+			return nil, ErrStopsNotDelivered
+		}
+	}
+
+	ok, err := s.repo.MarkSendOrderDelivered(ctx, tx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrInvalidTransition
+	}
+
+	from := order.Status
+	if err := s.repo.InsertSendOrderEvent(ctx, tx, SendOrderEvent{
+		OrderID:     order.ID,
+		FromStatus:  &from,
+		ToStatus:    sendStatusDelivered,
+		TriggeredBy: &req.UserID,
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := s.settleSendOrderTx(ctx, tx, order); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &UpdateSendOrderStatusResponse{OrderID: order.ID, Status: sendStatusSettled}, nil
+}
+
+// ---- Task 3.6: 3-Way Settlement (ROADMAP 3.6.4) ----
+
+// settleSendOrderTx melakukan 3-way settlement double-entry ledger saat send
+// order bertransisi DELIVERED → SETTLED (dipanggil otomatis setelah driver
+// menandai DELIVERED / semua stop COMPLETED). Locking wallet
+// ORDER BY id ASC FOR UPDATE (deadlock-free, sesuai mandat Lock Hierarchy).
+//
+//	WALLET: DEBIT SYSTEM_ESCROW (total_fare) → CREDIT driver_wallet
+//	        (total_fare * 0.90) + CREDIT SYSTEM_PLATFORM (total_fare * 0.10).
+//	        Setelah itu driver kembali IDLE.
+//	CASH  : customer bayar tunai ke driver; DEBIT driver_wallet
+//	        (total_fare * 0.10 komisi platform) → CREDIT SYSTEM_PLATFORM.
+//	        Jika balance driver < -Rp 50.000 → SUSPENDED (ceiling negatif),
+//	        jika aman → working_status IDLE.
+//
+// Lalu menandai send_orders SETTLED (is_settled = TRUE, settled_at = NOW())
+// dan menulis audit trail send_order_events (DELIVERED → SETTLED).
+//
+// Invariant double-entry: SUM(DEBIT) == SUM(CREDIT) per group — diverifikasi
+// oleh wallet.LedgerService.CreateLedgerEntries.
+func (s *Service) settleSendOrderTx(ctx context.Context, tx pgx.Tx, order *SendOrder) error {
+	if order.DriverID == nil {
+		return ErrDriverNotFound
+	}
+	driverWallet, err := s.repo.GetWalletByUserAndType(ctx, *order.DriverID, walletTypeDriver)
+	if err != nil {
+		return err
+	}
+	platformID, err := s.repo.SystemWalletID(ctx, tx, walletTypeSystemPlatform)
+	if err != nil {
+		return err
+	}
+
+	commission := order.TotalFare.Mul(sendPlatformCommissionRate).Round(2)
+	earning := order.TotalFare.Sub(commission).Round(2)
+
+	switch order.PaymentMethod {
+	case PaymentMethodCash:
+		// Driver memegang kas customer; menyetor komisi platform (10%) ke
+		// wallet digital. Saldo driver boleh negatif dengan ceiling -50.000.
+		if err := lockWalletsAsc(ctx, tx, driverWallet.ID, platformID); err != nil {
+			return err
+		}
+		if err := s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+			{
+				WalletID:      driverWallet.ID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        commission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeSendSettle,
+				Description:   "SEND_SETTLEMENT - platform commission DEBIT driver (CASH)",
+			},
+			{
+				WalletID:      platformID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        commission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeSendSettle,
+				Description:   "SEND_SETTLEMENT - platform commission CREDIT (CASH)",
+			},
+		}); err != nil {
+			return err
+		}
+		balance, err := getWalletBalanceTx(ctx, tx, driverWallet.ID)
+		if err != nil {
+			return err
+		}
+		if balance.LessThan(sendMaxDriverNegativeBalance) {
+			if err := s.repo.MarkDriverSuspended(ctx, tx, *order.DriverID); err != nil {
+				return err
+			}
+		} else {
+			if err := s.repo.UpdateDriverWorkingStatus(ctx, tx, *order.DriverID, workingStatusIdle); err != nil {
+				return err
+			}
+		}
+	case PaymentMethodWallet:
+		escrowID, err := s.repo.SystemWalletID(ctx, tx, walletTypeSystemEscrow)
+		if err != nil {
+			return err
+		}
+		if err := lockWalletsAsc(ctx, tx, escrowID, driverWallet.ID, platformID); err != nil {
+			return err
+		}
+		if err := s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+			{
+				WalletID:      escrowID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        order.TotalFare,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeSendSettle,
+				Description:   "SEND_SETTLEMENT - release escrow",
+			},
+			{
+				WalletID:      driverWallet.ID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        earning,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeSendSettle,
+				Description:   "SEND_SETTLEMENT - driver earning 90%",
+			},
+			{
+				WalletID:      platformID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        commission,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeSendSettle,
+				Description:   "SEND_SETTLEMENT - platform commission 10%",
+			},
+		}); err != nil {
+			return err
+		}
+		if err := s.repo.UpdateDriverWorkingStatus(ctx, tx, *order.DriverID, workingStatusIdle); err != nil {
+			return err
+		}
+	default:
+		return ErrInvalidPaymentMethod
+	}
+
+	if err := s.repo.MarkSendOrderSettled(ctx, tx, order.ID); err != nil {
+		return err
+	}
+
+	from := sendStatusDelivered
+	if err := s.repo.InsertSendOrderEvent(ctx, tx, SendOrderEvent{
+		OrderID:     order.ID,
+		FromStatus:  &from,
+		ToStatus:    sendStatusSettled,
+		TriggeredBy: order.DriverID,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ---- Task 3.6: Stop-Level Updates (ROADMAP 3.6.3, optional MVP) ----
+
+// UpdateSendOrderStopRequest input untuk PATCH /send-orders/{id}/stops/{stop_id}.
+type UpdateSendOrderStopRequest struct {
+	OrderID          uuid.UUID
+	StopID           uuid.UUID
+	UserID           uuid.UUID
+	Status           string
+	DeliveryPhotoURL string
+}
+
+// UpdateSendOrderStopResponse hasil update status stop. OrderStatus berisi
+// status send_orders SETELAH operasi; bila seluruh stop sudah COMPLETED pada
+// operasi ini, order otomatis DELIVERED → SETTLED (auto-transition).
+type UpdateSendOrderStopResponse struct {
+	OrderID     uuid.UUID `json:"order_id"`
+	StopID      uuid.UUID `json:"stop_id"`
+	StopStatus  string    `json:"stop_status"`
+	OrderStatus string    `json:"order_status"`
+	Settled     bool      `json:"settled"`
+}
+
+// UpdateSendOrderStop memproses PATCH /send-orders/{id}/stops/{stop_id}
+// (multi-stop MVP): driver menandai satu stop sebagai COMPLETED (input
+// "COMPLETED" atau "DELIVERED" dinormalisasi) dan menyimpan proof
+// delivery_photo_url. Ketika semua stop COMPLETED, order utama otomatis
+// bertransisi DELIVERED → SETTLED (3-way settlement) dalam transaksi sama.
+func (s *Service) UpdateSendOrderStop(ctx context.Context, req UpdateSendOrderStopRequest) (*UpdateSendOrderStopResponse, error) {
+	// Normalisasi status stop (DB CHECK: PENDING/ARRIVED/COMPLETED/SKIPPED).
+	target := normalizeStopStatus(req.Status)
+	if target == "" {
+		return nil, ErrInvalidStopStatus
+	}
+
+	order, err := s.repo.GetSendOrderByID(ctx, req.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.DriverID == nil || *order.DriverID != req.UserID {
+		return nil, ErrNotAllowed
+	}
+	if order.Status != sendStatusPickedUp && order.Status != sendStatusInTransit {
+		return nil, ErrInvalidTransition
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		return nil, err
+	}
+
+	locked, err := s.repo.LockSendOrder(ctx, tx, req.OrderID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return nil, ErrLockTimeout
+		}
+		return nil, err
+	}
+	if locked.Status != order.Status {
+		return nil, ErrInvalidTransition
+	}
+
+	var proof *string
+	if req.DeliveryPhotoURL != "" {
+		proof = strPtr(req.DeliveryPhotoURL)
+	}
+	ok, err := s.repo.UpdateSendOrderStopStatus(ctx, tx, req.StopID, target, proof)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrStopNotFound
+	}
+
+	resp := &UpdateSendOrderStopResponse{
+		OrderID:     req.OrderID,
+		StopID:      req.StopID,
+		StopStatus:  target,
+		OrderStatus: locked.Status,
+	}
+
+	// Auto-transition: jika target COMPLETED dan semua stop sudah COMPLETED,
+	// order utama otomatis DELIVERED → SETTLED dalam transaksi yang sama.
+	if target == stopStatusCompleted {
+		allCompleted, err := s.allStopsCompleted(ctx, tx, req.OrderID)
+		if err != nil {
+			return nil, err
+		}
+		if allCompleted {
+			if err := s.autoDeliverSendOrder(ctx, tx, locked); err != nil {
+				return nil, err
+			}
+			resp.OrderStatus = sendStatusSettled
+			resp.Settled = true
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// allStopsCompleted memeriksa apakah SEMUA stop sebuah send order berstatus
+// COMPLETED (dibaca dalam transaksi berlock).
+func (s *Service) allStopsCompleted(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (bool, error) {
+	stops, err := s.repo.GetSendOrderStopsByOrderID(ctx, tx, orderID)
+	if err != nil {
+		return false, err
+	}
+	if len(stops) == 0 {
+		return false, nil
+	}
+	for _, st := range stops {
+		if st.Status != stopStatusCompleted {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// autoDeliverSendOrder menandai order DELIVERED + audit, lalu memicu 3-way
+// settlement — dipanggil saat seluruh stop COMPLETED (stop-level flow).
+func (s *Service) autoDeliverSendOrder(ctx context.Context, tx pgx.Tx, order *SendOrder) error {
+	ok, err := s.repo.MarkSendOrderDelivered(ctx, tx, order.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrInvalidTransition
+	}
+
+	from := order.Status
+	if err := s.repo.InsertSendOrderEvent(ctx, tx, SendOrderEvent{
+		OrderID:     order.ID,
+		FromStatus:  &from,
+		ToStatus:    sendStatusDelivered,
+		TriggeredBy: order.DriverID,
+	}); err != nil {
+		return err
+	}
+	return s.settleSendOrderTx(ctx, tx, order)
+}
+
+// normalizeStopStatus menormalkan status stop yang diterima dari request:
+// "DELIVERED" (dokumentasi API) → "COMPLETED" (nilai CHECK constraint DB).
+func normalizeStopStatus(s string) string {
+	switch s {
+	case stopStatusCompleted, "DELIVERED":
+		return stopStatusCompleted
+	default:
+		return ""
+	}
 }
 
 // validSendStatusTarget memvalidasi nilai status yang boleh dikirim ke
@@ -803,6 +1433,12 @@ func validateSendTransition(order *SendOrder, actor int, target string) error {
 			}
 		case sendStatusDelivered:
 			if from == sendStatusInTransit {
+				return nil
+			}
+		case sendStatusCancelled:
+			// Driver emergency cancel dari status apa pun yang belum final
+			// (DRIVER_ASSIGNED / PICKED_UP / IN_TRANSIT).
+			if from == sendStatusDriverAssigned || from == sendStatusPickedUp || from == sendStatusInTransit {
 				return nil
 			}
 		}

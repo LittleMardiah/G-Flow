@@ -63,6 +63,17 @@ type SendWallet struct {
 	Status  string
 }
 
+// SendDriver adalah representasi subset baris users yang dibutuhkan untuk
+// validasi accept order (Task 3.6.1): user_type, status, working_status, dan
+// min_balance_threshold (KYC driver).
+type SendDriver struct {
+	ID                  uuid.UUID
+	UserType            string
+	Status              string
+	WorkingStatus       string
+	MinBalanceThreshold decimal.Decimal
+}
+
 // SendOrder adalah representasi baris tabel send_orders (MIGRATION 005).
 // Kolom nullable direpresentasikan sebagai pointer; nil berarti SQL NULL.
 type SendOrder struct {
@@ -194,6 +205,198 @@ func (r *Repository) SystemWalletID(ctx context.Context, q Querier, walletType s
 		return uuid.Nil, err
 	}
 	return id, nil
+}
+
+// GetDriver mengambil data driver untuk validasi accept order (Task 3.6.1):
+// user_type, status, working_status, min_balance_threshold. Mengembalikan
+// ErrUserNotFound jika user tidak ada.
+func (r *Repository) GetDriver(ctx context.Context, driverID uuid.UUID) (*SendDriver, error) {
+	var d SendDriver
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_type, status, working_status, COALESCE(min_balance_threshold, 0)
+		FROM users
+		WHERE id = $1
+	`, driverID).Scan(&d.ID, &d.UserType, &d.Status, &d.WorkingStatus, &d.MinBalanceThreshold)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// GetDriverActiveSendOrdersCount menghitung jumlah send order aktif seorang
+// driver (Task 3.6.1 capacity check): status yang belum diselesaikan
+// (DRIVER_ASSIGNED, PICKED_UP, IN_TRANSIT). Order CANCELLED/DELIVERED/SETTLED
+// tidak lagi dihitung, sehingga slot kapasitas driver terisi kembali.
+func (r *Repository) GetDriverActiveSendOrdersCount(ctx context.Context, driverID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM send_orders
+		WHERE driver_id = $1
+		  AND status IN ('DRIVER_ASSIGNED', 'PICKED_UP', 'IN_TRANSIT')
+	`, driverID).Scan(&count)
+	return count, err
+}
+
+// LockSendOrderForAccept mengunci baris send_orders dengan SELECT FOR UPDATE
+// NOWAIT selama driver accept (Task 3.6.1). Guard status = 'SEARCHING_DRIVER'.
+// Mengembalikan pgconn.PgError (SQLSTATE 55P03) jika lock tidak tersedia, dan
+// ErrSendOrderNotFound jika order tidak ada / bukan SEARCHING_DRIVER.
+func (r *Repository) LockSendOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) (*SendOrder, error) {
+	o, err := scanSendOrderRow(q.QueryRow(ctx, `SELECT `+sendOrderColumns+` FROM send_orders WHERE id = $1 AND status = 'SEARCHING_DRIVER' FOR UPDATE NOWAIT`, orderID))
+	if errors.Is(err, ErrSendOrderNotFound) {
+		return nil, ErrSendOrderNotFound
+	}
+	return o, err
+}
+
+// LockDriverUserForAccept mengunci baris users driver sekaligus guard status
+// ACTIVE + working_status IDLE secara atomik (Task 3.6.1 langkah 3): mencegah
+// dua accept bersamaan menimpa working_status yang sama. Mengembalikan
+// ErrUserNotFound jika driver tidak ACTIVE/IDLE, atau pgconn.PgError 55P03
+// bila lock tidak tersedia.
+func (r *Repository) LockDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) error {
+	var id uuid.UUID
+	err := q.QueryRow(ctx, `
+		SELECT id FROM users
+		WHERE id = $1 AND status = 'ACTIVE' AND working_status = 'IDLE'
+		FOR UPDATE NOWAIT
+	`, driverID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	return err
+}
+
+// AssignDriverToSendOrder menetapkan driver ke order send (Task 3.6.1 langkah
+// 4): status → DRIVER_ASSIGNED, driver_id, driver_wallet_id (wallet DRIVER),
+// assigned_at = NOW(). Return false jika order tidak dalam state
+// SEARCHING_DRIVER (guard CAS double-check setelah lock).
+func (r *Repository) AssignDriverToSendOrder(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE send_orders
+		SET driver_id = $2,
+		    driver_wallet_id = (
+				SELECT id FROM wallets
+				WHERE user_id = $2 AND wallet_type = 'DRIVER'
+				LIMIT 1
+			),
+		    status = 'DRIVER_ASSIGNED', assigned_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'SEARCHING_DRIVER' AND driver_id IS NULL
+	`, orderID, driverID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UpdateDriverWorkingStatus menyetel working_status driver (Task 3.6): BUSY
+// saat accept, IDLE saat selesai bertugas / emergency cancel / settlement.
+func (r *Repository) UpdateDriverWorkingStatus(ctx context.Context, q Querier, driverID uuid.UUID, status string) error {
+	_, err := q.Exec(ctx, `
+		UPDATE users
+		SET working_status = $2, last_status_update_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, driverID, status)
+	return err
+}
+
+// MarkDriverSuspended menyetel status driver menjadi SUSPENDED + working_status
+// IDLE (Task 3.6.4 CASH settlement): dipakai saat saldo driver menembus ceiling
+// negatif -Rp 50.000 setelah settlement.
+func (r *Repository) MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
+		UPDATE users
+		SET status = 'SUSPENDED', working_status = 'IDLE',
+		    last_status_update_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, driverID)
+	return err
+}
+
+// MarkSendOrderDelivered menandai send order DELIVERED + delivered_at = NOW()
+// (Task 3.6.2c). CAS guard status IN_TRANSIT agar settlement tidak menimpa
+// transisi lain. Return false jika order bukan IN_TRANSIT.
+func (r *Repository) MarkSendOrderDelivered(ctx context.Context, q Querier, orderID uuid.UUID) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE send_orders
+		SET status = 'DELIVERED', delivered_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'IN_TRANSIT'
+	`, orderID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// MarkSendOrderSettled menandai send order SETTLED + is_settled + settled_at
+// (Task 3.6.4 — dipanggil SETELAH settlement ledger berhasil dalam transaksi).
+// CAS guard status DELIVERED.
+func (r *Repository) MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
+		UPDATE send_orders
+		SET status = 'SETTLED', is_settled = TRUE, settled_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'DELIVERED'
+	`, orderID)
+	return err
+}
+
+// GetSendOrderStopsByOrderID mengambil semua stop sebuah send order dalam
+// transaksi (Querier) — dipakai untuk verifikasi semua stop COMPLETED sebelum
+// transisi DELIVERED (Task 3.6.2c / auto-transition stop-level).
+func (r *Repository) GetSendOrderStopsByOrderID(ctx context.Context, q Querier, orderID uuid.UUID) ([]*SendOrderStop, error) {
+	rows, err := q.Query(ctx, `
+		SELECT id, order_id, stop_number,
+		       recipient_name, recipient_phone,
+		       dropoff_lat, dropoff_lng, dropoff_address,
+		       distance_km, allocated_fare, status,
+		       delivery_photo_url, recipient_signature,
+		       arrived_at, completed_at, notes
+		FROM send_order_stops
+		WHERE order_id = $1
+		ORDER BY stop_number ASC
+	`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stops := make([]*SendOrderStop, 0)
+	for rows.Next() {
+		var st SendOrderStop
+		if err := rows.Scan(
+			&st.ID, &st.OrderID, &st.StopNumber,
+			&st.RecipientName, &st.RecipientPhone,
+			&st.DropoffLat, &st.DropoffLng, &st.DropoffAddress,
+			&st.DistanceKm, &st.AllocatedFare, &st.Status,
+			&st.DeliveryPhotoURL, &st.RecipientSignature,
+			&st.ArrivedAt, &st.CompletedAt, &st.Notes,
+		); err != nil {
+			return nil, err
+		}
+		stops = append(stops, &st)
+	}
+	return stops, rows.Err()
+}
+
+// UpdateSendOrderStopStatus mengubah status sebuah stop (Task 3.6.3): dari
+// PENDING → COMPLETED (nilai CHECK constraint send_order_stops.status). Kolom
+// delivery_photo_url diisi jika proof diberikan; completed_at di-set sekali
+// saat COMPLETED. Return false jika stop tidak ditemukan / tak berubah.
+func (r *Repository) UpdateSendOrderStopStatus(ctx context.Context, q Querier, stopID uuid.UUID, status string, proof *string) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE send_order_stops
+		SET status = $2,
+		    delivery_photo_url = COALESCE($3, delivery_photo_url),
+		    completed_at = CASE WHEN $2 = 'COMPLETED' AND completed_at IS NULL THEN NOW() ELSE completed_at END
+		WHERE id = $1
+	`, stopID, status, proof)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // InsertSendOrder membuat baris send_orders. Status awal di-set langsung
