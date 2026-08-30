@@ -1,215 +1,302 @@
 ================================================================================
-TECHNICAL DEBT REGISTER - G-Flow v1.0 (Phase 1)
+TECHNICAL DEBT REGISTER - G-Flow (Phase 1-3)
 ================================================================================
-Tanggal       : 2026-08-29
-Status        : Aktif - Daftar hutang teknis yang perlu diperbaiki sebelum rilis
-Proyek        : G-Flow Backend (Modular Monolith - Golang)
-Versi Dokumen : 1.0
+Tanggal       : 2026-08-30
+Status        : Aktif - Daftar hutang teknis akumulatif Phase 1-3 yang perlu
+                diperbaiki sebelum production release (Phase 4 Hardening)
+Proyek        : G-Flow Backend (Modular Monolith - Golang) + Mobile (Flutter)
+Versi Dokumen : 2.0 (menggantikan v1.0 yang hanya mencakup Phase 1)
+
+--------------------------------------------------------------------------------
+METODOLOGI VALIDASI (CEK > VALIDASI > EKSEKUSI)
+--------------------------------------------------------------------------------
+Dokumen ini disusun setelah validasi langsung terhadap kondisi kode:
+- go test -cover ./...           (unit coverage per package)
+- go test -tags integration ...  (integration test terhadap DB lokal)
+  * DB  : postgresql://postgres:password@localhost:15432/g_flow_dev
+  * Redis: redis://localhost:6380
+- flutter test                   (pada customer_app, driver_app, merchant_app)
+- Pemeriksaan konfigurasi deployment (ke Supabase & Render)
+
+HASIL VALIDASI KUNCI:
+- Unit coverage: wallet 72.1%, auth 11.6%, sisanya (ride, food, send, worker,
+  location, middleware, db, config) = 0.0%.
+- Integration test: wallet & auth PASS, ride PASS (7 skenario). food & send
+  TIDAK punya integration test sama sekali.
+- Flutter test: customer 8/8, driver 11/11, merchant 8/8 PASS (sebagian besar
+  hanya test model/smoke widget, bukan coverage layar menyeluruh).
+- Deployment Supabase & Render: BELUM dilakukan (semua berjalan lokal).
+- Dokumentasi OpenAPI/User guide/deployment: BELUM lengkap.
 
 ================================================================================
-1. PENDAHULUAN
-   Dokumen ini mencatat semua "hutang teknis" yang ditimbulkan selama
-   pengembangan Phase 1 (Wallet & Authentication) untuk memenuhi deadline
-   dan menjaga kode tetap berjalan. Setiap item harus dievaluasi dan
-   diperbaiki pada fase selanjutnya (Phase 2, 3, atau 4) sebelum production
-   release.
-
+1. DAFTAR HUTANG TEKNIS PER KATEGORI
 ================================================================================
-2. DAFTAR HUTANG TEKNIS (PRIORITAS TINGGI)
 
-2.1. TESTING
-────────────────────────────────────────────────────────────────────────────────
-ID : TD-TEST-001
-Judul : Coverage Wallet Masih 72.1% (Target 85%)
-Deskripsi : Unit test coverage untuk package wallet masih 72.1%,
-            kurang 12.9% dari target 85%. Fungsi dengan coverage rendah:
-            - ledger.go: CreateLedgerEntries 43.5%, ReverseLedger 26.9%
-            - service.go: Transfer 66.7%, kycLimitFor 66.7%
-            - handler.go: Transfer 73.9%, ProcessTopUpWebhook 50%
-Dampak : Risiko bug di fungsi yang tidak tercover, terutama di ledger
-         (batch insert, reversal) dan service transfer.
-Perbaikan : Tambahkan unit test untuk menutup fungsi-fungsi tersebut.
-           Fokus pada:
-           - Test ReverseLedger success path (dengan pgxmock batch)
-           - Test CreateLedgerEntries error branches
-           - Test Transfer edge cases (insufficient balance, self-transfer)
-           - Test ProcessTopUpWebhook
-Estimasi : 2-3 jam
-Prioritas : HIGH
+--------------------------------------------------------------------------------
+A. KRITIS (CRITICAL) - Data loss, security breach, atau system crash
+--------------------------------------------------------------------------------
 
-ID : TD-TEST-002
-Judul : Coverage Auth Masih 80.2% (Target 85%)
-Deskripsi : Auth package coverage 80.2%, kurang 4.8% dari target 85%.
-            Fungsi yang masih rendah:
-            - handler.go: Login 74.1%, Register 75.4%
-            - blacklist.go: Add 75.0%, IsBlacklisted 66.7%
-            - rbac.go: RBACMiddleware 83.3%
-Dampak : Risiko bug di login/register/blacklist yang tidak terdeteksi.
-Perbaikan : Tambahkan unit test untuk error branches di auth handler
-           (misal: blacklist.Add error, Register duplicate email di unit test).
+ID : TD-001
+Kategori : SECURITY
+Judul : Wallet handler masih memakai ResolveUserIDByWallet, JWT claim belum
+        terintegrasi penuh
+Dampak : Pemilik wallet tidak diverifikasi dari JWT claim; risiko akses/perintah
+         lintas pemilik (privilege/authorization breach) pada top-up & transfer.
+Solusi : Ambil user_id dari c.GetString("user_id") (claim JWT) di wallet handler
+         dan hapus ResolveUserIDByWallet. Terapkan RLS/ownership check.
 Estimasi : 1-2 jam
-Prioritas : HIGH
+Prioritas : KRITIS
+Status : OPEN
 
-ID : TD-TEST-003
-Judul : Integration Test Tidak Menguji Semua Skenario Edge Case
-Deskripsi : Integration test untuk wallet & auth hanya mencakup happy path
-            dan beberapa edge case. Belum ada integration test untuk:
-            - Overdue debt top-up (dengan database real)
-            - KYC limit exceeded
-            - Deadlock prevention concurrent transfer
-            - Idempotency L1 Redis (masih mock)
-Dampak : Risiko regression di production untuk skenario yang tidak teruji.
-Perbaikan : Tambahkan integration test untuk skenario-skenario di atas
-           dengan database real dan Redis.
+ID : TD-002
+Kategori : DATABASE / RELIABILITAS
+Judul : Tidak ada index untuk idempotency_cache (key, user_id) & periode
+        pembersihan (purge) record kedaluwarsa
+Dampak : Query idempotency (L2) dan akumulasi cache bisa melambat / membesar
+         tanpa batas, meningkatkan risiko time lag pada path kritis pembayaran.
+Solusi : Buat index komposit (key, user_id); tambahkan job purge idempotency_cache
+         expired (24h) secara berkala.
+Estimasi : 45 menit - 1.5 jam
+Prioritas : KRITIS
+Status : OPEN
+
+--------------------------------------------------------------------------------
+B. TINGGI (HIGH) - Menghambat fitur utama atau production readiness
+--------------------------------------------------------------------------------
+
+ID : TD-003
+Kategori : TESTING
+Judul : Unit coverage wallet masih 72.1% (target 85%)
+Dampak : Fungsi keuangan rentan (ledger reversal, create entries, transfer edge
+         cases, webhook) tidak sepenuhnya teruji → risiko regression finance.
+Solusi : Tambah unit test ledger (ReverseLedger, CreateLedgerEntries error),
+         transfer (insufficient, self-transfer), ProcessTopUpWebhook.
 Estimasi : 2-3 jam
-Prioritas : MEDIUM
+Prioritas : TINGGI
+Status : OPEN
 
-2.2. KODE & ARSITEKTUR
-────────────────────────────────────────────────────────────────────────────────
-ID : TD-CODE-001
-Judul : Overdue Debt Belum Sepenuhnya Terintegrasi dengan Payment Flow
-Deskripsi : Overdue debt hanya diterapkan di TopUp. Belum ada mekanisme
-            untuk mencatat overdue debt dari settlement ride (jika customer
-            balance insufficient di settlement).
-Dampak : Overdue debt tidak akan tercatat jika customer kekurangan saldo
-         saat settlement ride di Phase 2.
-Perbaikan : Tambahkan logika di settlement untuk mencatat overdue debt
-           jika customer balance < actual_fare, dan deduksi di top-up
-           berikutnya (sudah ada).
-Estimasi : 2-3 jam (saat implementasi Phase 2 settlement)
-Prioritas : HIGH (terkait Phase 2)
+ID : TD-004
+Kategori : TESTING
+Judul : Unit coverage auth hanya 11.6% (target 85%) — menurun dari ~80% (v1.0)
+Dampak : Login/register/blacklist/RBAC tidak terverifikasi; regresi auth dapat
+         meloloskan transaksi tidak sah atau menolak user valid.
+Solusi : Tulis ulang/refresh unit test auth (login, register, blacklist,
+         RBACMiddleware) dan integrasikan ke go test -cover ./....
+Estimasi : 2-4 jam
+Prioritas : TINGGI
+Status : OPEN
 
-ID : TD-CODE-002
-Judul : Auth Handler Masih Menggunakan ResolveUserIDByWallet (Sementara)
-Deskripsi : Di wallet handler, TopUp dan Transfer menggunakan
-            ResolveUserIDByWallet untuk mendapatkan user_id dari wallet_id.
-            Ini adalah solusi sementara sebelum JWT claim diimplementasikan
-            (padahal JWT sudah ada, tapi belum diintegrasikan ke wallet handler).
-Dampak : Tidak ada validasi kepemilikan wallet berdasarkan JWT claim.
-         Siapa pun dengan token valid bisa top-up/transfer wallet mana pun.
-Perbaikan : Update wallet handler untuk mengambil user_id dari c.GetString("user_id")
-           (dari JWT claim) dan hapus ResolveUserIDByWallet.
-Estimasi : 1 jam
-Prioritas : HIGH (security)
+ID : TD-005
+Kategori : TESTING
+Judul : Tidak ada UNIT TEST pada package ride, food, send, worker, location
+        (0% coverage; ROADMAP menargetkan 85% per modul)
+Dampak : Seluruh logika bisnis Phase 2-3 (dispatch, settlement 4-way/3-way,
+         status machine, multi-stop, auto-cancel) mengandalkan integration test
+         saja / tanpa unit guard → regression sangat mungkin tidak terdeteksi.
+Solusi : Tulis unit test untuk ride (booking, dispatch, settlement, cancellation,
+         auto-cancel, location TTL), food (order, 4-way settlement, status machine),
+         send (multi-stop, 3-way settlement, capacity check), worker, location.
+Estimasi : 15-25 jam
+Prioritas : TINGGI
+Status : OPEN
 
-ID : TD-CODE-003
-Judul : Logger Masih Menggunakan slog Default, Belum Ada Konfigurasi Log Level
-Deskripsi : Slog di-set ke default (INFO). Belum ada pengaturan log level
-            berdasarkan environment (DEBUG di dev, INFO/WARN di prod).
-Dampak : Log terlalu verbose di production atau terlalu sedikit di development.
-Perbaikan : Tambahkan konfigurasi log level di config dan set slog level
-           sesuai ENV.
-Estimasi : 30 menit
-Prioritas : LOW
+ID : TD-006
+Kategori : TESTING / INTEGRATION
+Judul : Tidak ada INTEGRATION TEST untuk food & send (ROADMAP 03 menargetkan 15+ TC)
+Dampak : Settlement 4-way (food) & 3-way (multi-stop send), refund, cash negative
+         threshold, dan auto-cancel food/send tidak divalidasi end-to-end terhadap
+         DB → risiko ketidakseimbangan ledger di production.
+Solusi : Buat integration test step 3.4/3.6/3.7 (book→assign→deliver→settle,
+         capacity check, refund, auto-cancel, ledger balance) dengan build tag.
+Estimasi : 8-14 jam
+Prioritas : TINGGI
+Status : OPEN
 
-ID : TD-CODE-004
-Judul : Redis Client Digunakan Tanpa Graceful Shutdown di main.go
-Deskripsi : Redis client diinisialisasi di main.go, tapi tidak ditutup
-            saat server shutdown (hanya db.Close yang dipanggil).
-Dampak : Koneksi Redis tidak dilepas saat graceful shutdown.
-Perbaikan : Tambahkan defer rdb.Close() di main.go (jika rdb != nil).
-Estimasi : 15 menit
-Prioritas : LOW
+ID : TD-007
+Kategori : DEPLOYMENT / INFRA
+Judul : Belum ada deployment ke Supabase (database) & Render (backend)
+Dampak : Aplikasi tidak bisa diakses publik; mobile app tidak dapat terhubung ke
+         backend real; production readiness belum tercapai.
+Solusi : Siapkan migration/seed untuk Supabase, atur env (DATABASE_URL, REDIS_URL,
+         JWT, SECRET), siapkan Render config (health check, start command, env).
+Estimasi : 30-40 jam (ROADMAP 04)
+Prioritas : TINGGI
+Status : OPEN
 
-2.3. DATABASE
-────────────────────────────────────────────────────────────────────────────────
-ID : TD-DB-001
-Judul : Belum Ada Index untuk query idempotency_cache berdasarkan user_id & key
-Deskripsi : idempotency_cache memiliki primary key key (VARCHAR) dan user_id.
-            Query SELECT state, response_body, debounce_at ... WHERE key = $1 AND user_id = $2
-            belum memiliki index composite (key, user_id) selain primary key.
-Dampak : Query idempotency bisa lambat jika cache besar (ribuan record).
-Perbaikan : Tambahkan index: CREATE INDEX idx_idempotency_cache_key_user ON idempotency_cache(key, user_id).
-Estimasi : 15 menit
-Prioritas : MEDIUM
+ID : TD-008
+Kategori : KODE / ARSITEKTUR
+Judul : Endpoint "available" untuk mobile app belum diimplementasikan di backend
+        (GET /rides/available, /food-orders/available, /send-orders/available,
+        /drivers/{id}/orders, GET /rides/{id})
+Dampak : Mobile apps (customer/driver/merchant) memakai dataset DEMO (badge DEMO)
+         untuk daftar order tersedia → fungsionalitas inti mati tanpa backend real.
+Solusi : Implementasikan endpoint pencarian order tersedia & history yang
+         dipakai app; ganti dataset DEMO dengan data backend.
+Estimasi : 6-10 jam
+Prioritas : TINGGI
+Status : OPEN
 
-ID : TD-DB-002
-Judul : Belum Ada Index untuk topup_transactions berdasarkan status & created_at
-Deskripsi : Query webhook dan auto-cancel sering filter status='PENDING' dan created_at.
-            Belum ada index yang mengcover (status, created_at).
-Dampak : Query webhook/auto-cancel bisa lambat jika topup_transactions besar.
-Perbaikan : Tambahkan index: CREATE INDEX idx_topup_transactions_status_created ON topup_transactions(status, created_at).
-Estimasi : 15 menit
-Prioritas : MEDIUM
+ID : TD-009
+Kategori : KODE / ARSITEKTUR
+Judul : Driver capacity: backlog order aktif (awaited_since) & cancel timeout
+        driver belum diimplementasikan
+Dampak : Manajemen capacity driver (max 3 order) bisa meleset pada skenario
+         timeout/backlog; driver bisa menerima melebihi kapasitas efektif.
+Solusi : Implement pending/backlog & timeout cancellation sesuai ROADMAP 3.10;
+         tambah guard capacity saat accept.
+Estimasi : 4-8 jam
+Prioritas : TINGGI
+Status : OPEN
 
-2.4. MOBILE
-────────────────────────────────────────────────────────────────────────────────
-ID : TD-MOBILE-001
-Judul : Flutter Customer App Belum Disentuh Sama Sekali
-Deskripsi : ROADMAP 01 mencakup mobile app (Customer), tapi belum ada
-            kode Flutter yang dibuat. Semua fokus ke backend.
-Dampak : Phase 1 tidak bisa dianggap 100% selesai karena milestone
-         "Customer bisa login ke HP, melihat wallet balance, top-up"
-         belum tercapai.
-Perbaikan : Mulai Flutter Customer App di Phase 2 (atau sebagai bagian
-           dari Phase 1 yang diperpanjang).
-Estimasi : 157 jam (sesuai ROADMAP 01)
-Prioritas : HIGH (blocker untuk produksi)
+ID : TD-010
+Kategori : MOBILE / TESTING
+Judul : Test automation Flutter belum menyeluruh (hanya smoke/model test, bukan
+        coverage layar 85%)
+Dampak : Screens inti (booking, tracking, menu, cart, checkout, merchant order,
+         driver multi-stop) tidak punya widget/unit test → regression UI tak
+         terdeteksi.
+Solusi : Perluas widget test untuk tiap screen kritis & integration test alur
+         lengkap di ketiga app; kejar coverage layar sesuai ROADMAP.
+Estimasi : 12-20 jam
+Prioritas : TINGGI
+Status : OPEN
 
-2.5. DEPLOYMENT & INFRASTRUKTUR
-────────────────────────────────────────────────────────────────────────────────
-ID : TD-DEPLOY-001
-Judul : Belum Ada Deployment ke Supabase & Render
-Deskripsi : ROADMAP 01 mencakup deployment ke Supabase (database) dan
-            Render (backend). Saat ini semua berjalan lokal.
-Dampak : Aplikasi belum bisa diakses publik, mobile app tidak bisa terhubung.
-Perbaikan : Lakukan deployment di ROADMAP 04 (Hardening & Deployment).
-Estimasi : 30 jam (sesuai ROADMAP 04)
-Prioritas : HIGH
+--------------------------------------------------------------------------------
+C. SEDANG (MEDIUM) - Mengurangi maintainability atau performance
+--------------------------------------------------------------------------------
 
-2.6. DOKUMENTASI
-────────────────────────────────────────────────────────────────────────────────
-ID : TD-DOC-001
-Judul : API Documentation (OpenAPI) Belum Dibuat
-Deskripsi : API_CONTRACT.txt sudah ada, tapi belum ada implementasi
-            OpenAPI/Swagger untuk dokumentasi interaktif.
-Dampak : Frontend developer (Flutter) harus membaca file text untuk
-         memahami API, kurang praktis.
-Perbaikan : Generate OpenAPI spec dari kode (menggunakan go-swagger atau
-           manual) dan serve di /docs.
-Estimasi : 2-3 jam
-Prioritas : MEDIUM
+ID : TD-011
+Kategori : ARSITEKTUR
+Judul : Overdue debt belum terintegrasi penuh antar-modul (baru di jalur top-up /
+        gate booking; belum seluruh jalur settlement)
+Dampak : Debt mungkin tidak tercatat konsisten di semua alur (mis. delta fare
+         settlement food/send) → potensi saldo negatif tanpa audit debt.
+Solusi : Standarkan mekanisme pencatatan overdue_debt di semua settlement
+         (ride/food/send) + deduksi saat top-up berikutnya.
+Estimasi : 2-4 jam
+Prioritas : SEDANG
+Status : OPEN
 
-ID : TD-DOC-002
-Judul : README.md Belum Mencakup Cara Menjalankan Integration Test
-Deskripsi : README.md sudah ada, tapi tidak menjelaskan cara setup
-            database untuk integration test (docker-compose, migration).
+ID : TD-012
+Kategori : DATABASE
+Judul : Belum ada index untuk topup_transactions (status, created_at) dan
+        beberapa query filter status/created_at pada ride/food/send
+Dampak : Query webhook & auto-cancel worker yang memfilter status+timestamp bisa
+         lambat saat volume transaksi membesar.
+Solusi : Tambahkan index komposit (status, created_at) pada
+         topup_transactions, ride_orders, food_orders, send_orders.
+Estimasi : 1-2 jam
+Prioritas : SEDANG
+Status : OPEN
+
+ID : TD-013
+Kategori : KODE
+Judul : Logger masih default slog INFO, belum konfig log level per environment
+Dampak : Log terlalu verbose di prod atau kurang detail di dev; sulit diagnosa.
+Solusi : Konfigurasi level (DEBUG/WARN/INFO) dari env (APP_ENV).
+Estimasi : 30-45 menit
+Prioritas : SEDANG
+Status : OPEN
+
+ID : TD-014
+Kategori : KODE / INFRA
+Judul : Redis client tanpa graceful shutdown & tanpa cleanup key TTL konsisten
+        pada beberapa path (worker/location)
+Dampak : Koneksi Redis bisa bocor saat shutdown; sisa key dapat mengaburkan
+         status driver/order.
+Solusi : defer rdb.Close() di main.go; pastikan TTL & penghapusan key konsisten
+         (mis. driver:location, distributed lock) pada semua worker.
+Estimasi : 45 menit
+Prioritas : SEDANG
+Status : OPEN
+
+ID : TD-015
+Kategori : ARSITEKTUR
+Judul : Definisi status stop send order tidak konsisten antara ROADMAP (DELIVERED)
+        dengan implementasi (discrepancy tercatat di LOGBOOK 3.6)
+Dampak : Mapping status stop vs order bisa ambigu & menyulitkan settlement/kontrol.
+Solusi : Seragamkan enum status stop (send_order_stops) dengan ROADMAP & validasi
+         transisi.
+Estimasi : 1-2 jam
+Prioritas : SEDANG
+Status : OPEN
+
+--------------------------------------------------------------------------------
+D. RENDAH (LOW) - Kosmetik atau dokumentasi
+--------------------------------------------------------------------------------
+
+ID : TD-016
+Kategori : DOKUMENTASI
+Judul : API documentation (OpenAPI/Swagger) belum dibuat (hanya API_CONTRACT.txt)
+Dampak : Developer Flutter & integrasi harus membaca file teks; kurang praktis
+         dan rawan inkonsistensi.
+Solusi : Generate OpenAPI 3.0 dari kode (go-swagger/manual) & serve di /docs.
+Estimasi : 3-5 jam
+Prioritas : RENDAH
+Status : OPEN
+
+ID : TD-017
+Kategori : DOKUMENTASI
+Judul : README & panduan setup integration test belum mencakup cara menjalankan
+        go test -tags integration + setup docker/migration
 Dampak : Contributor baru kesulitan menjalankan integration test.
-Perbaikan : Tambahkan section di README tentang setup integration test.
-Estimasi : 30 menit
-Prioritas : LOW
+Solusi : Perbarui README & buat QUICKSTART: docker-compose up, migrate,
+         set DATABASE_URL, jalankan integration test.
+Estimasi : 1 jam
+Prioritas : RENDAH
+Status : OPEN
+
+ID : TD-018
+Kategori : DOKUMENTASI
+Judul : Panduan deployment (Supabase + Render), user guide (customer/driver/
+        merchant) belum ada
+Dampak : Rilis production & adopsi pengguna terhambat tanpa panduan jelas.
+Solusi : Tulis deployment guide, troubleshooting, & user guide per role.
+Estimasi : 4-8 jam
+Prioritas : RENDAH
+Status : OPEN
+
+ID : TD-019
+Kategori : KODE / KOSMETIK
+Judul : Beberapa kode demo/placeholder (dataset DEMO, mock URL, image placeholder
+        merchant) tersebar di mobile app
+Dampak : Bisa disalahartikan sebagai data asli; perlu diganti sebelum rilis.
+Solusi : Ganti placeholder dengan data backend & unggah gambar real (storage).
+Estimasi : 2-4 jam
+Prioritas : RENDAH
+Status : OPEN
 
 ================================================================================
-3. RENCANA PERBAIKAN (FASE 2 & 3)
+2. RINGKASAN
+================================================================================
 
-Sprint 1 (Bersamaan dengan Phase 2 - Minggu 1-2):
-- TD-CODE-002 (Integrasi JWT claim ke wallet handler)
-- TD-TEST-001 & TD-TEST-002 (Kejar coverage 85%)
-- TD-DB-001 & TD-DB-002 (Index tambahan)
-- TD-DOC-001 (OpenAPI spec)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 19 item
+- KRITIS  : 2 item  (TD-001, TD-002)
+- TINGGI  : 8 item  (TD-003 s/d TD-010)
+- SEDANG  : 5 item  (TD-011 s/d TD-015)
+- RENDAH  : 4 item  (TD-016 s/d TD-019)
 
-Sprint 2 (Bersamaan dengan Phase 3 - Minggu 3-4):
-- TD-CODE-001 (Overdue debt settlement)
-- TD-TEST-003 (Integration test edge cases)
-- TD-CODE-004 (Redis graceful shutdown)
-- TD-DOC-002 (README update)
+STATUS: seluruh item berstatus OPEN (belum ada perbaikan yang tervalidasi).
 
-Sprint 3 (Phase 4 - Hardening):
-- TD-MOBILE-001 (Flutter Customer App - actual effort)
-- TD-DEPLOY-001 (Deployment ke Supabase & Render)
+PRIORITAS UTAMA (yang paling menghambat production readiness):
+1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
+   inti mobile app (masih DEMO data).
+2. Kesenjangan testing unit/integration pada ride/food/send/worker/location
+   (TD-005, TD-006) — risiko regression paling besar.
+3. Keamanan kepemilikan wallet berbasis JWT (TD-001) — risiko authorization breach.
+4. Deployment Supabase & Render (TD-007) — syarat mutlak production.
+5. Unit coverage wallet/auth belum 85% (TD-003, TD-004).
+
+REKOMENDASI:
+- Fokuskan sesi perbaikan Phase 4 (Hardening) pada TD-008, TD-005, TD-006, TD-001
+  sebelum hal lain.
+- Tambahkan CI yang menjalankan go test -cover ./... & go test -tags integration
+  agar coverage/regression termonitor otomatis.
+- Lengkapi OpenAPI & deployment guide (TD-016, TD-018) bersamaan dengan
+  implementasi deployment (TD-007).
+- Prioritaskan perbaikan security (TD-001, TD-002) karena berpotensi menyebabkan
+  kerugian finansial/data breach.
 
 ================================================================================
-4. CATATAN
-
-- Semua technical debt di atas bersifat "aman" untuk MVP karena tidak
-  menyebabkan crash atau data loss.
-- Prioritas perbaikan mengikuti risk assessment:
-  High = berpotensi mengganggu stabilitas / keamanan (TD-CODE-002, TD-TEST-001).
-  Medium = mengurangi kualitas atau maintainability.
-  Low = kosmetik atau dokumentasi.
-- TD-MOBILE-001 dan TD-DEPLOY-001 adalah bloker untuk production release,
-  sehingga harus diselesaikan sebelum rilis.
-
-================================================================================
-END OF TECHNICAL DEBT REGISTER v1.0
+END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ================================================================================
