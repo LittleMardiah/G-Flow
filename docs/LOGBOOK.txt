@@ -529,3 +529,43 @@ Komponen yang Belum:
 ❌ Driver App (Flutter) — ditunda ke Phase 3/4
 ❌ Performance testing (k6) — akan dilakukan di Phase 4
 ❌ Deployment ke Supabase & Render — ditunda ke Phase 4
+
+===============================================================================
+TASK 2.10 - Re-validasi Integration Test Ride (Race Condition & Ledger)
+===============================================================================
+Status: ✅ SELESAI (2026-08-30)
+
+Apa yang dilakukan:
+1. Set DATABASE_URL = postgresql://postgres:password@localhost:15432/g_flow_dev?sslmode=disable.
+2. Verifikasi tabel DB (ride_orders, driver_locations, ride_order_events, ledger_entries, dll) — semua 8 tabel sudah ada, migration tidak perlu dijalankan ulang.
+3. Jalankan: go test -v -tags integration ./internal/ride/...
+
+Hasil Verifikasi (FULL output):
+- ✅ PASS TestIntegrationRide_E2EWalletSettlement (0.47s)
+- ✅ PASS TestIntegrationRide_ConcurrentAccept (1.47s) — 10 goroutine, 1 winner, 0 double-booking
+- ✅ PASS TestIntegrationRide_CustomerCancelFullRefund (0.28s)
+- ✅ PASS TestIntegrationRide_DriverEmergencyCancel (0.36s)
+- ✅ PASS TestIntegrationRide_AutoCancelExpired (0.19s)
+- ✅ PASS TestIntegrationRide_CashSettlement (0.70s) — 2 subtest (commission above ceiling, below negative ceiling suspended)
+
+Total: ok github.com/g-flow/g-flow/internal/ride 5.657s
+
+Catatan:
+- ✅ Integration test ride (race condition & ledger) berhasil divalidasi (2026-08-30)
+
+Referensi:
+- docs/LOGBOOK.txt (TASK 2.3, 2.5, 2.7)
+
+===============================================================================
+TASK 3.1 - Database Setup & Seeding (Phase 3)
+===============================================================================
+Status: ✅ SELESAI (2026-08-30)
+
+Apa yang dilakukan:
+- Migration 005_food_send_schema.up.sql (12 tabel: food_merchants, merchant_menus, merchant_items, item_option_groups, item_options, merchant_item_option_groups, food_orders, food_order_items, food_order_events, send_orders, send_order_stops, send_order_events).
+- Folder internal/food & internal/send (handler, repository, service).
+- Seed data: 5 merchant, 10 menu, 25 items.
+- Verifikasi: merchants=5, menus=10, items=25.
+
+Referensi:
+- docs/ROADMAP 03 FOOD LOGISTICS.txt (Section 3.1)
