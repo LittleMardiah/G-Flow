@@ -102,7 +102,7 @@ Solusi : Tulis unit test untuk ride (booking, dispatch, settlement, cancellation
          send (multi-stop, 3-way settlement, capacity check), worker, location.
 Estimasi : 15-25 jam
 Prioritas : TINGGI
-Status : OPEN
+Status : FIXED (commit f71e33e, coverage 85.3%, 2026-09-01)
 
 ID : TD-006
 Kategori : TESTING
@@ -302,15 +302,14 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-08-31):
-   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-004, TD-006, TD-007 (integration test food & send), TD-009 (6 item)
+   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-004, TD-005, TD-006, TD-007 (integration test food & send), TD-009 (7 item)
    - ⚠️ ONGOING : -
-   - ❌ OPEN    : TD-005, TD-008, TD-010 (3 item)
+   - ❌ OPEN    : TD-008, TD-010 (2 item)
    - TD-011 s/d TD-019: tetap seluruhnya OPEN (SEDANG & RENDAH).
 
    PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
-   1. TD-005 (unit test ride/food/send/worker/location → 85%).
-   2. TD-008 (endpoint "available" untuk mobile app).
-   3. TD-010 (Flutter comprehensive testing ≥85%).
+   1. TD-008 (endpoint "available" untuk mobile app).
+   2. TD-010 (Flutter comprehensive testing ≥85%).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
