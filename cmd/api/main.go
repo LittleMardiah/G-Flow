@@ -17,6 +17,7 @@ import (
 	"github.com/g-flow/g-flow/internal/auth"
 	"github.com/g-flow/g-flow/internal/config"
 	"github.com/g-flow/g-flow/internal/db"
+	"github.com/g-flow/g-flow/internal/driver"
 	"github.com/g-flow/g-flow/internal/food"
 	"github.com/g-flow/g-flow/internal/location"
 	"github.com/g-flow/g-flow/internal/middleware"
@@ -101,6 +102,13 @@ func main() {
 	workerLedger := wallet.NewLedgerService(pool)
 	autoCancelWorker := worker.NewWorker(workerRepository, pool, rdb, workerLedger)
 
+	// Wire up dependencies driver available orders (TD-009). Membaca lokasi
+	// driver dari Redis (L1) dengan fallback ke PostgreSQL (driver_locations),
+	// lalu men-query order tersedia dari semua layanan (ride/food/send).
+	driverRepository := driver.NewRepository(pool)
+	driverService := driver.NewService(driverRepository, rdb)
+	driverHandler := driver.NewHandler(driverService)
+
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
 	// dan Logger (JSON terstruktur / F014) dipasang sebelum route apapun.
 	r := gin.New()
@@ -151,6 +159,8 @@ func main() {
 		api.GET("/wallets/:wallet_id/balance", handler.GetBalance)
 		// Driver update lokasi: auth wajib + role driver.
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
+		// Driver available orders (TD-009): auth wajib + role driver.
+		api.GET("/drivers/available-orders", auth.RBACMiddleware("driver"), driverHandler.GetAvailableOrders)
 	}
 
 	// G-Food: catalog discovery publik (Task 3.3 catalog search & retrieval).
