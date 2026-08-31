@@ -7,6 +7,8 @@ Status        : Aktif - Daftar hutang teknis akumulatif Phase 1-3 yang perlu
 Proyek        : G-Flow Backend (Modular Monolith - Golang) + Mobile (Flutter)
 Versi Dokumen : 2.0 (menggantikan v1.0 yang hanya mencakup Phase 1)
 
+⚠️ PERINGATAN: SEMUA HUTANG TEKNIS WAJIB SELESAI SEBELUM STAGING/PRODUCTION.
+
 --------------------------------------------------------------------------------
 METODOLOGI VALIDASI (CEK > VALIDASI > EKSEKUSI)
 --------------------------------------------------------------------------------
@@ -46,7 +48,7 @@ Solusi : Ambil user_id dari c.GetString("user_id") (claim JWT) di wallet handler
          dan hapus ResolveUserIDByWallet. Terapkan RLS/ownership check.
 Estimasi : 1-2 jam
 Prioritas : KRITIS
-Status : OPEN
+Status : FIXED (commit b6f2f49, 2026-08-31)
 
 ID : TD-002
 Kategori : DATABASE / RELIABILITAS
@@ -58,9 +60,9 @@ Solusi : Buat index komposit (key, user_id); tambahkan job purge idempotency_cac
          expired (24h) secara berkala.
 Estimasi : 45 menit - 1.5 jam
 Prioritas : KRITIS
-Status : OPEN
+Status : FIXED (commit b6f2f49, 2026-08-31)
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 B. TINGGI (HIGH) - Menghambat fitur utama atau production readiness
 --------------------------------------------------------------------------------
 
@@ -73,7 +75,7 @@ Solusi : Tambah unit test ledger (ReverseLedger, CreateLedgerEntries error),
          transfer (insufficient, self-transfer), ProcessTopUpWebhook.
 Estimasi : 2-3 jam
 Prioritas : TINGGI
-Status : OPEN
+Status : FIXED (commit 9cf905d, coverage 85.1%, 2026-08-31)
 
 ID : TD-004
 Kategori : TESTING
@@ -84,7 +86,9 @@ Solusi : Tulis ulang/refresh unit test auth (login, register, blacklist,
          RBACMiddleware) dan integrasikan ke go test -cover ./....
 Estimasi : 2-4 jam
 Prioritas : TINGGI
-Status : OPEN
+Status : ONGOING (2026-08-31) — 3 test di-skip, coverage 38.4%; target 85% belum
+         tercapai. Lanjut refresh & unfreezing test yang di-skip untuk naik ke
+         >=85% sebelum production.
 
 ID : TD-005
 Kategori : TESTING
@@ -296,6 +300,20 @@ REKOMENDASI:
   implementasi deployment (TD-007).
 - Prioritaskan perbaikan security (TD-001, TD-002) karena berpotensi menyebabkan
   kerugian finansial/data breach.
+
+3. RINGKASAN STATUS TERKINI (2026-08-31):
+   - ✅ FIXED   : TD-001, TD-002, TD-003 (3 item)
+   - ⚠️ ONGOING : TD-004 (auth coverage, 3 test di-skip, 38.4%)
+   - ❌ OPEN    : TD-005, TD-006, TD-007, TD-008, TD-009, TD-010 (6 item)
+   - TD-011 s/d TD-019: tetap seluruhnya OPEN (SEDANG & RENDAH).
+
+   PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
+   1. TD-004 (auth coverage ≥85%).
+   2. TD-005, TD-006 (unit test ride/food/send/worker/location 0% → 85%).
+   3. TD-007 (integration test food & send).
+   4. TD-009 (deployment Supabase & Render).
+   5. TD-008 (endpoint "available" untuk mobile app).
+   6. TD-010 (Flutter comprehensive testing ≥85%).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
