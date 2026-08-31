@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -303,5 +304,58 @@ func TestRepository_GetBalance_NotFound(t *testing.T) {
 
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	assert.True(t, got.IsZero())
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepository_GetWalletOwner_Success: mock QueryRow return user_id,
+// assert owner == expected.
+func TestRepository_GetWalletOwner_Success(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT user_id").
+		WithArgs(testWalletID).
+		WillReturnRows(pgxmock.NewRows([]string{"user_id"}).AddRow(testUserID))
+
+	repo := NewRepository(mDB)
+	owner, err := repo.GetWalletOwner(context.Background(), testWalletID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, testUserID, owner)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepository_GetWalletOwner_NotFound: mock QueryRow return pgx.ErrNoRows,
+// assert ErrWalletNotFound.
+func TestRepository_GetWalletOwner_NotFound(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT user_id").
+		WithArgs(testWalletID).
+		WillReturnError(pgx.ErrNoRows)
+
+	repo := NewRepository(mDB)
+	owner, err := repo.GetWalletOwner(context.Background(), testWalletID)
+
+	assert.ErrorIs(t, err, ErrWalletNotFound)
+	assert.True(t, owner == uuid.Nil)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepository_GetWalletOwner_QueryError: error lain -> error mentah.
+func TestRepository_GetWalletOwner_QueryError(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT user_id").
+		WithArgs(testWalletID).
+		WillReturnError(errors.New("conn refused"))
+
+	repo := NewRepository(mDB)
+	owner, err := repo.GetWalletOwner(context.Background(), testWalletID)
+
+	assert.Equal(t, errors.New("conn refused").Error(), err.Error())
+	assert.True(t, owner == uuid.Nil)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }

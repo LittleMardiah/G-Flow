@@ -236,6 +236,72 @@ func TestHandler_Transfer_Unauthorized(t *testing.T) {
 	svc.AssertNotCalled(t, "Transfer", mock.Anything, mock.Anything)
 }
 
+func TestHandler_Transfer_InvalidBody(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodPost, "/wallets/"+testHFrom.String()+"/transfer",
+		map[string]string{"wallet_id": testHFrom.String()},
+		`{invalid json`)
+	c.Set("user_id", testHU.String())
+
+	h.Transfer(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "Transfer", mock.Anything, mock.Anything)
+}
+
+func TestHandler_Transfer_NonPositiveAmount(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodPost, "/wallets/"+testHFrom.String()+"/transfer",
+		map[string]string{"wallet_id": testHFrom.String()},
+		`{"to_wallet_id":"`+testHTo.String()+`","amount":0,"idempotency_key":"tr-4"}`)
+	c.Set("user_id", testHU.String())
+
+	h.Transfer(c)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, "INVALID_AMOUNT", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "Transfer", mock.Anything, mock.Anything)
+}
+
+func TestHandler_Transfer_MissingIdempotency(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodPost, "/wallets/"+testHFrom.String()+"/transfer",
+		map[string]string{"wallet_id": testHFrom.String()},
+		`{"to_wallet_id":"`+testHTo.String()+`","amount":50000}`)
+	c.Set("user_id", testHU.String())
+
+	h.Transfer(c)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, "INVALID_IDEMPOTENCY_KEY", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "Transfer", mock.Anything, mock.Anything)
+}
+
+func TestHandler_Transfer_ServiceError(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("Transfer", mock.Anything, mock.Anything).Return(nil, ErrWalletNotFound)
+
+	c, w := newCtx(t, http.MethodPost, "/wallets/"+testHFrom.String()+"/transfer",
+		map[string]string{"wallet_id": testHFrom.String()},
+		`{"to_wallet_id":"`+testHTo.String()+`","amount":50000,"idempotency_key":"tr-5"}`)
+	c.Set("user_id", testHU.String())
+
+	h.Transfer(c)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "WALLET_NOT_FOUND", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
 // ---- GetBalance ----
 
 func TestHandler_GetBalance_Success(t *testing.T) {
@@ -358,6 +424,35 @@ func TestGetBalance_NotFound(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+func TestGetBalance_InvalidWalletID(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/not-a-uuid/balance",
+		map[string]string{"wallet_id": "not-a-uuid"}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetBalance(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_WALLET_ID", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "GetBalance", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestGetBalance_Unauthorized(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/balance",
+		map[string]string{"wallet_id": testHW.String()}, "")
+
+	h.GetBalance(c)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, "UNAUTHORIZED", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "GetBalance", mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestProcessTopUpWebhook_Success(t *testing.T) {
 	svc := new(mockWalletService)
 	h := NewHandler(svc)
@@ -375,7 +470,35 @@ func TestProcessTopUpWebhook_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-// ---- TestHandler_codeForError: mapping error -> error code (API_CONTRACT) ----
+func TestHandler_Webhook_InvalidBody(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodPost, "/webhooks/topup", nil, `{invalid json`)
+
+	h.ProcessTopUpWebhook(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "ProcessTopUpWebhook", mock.Anything, mock.Anything)
+}
+
+func TestHandler_Webhook_Error(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	txnID := uuid.New()
+	svc.On("ProcessTopUpWebhook", mock.Anything, txnID).Return(ErrWalletNotFound)
+
+	c, w := newCtx(t, http.MethodPost, "/webhooks/topup", nil,
+		`{"transaction_id":"`+txnID.String()+`","status":"COMPLETED"}`)
+
+	h.ProcessTopUpWebhook(c)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "WALLET_NOT_FOUND", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
 
 func TestHandler_codeForError(t *testing.T) {
 	tests := []struct {
