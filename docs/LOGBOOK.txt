@@ -1142,7 +1142,7 @@ Ringkasan status semua hutang teknis yang tercatat di TECHNICAL DEBT.txt:
 - ⚠️ TD-004 (Auth coverage to 85%) — ONGOING (3 test di-skip, coverage 38.4%)
 - ❌ TD-005 (Ride unit test 0% → 85%) — OPEN
 - ✅ TD-006 (Food & Send unit test coverage to 85%) — FIXED (Food 89.9%, Send 95.2%, commit 8f25af8)
-- ❌ TD-007 (Integration test Food & Send) — OPEN
+- ✅ TD-007 (Integration test Food & Send) — FIXED (10 TC hijau, lihat catatan di bawah)
 - ❌ TD-008 (Deployment to Supabase & Render) — OPEN
 - ❌ TD-009 (Available orders endpoint for driver) — OPEN
 - ❌ TD-010 (Flutter comprehensive testing 85%) — OPEN
@@ -1159,3 +1159,38 @@ Status: ✅ SELESAI (2026-08-31, commit 8f25af8)
 - Unit coverage food : 89.9%
 - Unit coverage send : 95.2%
 - Verifikasi: go test -cover ./internal/food/... ./internal/send/...
+
+================================================================================
+TD-007 - Integration Test Food & Send (SELESAI)
+================================================================================
+Status: ✅ SELESAI (2026-08-31)
+
+✅ TD-007 selesai: 10 scenario integration test (5 food + 5 send) semua PASS.
+- Food : internal/food/integration_test.go (TC-FOOD-001 s/d TC-FOOD-005)
+- Send : internal/send/integration_test.go (TC-SEND-001 s/d TC-SEND-005)
+- Build tag: //go:build integration (tidakikut unit test biasa).
+- Jalankan: DATABASE_URL=... go test -tags integration -p 1 ./internal/food/... ./internal/send/... -run TestIntegration -v -count=1
+- CATATAN: gunakan -p 1 karena kedua paket berbagi DB yang sama; tanpa -p 1
+  paket berjalan paralel dan TRUNCATE silang menyebabkan kegagalan flaky.
+
+🔍 5 BUG NYATA ditemukan & diperbaiki oleh integration test ini:
+1. CreateFoodOrder (food/service.go) tidak mengisi FoodOrderItem.ID → insert
+   uuid.Nil → duplicate key food_order_items_pkey. Fix: ID: uuid.New().
+2. Kolom updated_at hilang di food_orders, send_orders, send_order_stops
+   (migration 005 lupa) padahal banyak query menulis updated_at = NOW().
+   Fix: migration BARU 009_fix_order_updated_at.up.sql.
+3. SQL 42P08 "inconsistent types deduced for parameter": $3 dipakai ke kolom
+   enum DAN literal teks di CASE (UpdateFoodOrderStatus / UpdateSendOrderStatus).
+   Fix: cast eksplisit $3::food_order_status_enum / $3::send_order_status_enum.
+4. Migration 006 belum diterapkan di DB dev → trigger lama 005 (food/send
+   order_cash_settlement, pakai auth.uid()) masih aktif & memblokir CASH
+   DELIVERED (schema "auth" does not exist). Fix: terapkan migration 006.
+5. Food driver emergency cancel tidak me-reset working_status driver
+   (kunci BUSY selamanya; send sudah reset IDLE). Fix: ResetDriverIdle di
+   UpdateFoodOrderStatus saat actor driver + status CANCELLED.
+
+⏱️ Tambahan: UpdateSendOrderStopStatus (send/repository.go) — $2 dipakai ke
+   kolom VARCHAR dan literal teks → 42P08. Fix: $2::text.
+   Catatan flow: stop hanya bisa COMPLETED saat order PICKED_UP/IN_TRANSIT,
+   dan auto-settle hanya jalan dari IN_TRANSIT (guard MarkSendOrderDelivered).
+   Jadi test alur lengkap = ACCEPTED → PICKED_UP → IN_TRANSIT → complete stop(s).

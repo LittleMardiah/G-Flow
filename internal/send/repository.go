@@ -388,7 +388,7 @@ func (r *Repository) GetSendOrderStopsByOrderID(ctx context.Context, q Querier, 
 func (r *Repository) UpdateSendOrderStopStatus(ctx context.Context, q Querier, stopID uuid.UUID, status string, proof *string) (bool, error) {
 	tag, err := q.Exec(ctx, `
 		UPDATE send_order_stops
-		SET status = $2,
+		SET status = $2::text,
 		    delivery_photo_url = COALESCE($3, delivery_photo_url),
 		    completed_at = CASE WHEN $2 = 'COMPLETED' AND completed_at IS NULL THEN NOW() ELSE completed_at END
 		WHERE id = $1
@@ -511,9 +511,9 @@ func (r *Repository) UpdateSendOrderStatus(ctx context.Context, q Querier, order
 	fromStatus, toStatus string) (bool, error) {
 	tag, err := q.Exec(ctx, `
 		UPDATE send_orders
-		SET status = $3,
-		    pickup_at = CASE WHEN $3 = 'PICKED_UP' AND pickup_at IS NULL THEN NOW() ELSE pickup_at END,
-		    delivered_at = CASE WHEN $3 = 'DELIVERED' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
+		SET status = $3::send_order_status_enum,
+		    pickup_at = CASE WHEN $3::send_order_status_enum = 'PICKED_UP'::send_order_status_enum AND pickup_at IS NULL THEN NOW() ELSE pickup_at END,
+		    delivered_at = CASE WHEN $3::send_order_status_enum = 'DELIVERED'::send_order_status_enum AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
 		    updated_at = NOW()
 		WHERE id = $1 AND status = $2
 	`, orderID, fromStatus, toStatus)

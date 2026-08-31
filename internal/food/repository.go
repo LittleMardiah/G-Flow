@@ -742,12 +742,12 @@ func (r *Repository) UpdateFoodOrderStatus(ctx context.Context, q Querier, order
 	fromStatus, toStatus string, merchantStatus *string, isRefunded *bool) (bool, error) {
 	tag, err := q.Exec(ctx, `
 		UPDATE food_orders
-		SET status = $3,
+		SET status = $3::food_order_status_enum,
 		    merchant_status = COALESCE($4, merchant_status),
 		    is_refunded = COALESCE($5, is_refunded),
-		    confirmed_at = CASE WHEN $3 = 'CONFIRMED' AND confirmed_at IS NULL THEN NOW() ELSE confirmed_at END,
-		    pickup_at = CASE WHEN $3 = 'PICKED_UP' AND pickup_at IS NULL THEN NOW() ELSE pickup_at END,
-		    delivered_at = CASE WHEN $3 = 'DELIVERED' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
+		    confirmed_at = CASE WHEN $3::food_order_status_enum = 'CONFIRMED'::food_order_status_enum AND confirmed_at IS NULL THEN NOW() ELSE confirmed_at END,
+		    pickup_at = CASE WHEN $3::food_order_status_enum = 'PICKED_UP'::food_order_status_enum AND pickup_at IS NULL THEN NOW() ELSE pickup_at END,
+		    delivered_at = CASE WHEN $3::food_order_status_enum = 'DELIVERED'::food_order_status_enum AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
 		    updated_at = NOW()
 		WHERE id = $1 AND status = $2
 	`, orderID, fromStatus, toStatus, merchantStatus, isRefunded)

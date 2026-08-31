@@ -964,6 +964,7 @@ func (s *Service) CreateFoodOrder(ctx context.Context, req CreateFoodOrderReques
 			options = json.RawMessage(`{}`)
 		}
 		if err := s.repo.InsertFoodOrderItem(ctx, tx, &FoodOrderItem{
+			ID:                  uuid.New(),
 			OrderID:             orderID,
 			ItemID:              rec.item.ID,
 			ItemName:            rec.item.Name,
@@ -1499,6 +1500,15 @@ func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrder
 	}
 	if err := s.repo.InsertFoodOrderEvent(ctx, tx, event); err != nil {
 		return nil, err
+	}
+
+	// Driver emergency cancel membebaskan driver: kembalikan working_status ke
+	// IDLE (konsisten dengan send.cancelSendOrderTx) agar driver yang
+	// membatalkan order tidak terkunci BUSY untuk order berikutnya.
+	if actor == actorKindDriver && req.Status == foodStatusCancelled {
+		if err := s.repo.ResetDriverIdle(ctx, tx, *order.DriverID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Task 3.4 — Settlement otomatis: ketika driver menandai DELIVERED, order
