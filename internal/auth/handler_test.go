@@ -96,3 +96,69 @@ func TestLogout_BlacklistError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "INTERNAL_SERVER_ERROR")
 }
+
+// TestLogout_NoClaims_Unit: claims tidak ada -> 401 (unit, non-integration).
+func TestLogout_NoClaims_Unit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(NewJWTService("secret"), NewBlacklistService(nil), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+
+	h.Logout(c)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "UNAUTHORIZED")
+}
+
+// TestLogout_EmptyJti_Unit: claims ada tapi jti kosong -> 401 (unit).
+func TestLogout_EmptyJti_Unit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(NewJWTService("secret"), NewBlacklistService(nil), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	c.Set("claims", &Claims{Sub: uuid.New().String()})
+
+	h.Logout(c)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "UNAUTHORIZED")
+}
+
+// TestLogout_WrongClaimsType: claims berisi tipe salah -> 401 (unit).
+func TestLogout_WrongClaimsType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(NewJWTService("secret"), NewBlacklistService(nil), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	c.Set("claims", "not-a-claims-ptr")
+
+	h.Logout(c)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestLogout_Success_Unit: blacklist nil -> Add nil -> 200 (unit).
+func TestLogout_Success_Unit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(NewJWTService("secret"), NewBlacklistService(nil), nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	c.Set("claims", &Claims{
+		Sub: uuid.New().String(),
+		Jti: uuid.New().String(),
+		Exp: time.Now().Add(time.Hour).Unix(),
+	})
+
+	h.Logout(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, `{"success":true}`, w.Body.String())
+}
