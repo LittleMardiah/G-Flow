@@ -86,9 +86,9 @@ Solusi : Tulis ulang/refresh unit test auth (login, register, blacklist,
          RBACMiddleware) dan integrasikan ke go test -cover ./....
 Estimasi : 2-4 jam
 Prioritas : TINGGI
-Status : ONGOING (2026-08-31) — 3 test di-skip, coverage 38.4%; target 85% belum
-         tercapai. Lanjut refresh & unfreezing test yang di-skip untuk naik ke
-         >=85% sebelum production.
+Status : FIXED (commit 9522f29, coverage 94.8%, 2026-08-31) — refresh & unfreeze
+         semua test yang di-skip; tambah coverage login/register/logout/RBAC/JWT
+         helpers; 85% target terlampaui (94.8%).
 
 ID : TD-005
 Kategori : TESTING
@@ -289,7 +289,7 @@ PRIORITAS UTAMA (yang paling menghambat production readiness):
    (TD-005, TD-006) — risiko regression paling besar.
 3. Keamanan kepemilikan wallet berbasis JWT (TD-001) — risiko authorization breach.
 4. Deployment Supabase & Render (TD-007) — syarat mutlak production.
-5. Unit coverage wallet/auth belum 85% (TD-003, TD-004).
+5. Unit coverage wallet/auth sudah ≥85% (TD-003, TD-004).
 
 REKOMENDASI:
 - Fokuskan sesi perbaikan Phase 4 (Hardening) pada TD-008, TD-005, TD-006, TD-001
@@ -302,16 +302,15 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-08-31):
-   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-006, TD-007 (integration test food & send), TD-009 (6 item)
-   - ⚠️ ONGOING : TD-004 (auth coverage, 3 test di-skip, 38.4%)
+   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-004, TD-006, TD-007 (integration test food & send), TD-009 (6 item)
+   - ⚠️ ONGOING : -
    - ❌ OPEN    : TD-005, TD-008, TD-010 (3 item)
    - TD-011 s/d TD-019: tetap seluruhnya OPEN (SEDANG & RENDAH).
 
    PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
-   1. TD-004 (auth coverage ≥85%).
-   2. TD-005 (unit test ride/food/send/worker/location → 85%).
-   3. TD-008 (endpoint "available" untuk mobile app).
-   4. TD-010 (Flutter comprehensive testing ≥85%).
+   1. TD-005 (unit test ride/food/send/worker/location → 85%).
+   2. TD-008 (endpoint "available" untuk mobile app).
+   3. TD-010 (Flutter comprehensive testing ≥85%).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
