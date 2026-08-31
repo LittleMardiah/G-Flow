@@ -150,7 +150,7 @@ Solusi : Implement pending/backlog & timeout cancellation sesuai ROADMAP 3.10;
          tambah guard capacity saat accept.
 Estimasi : 4-8 jam
 Prioritas : TINGGI
-Status : OPEN
+Status : FIXED (commit b29b707, coverage 89.1%, 2026-08-31)
 
 ID : TD-010
 Kategori : MOBILE / TESTING
@@ -302,18 +302,17 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-08-31):
-   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-006 (4 item)
+   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-006, TD-009 (5 item)
    - ⚠️ ONGOING : TD-004 (auth coverage, 3 test di-skip, 38.4%)
-   - ❌ OPEN    : TD-005, TD-007, TD-008, TD-009, TD-010 (5 item)
+   - ❌ OPEN    : TD-005, TD-007, TD-008, TD-010 (4 item)
    - TD-011 s/d TD-019: tetap seluruhnya OPEN (SEDANG & RENDAH).
 
    PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
    1. TD-004 (auth coverage ≥85%).
-   2. TD-005, TD-006 (unit test ride/food/send/worker/location 0% → 85%).
+   2. TD-005 (unit test ride/food/send/worker/location → 85%).
    3. TD-007 (integration test food & send).
-   4. TD-009 (deployment Supabase & Render).
-   5. TD-008 (endpoint "available" untuk mobile app).
-   6. TD-010 (Flutter comprehensive testing ≥85%).
+   4. TD-008 (endpoint "available" untuk mobile app).
+   5. TD-010 (Flutter comprehensive testing ≥85%).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
