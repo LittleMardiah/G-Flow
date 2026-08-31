@@ -1141,7 +1141,7 @@ Ringkasan status semua hutang teknis yang tercatat di TECHNICAL DEBT.txt:
 - ✅ TD-003 (Wallet coverage to 85%) — FIXED (commit 9cf905d, coverage 85.1%)
 - ⚠️ TD-004 (Auth coverage to 85%) — ONGOING (3 test di-skip, coverage 38.4%)
 - ❌ TD-005 (Ride unit test 0% → 85%) — OPEN
-- ❌ TD-006 (Food & Send unit test 0% → 85%) — OPEN
+- ✅ TD-006 (Food & Send unit test coverage to 85%) — FIXED (Food 89.9%, Send 95.2%, commit 8f25af8)
 - ❌ TD-007 (Integration test Food & Send) — OPEN
 - ❌ TD-008 (Deployment to Supabase & Render) — OPEN
 - ❌ TD-009 (Available orders endpoint for driver) — OPEN
@@ -1149,3 +1149,13 @@ Ringkasan status semua hutang teknis yang tercatat di TECHNICAL DEBT.txt:
 
 Catatan:
 - Semua hutang teknis WAJIB selesai sebelum staging/production.
+
+================================================================================
+TD-006 - Food & Send Unit Test Coverage to 85% (SELESAI)
+================================================================================
+Status: ✅ SELESAI (2026-08-31, commit 8f25af8)
+
+✅ TD-006 selesai (Food & Send unit tests coverage to 85%).
+- Unit coverage food : 89.9%
+- Unit coverage send : 95.2%
+- Verifikasi: go test -cover ./internal/food/... ./internal/send/...

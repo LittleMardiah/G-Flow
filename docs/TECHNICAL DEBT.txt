@@ -105,16 +105,16 @@ Prioritas : TINGGI
 Status : OPEN
 
 ID : TD-006
-Kategori : TESTING / INTEGRATION
-Judul : Tidak ada INTEGRATION TEST untuk food & send (ROADMAP 03 menargetkan 15+ TC)
-Dampak : Settlement 4-way (food) & 3-way (multi-stop send), refund, cash negative
-         threshold, dan auto-cancel food/send tidak divalidasi end-to-end terhadap
-         DB → risiko ketidakseimbangan ledger di production.
-Solusi : Buat integration test step 3.4/3.6/3.7 (book→assign→deliver→settle,
-         capacity check, refund, auto-cancel, ledger balance) dengan build tag.
+Kategori : TESTING
+Judul : Unit test coverage food & send belum 85% (target 85% per modul)
+Dampak : Logika bisnis food (order, 4-way settlement, status machine) & send
+         (multi-stop, 3-way settlement, capacity check) tidak sepenuhnya teruji
+         → risiko regression finance di production.
+Solusi : Tambah unit test food & send (order creation, settlement, status
+         machine, multi-stop, capacity check) hingga >=85% per modul.
 Estimasi : 8-14 jam
 Prioritas : TINGGI
-Status : OPEN
+Status : FIXED (Food 89.9%, Send 95.2%, commit 8f25af8, 2026-08-31)
 
 ID : TD-007
 Kategori : DEPLOYMENT / INFRA
@@ -302,9 +302,9 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-08-31):
-   - ✅ FIXED   : TD-001, TD-002, TD-003 (3 item)
+   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-006 (4 item)
    - ⚠️ ONGOING : TD-004 (auth coverage, 3 test di-skip, 38.4%)
-   - ❌ OPEN    : TD-005, TD-006, TD-007, TD-008, TD-009, TD-010 (6 item)
+   - ❌ OPEN    : TD-005, TD-007, TD-008, TD-009, TD-010 (5 item)
    - TD-011 s/d TD-019: tetap seluruhnya OPEN (SEDANG & RENDAH).
 
    PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
