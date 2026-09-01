@@ -9,7 +9,7 @@ import 'api_client.dart';
 /// detail driver & lokasi driver untuk tracking belum tersedia sebagai
 /// field terpisah. Selama itu, screen tracking memakai FoodOrderMockSimulator
 /// untuk demo latar status merchant→driver.
-const bool kUseMockFoodTracking = true;
+const bool kUseMockFoodTracking = false;
 
 class FoodOrderService {
   const FoodOrderService(this.apiClient);

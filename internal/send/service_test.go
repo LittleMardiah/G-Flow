@@ -353,9 +353,14 @@ func Test_validPackageType(t *testing.T) {
 }
 
 func Test_normalizeStopStatus(t *testing.T) {
-	assert.Equal(t, stopStatusCompleted, normalizeStopStatus("COMPLETED"))
-	assert.Equal(t, stopStatusCompleted, normalizeStopStatus("DELIVERED"))
+	assert.Equal(t, stopStatusDelivered, normalizeStopStatus("COMPLETED"))
+	assert.Equal(t, stopStatusDelivered, normalizeStopStatus("DELIVERED"))
+	assert.Equal(t, stopStatusPickedUp, normalizeStopStatus("PICKED_UP"))
+	assert.Equal(t, stopStatusPickedUp, normalizeStopStatus("ARRIVED"))
+	assert.Equal(t, stopStatusCancelled, normalizeStopStatus("CANCELLED"))
+	assert.Equal(t, stopStatusCancelled, normalizeStopStatus("SKIPPED"))
 	assert.Equal(t, "", normalizeStopStatus("PENDING"))
+	assert.Equal(t, "", normalizeStopStatus("OCI"))
 }
 
 func Test_validSendStatusTarget(t *testing.T) {
@@ -2075,7 +2080,7 @@ func TestUpdateSendOrderStatus_DeliverMarkError(t *testing.T) {
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(false, pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
@@ -2094,7 +2099,7 @@ func TestUpdateSendOrderStatus_DeliverMarkNotOK(t *testing.T) {
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(false, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
@@ -2113,7 +2118,7 @@ func TestUpdateSendOrderStatus_DeliverEventError(t *testing.T) {
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(true, nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
 
@@ -2133,7 +2138,7 @@ func TestUpdateSendOrderStatus_DeliverSettleError(t *testing.T) {
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(true, nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	repo.On("GetWalletByUserAndType", mock.Anything, fDriverID, walletTypeDriver).Return(nil, ErrWalletNotFound)
@@ -2155,7 +2160,7 @@ func TestUpdateSendOrderStatus_DeliverSuccessCash(t *testing.T) {
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(true, nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	repo.On("GetWalletByUserAndType", mock.Anything, fDriverID, walletTypeDriver).Return(fSendDriverWallet(decimal.Zero), nil)
@@ -2248,7 +2253,7 @@ func TestUpdateSendOrderStop_UpdateError(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusDelivered, mock.Anything).
 		Return(false, pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
@@ -2266,7 +2271,7 @@ func TestUpdateSendOrderStop_StopNotFound(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusDelivered, mock.Anything).
 		Return(false, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
@@ -2284,7 +2289,7 @@ func TestUpdateSendOrderStop_AllStopsError(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusDelivered, mock.Anything).
 		Return(true, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).Return(nil, pgx.ErrNoRows)
 
@@ -2303,11 +2308,11 @@ func TestUpdateSendOrderStop_SuccessNoAuto(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusDelivered, mock.Anything).
 		Return(true, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
 		Return([]*SendOrderStop{
-			fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted),
+			fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered),
 			fSendStop(fOrderID, fStop2ID, 2, stopStatusPending),
 		}, nil)
 	mDB.ExpectCommit()
@@ -2316,7 +2321,7 @@ func TestUpdateSendOrderStop_SuccessNoAuto(t *testing.T) {
 	resp, err := svc.UpdateSendOrderStop(context.Background(), UpdateSendOrderStopRequest{OrderID: fOrderID, StopID: fStop1ID, UserID: fDriverID, Status: "DELIVERED"})
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
-	assert.Equal(t, stopStatusCompleted, resp.StopStatus)
+	assert.Equal(t, stopStatusDelivered, resp.StopStatus)
 	assert.False(t, resp.Settled)
 	assert.Equal(t, sendStatusPickedUp, resp.OrderStatus)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -2331,10 +2336,10 @@ func TestUpdateSendOrderStop_AutoDeliverMarkError(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusDelivered, mock.Anything).
 		Return(true, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(false, pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
@@ -2352,10 +2357,10 @@ func TestUpdateSendOrderStop_AutoDeliverEventError(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop1ID, stopStatusDelivered, mock.Anything).
 		Return(true, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
-		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted)}, nil)
+		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered)}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(true, nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
 
@@ -2375,12 +2380,12 @@ func TestUpdateSendOrderStop_AutoDeliverSuccess(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
-	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop2ID, stopStatusCompleted, mock.Anything).
+	repo.On("UpdateSendOrderStopStatus", mock.Anything, mock.Anything, fStop2ID, stopStatusDelivered, mock.Anything).
 		Return(true, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).
 		Return([]*SendOrderStop{
-			fSendStop(fOrderID, fStop1ID, 1, stopStatusCompleted),
-			fSendStop(fOrderID, fStop2ID, 2, stopStatusCompleted),
+			fSendStop(fOrderID, fStop1ID, 1, stopStatusDelivered),
+			fSendStop(fOrderID, fStop2ID, 2, stopStatusDelivered),
 		}, nil)
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(true, nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)

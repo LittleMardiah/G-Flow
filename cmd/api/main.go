@@ -29,15 +29,19 @@ import (
 )
 
 func main() {
-	// Structured logging (F014): default slog logger dalam format JSON ke
-	// stdout agar bisa di-parse oleh pipeline observability.
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-
+	// Muat config terlebih dahulu agar level logger bisa disesuaikan dengan
+	// environment (TD-013): development=debug, production=info, dan bisa
+	// di-override via LOG_LEVEL env.
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("gagal memuat config: %v", err)
 	}
 
+	// Structured logging (F014 / TD-013): default slog logger dalam format
+	// JSON ke stdout agar bisa di-parse oleh pipeline observability. Level
+	// logger ditentukan dari cfg.App.LogLevel (via ENV LOG_LEVEL / ENV).
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.App.SlogLevel()})
+	slog.SetDefault(slog.New(jsonHandler))
 	pool, err := db.NewDB(cfg.DB)
 	if err != nil {
 		log.Fatalf("gagal terhubung ke database: %v", err)
@@ -49,6 +53,11 @@ func main() {
 	// Redis client (opsional). Jika REDIS_URL kosong/tidak valid -> nil
 	// (graceful degradation: service tetap berjalan tanpa L1 idempotency).
 	rdb := initRedis(ctx, cfg.App.RedisURL)
+
+	// TD-014: Redis graceful shutdown — tutup client saat server berhenti.
+	if rdb != nil {
+		defer rdb.Close()
+	}
 
 	// Auth services: JWT (HS256) + token blacklist via Redis.
 	jwtService := auth.NewJWTService(cfg.App.JWTSecret)

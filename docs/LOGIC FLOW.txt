@@ -652,7 +652,7 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 │     'SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'PICKED_UP',          │
 │     'IN_TRANSIT', 'RETURN_REQUIRED'                               │
 │   )                                                               │
-│   AND s.status NOT IN ('DELIVERED', 'SKIPPED', 'CANCELLED');     │
+│   AND s.status NOT IN ('PICKED_UP', 'DELIVERED', 'CANCELLED');   │
 │                                                                     │
 │   IF count + new_stops > 5:                                       │
 │     → HTTP 400: "Driver capacity exceeded"                        │
@@ -676,9 +676,12 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 │ 2. PARTIAL FAILURE / RTS HANDLING — FIXED (Bugs #26, #33, #52)     │
 ├─────────────────────────────────────────────────────────────────────┤
 │   IF 1 of 3 stops cannot be delivered (recipient absent):        │
-│     → Driver marks stop as 'SKIPPED'                              │
-│     → System continues to next stop                               │
-│     → After all stops processed:                                  │
+│     → Stop status enum 4-nilai (TD-015):                        │
+│       PENDING → PICKED_UP → DELIVERED ; CANCELLED               │
+│     → MVP (ROADMAP 3.6.5): partial stop cancellation TIDAK      │
+│       didukung; pembatalan per-stop di-remap ke CANCELLED       │
+│     → System continues to next stop                             │
+│     → After all stops processed:                                │
 │                                                                     │
 │   At least 1 stop delivered:                                      │
 │     → status = 'RETURN_REQUIRED'                                  │
@@ -789,8 +792,12 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 ┌─────────────────────────────────────────────────────────────────────┐
 │ 4. CASH MULTI-STOP RTS — FIXED (Bug #52)                          │
 ├─────────────────────────────────────────────────────────────────────┤
-│   IF G-Send Multi-Stop CASH with skipped stops:                  │
-│     → Driver holds cash for skipped stop                         │
+│   IF G-Send Multi-Stop CASH with cancelled (RTS) stops:          │
+│     → TD-015: stop status enum = PENDING/PICKED_UP/DELIVERED/    │
+│       CANCELLED; status "skipped" legacy di-remap ke CANCELLED   │
+│     → MVP (3.6.5): partial stop cancel TIDAK didukung;           │
+│       perilaku RTS penuh berlaku saat seluruh order dibatalkan   │
+│     → Driver holds cash for un-delivered (RTS) stop              │
 │     → System must deduct from driver's digital wallet            │
 │                                                                     │
 │     DEBIT driver_wallet by skipped_amount                         │
@@ -1004,7 +1011,7 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 - ✅ G-Send capacity: Counts stops, with fixed filter excluding cancelled orders
 - ✅ Promo subsidy: SYSTEM_PROMO_SUBSIDY with recovery on cancellation
 - ✅ Refund rules: Different for PREPARING vs CONFIRMED
-- ✅ Partial delivery: SKIPPED stops, RTS flow, partial settlement
+- ✅ Partial delivery: stop status 4-nilai (TD-015) PENDING/PICKED_UP/DELIVERED/CANCELLED; MVP: partial stop cancel tidak didukung (pembatalan seluruh order) — full-CANCELLED → RTS flow / refund
 - ✅ Deadlock prevention: ORDER BY id + lock order hierarchy
 - ✅ Retry loop: READ COMMITTED + retry on 40001
 - ✅ Self-transfer: sender_id != recipient_id validation

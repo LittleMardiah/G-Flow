@@ -8,7 +8,7 @@ import 'api_client.dart';
 /// /send-orders/available, /drivers/{id}/available-orders & GET /rides/{id}
 /// belum diimplementasikan — catatan BLUEPRINT). Dataset mock ber-label
 /// isMock=true dan UI menampilkan badge DEMO (konvensi customer_app).
-const bool kUseMockAvailableOrders = true;
+const bool kUseMockAvailableOrders = false;
 
 class OrderService {
   const OrderService(this.apiClient);
@@ -21,7 +21,7 @@ class OrderService {
     final res = await apiClient.get('/api/v1/rides/available');
     return unwrapList(res.data)
         .whereType<Map>()
-        .map((e) => DriverOrder.fromRideJson(e.cast<String, dynamic>(), isMock: true))
+        .map((e) => DriverOrder.fromRideJson(e.cast<String, dynamic>()))
         .toList();
   }
 
@@ -31,7 +31,7 @@ class OrderService {
     final res = await apiClient.get('/api/v1/food-orders/available');
     return unwrapList(res.data)
         .whereType<Map>()
-        .map((e) => DriverOrder.fromFoodJson(e.cast<String, dynamic>(), isMock: true))
+        .map((e) => DriverOrder.fromFoodJson(e.cast<String, dynamic>()))
         .toList();
   }
 
@@ -41,7 +41,7 @@ class OrderService {
     final res = await apiClient.get('/api/v1/send-orders/available');
     return unwrapList(res.data)
         .whereType<Map>()
-        .map((e) => DriverOrder.fromSendJson(e.cast<String, dynamic>(), isMock: true))
+        .map((e) => DriverOrder.fromSendJson(e.cast<String, dynamic>()))
         .toList();
   }
 

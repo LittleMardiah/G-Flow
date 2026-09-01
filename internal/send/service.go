@@ -62,11 +62,17 @@ const (
 	sendStatusCancelled       = "CANCELLED"
 	sendStatusSettled         = "SETTLED"
 
-	// Stop status (send_order_stops.status — CHECK constraint DB:
-	// PENDING | ARRIVED | COMPLETED | SKIPPED). Endpoint menerima "DELIVERED"
-	// (dokumentasi API) yang dinormalisasi menjadi COMPLETED.
+	// Stop status (send_order_stops.status — CHECK constraint DB, TD-015,
+	// diselaraskan dengan ROADMAP 03 3.5.1/3.6.3). Hanya 4 nilai:
+	//   PENDING → PICKED_UP → DELIVERED ; CANCELLED
+	// Partial stop cancellation TIDAK didukung di MVP (pembatalan seluruh
+	// order). Endpoint menerima "DELIVERED" (dan legacy "COMPLETED") yang
+	// dinormalisasi menjadi DELIVERED; "PICKED_UP"/legacy "ARRIVED";
+	// "CANCELLED"/legacy "SKIPPED".
 	stopStatusPending   = "PENDING"
-	stopStatusCompleted = "COMPLETED"
+	stopStatusPickedUp  = "PICKED_UP"
+	stopStatusDelivered = "DELIVERED"
+	stopStatusCancelled = "CANCELLED"
 
 	// Working status driver (users.working_status).
 	workingStatusIdle = "IDLE"
@@ -145,7 +151,7 @@ var (
 	ErrStopsNotDelivered         = errors.New("all stops must be DELIVERED before main order is DELIVERED")
 	ErrStopNotFound              = errors.New("send order stop not found")
 	ErrInvalidStopStatus         = errors.New("invalid stop status value")
-	ErrStopAlreadyCompleted      = errors.New("stop is already COMPLETED")
+	ErrStopAlreadyDelivered      = errors.New("stop is already DELIVERED")
 )
 
 // Repo adalah kontrak repository yang dibutuhkan Service. Dipenuhi oleh
@@ -1072,7 +1078,7 @@ func (s *Service) deliverSendOrderTx(ctx context.Context, tx pgx.Tx, order *Send
 		return nil, err
 	}
 	for _, st := range stops {
-		if st.Status != stopStatusCompleted {
+		if st.Status != stopStatusDelivered {
 			return nil, ErrStopsNotDelivered
 		}
 	}
@@ -1263,12 +1269,13 @@ type UpdateSendOrderStopResponse struct {
 }
 
 // UpdateSendOrderStop memproses PATCH /send-orders/{id}/stops/{stop_id}
-// (multi-stop MVP): driver menandai satu stop sebagai COMPLETED (input
-// "COMPLETED" atau "DELIVERED" dinormalisasi) dan menyimpan proof
-// delivery_photo_url. Ketika semua stop COMPLETED, order utama otomatis
+// (multi-stop MVP): driver menandai satu stop sebagai DELIVERED (input
+// "DELIVERED" atau legacy "COMPLETED" dinormalisasi) dan menyimpan proof
+// delivery_photo_url. Ketika semua stop DELIVERED, order utama otomatis
 // bertransisi DELIVERED → SETTLED (3-way settlement) dalam transaksi sama.
 func (s *Service) UpdateSendOrderStop(ctx context.Context, req UpdateSendOrderStopRequest) (*UpdateSendOrderStopResponse, error) {
-	// Normalisasi status stop (DB CHECK: PENDING/ARRIVED/COMPLETED/SKIPPED).
+	// Normalisasi status stop (enum 4-nilai TD-015: PENDING/PICKED_UP/
+	// DELIVERED/CANCELLED).
 	target := normalizeStopStatus(req.Status)
 	if target == "" {
 		return nil, ErrInvalidStopStatus
@@ -1326,10 +1333,10 @@ func (s *Service) UpdateSendOrderStop(ctx context.Context, req UpdateSendOrderSt
 		OrderStatus: locked.Status,
 	}
 
-	// Auto-transition: jika target COMPLETED dan semua stop sudah COMPLETED,
+	// Auto-transition: jika target DELIVERED dan semua stop sudah DELIVERED,
 	// order utama otomatis DELIVERED → SETTLED dalam transaksi yang sama.
-	if target == stopStatusCompleted {
-		allCompleted, err := s.allStopsCompleted(ctx, tx, req.OrderID)
+	if target == stopStatusDelivered {
+		allCompleted, err := s.allStopsDelivered(ctx, tx, req.OrderID)
 		if err != nil {
 			return nil, err
 		}
@@ -1348,9 +1355,9 @@ func (s *Service) UpdateSendOrderStop(ctx context.Context, req UpdateSendOrderSt
 	return resp, nil
 }
 
-// allStopsCompleted memeriksa apakah SEMUA stop sebuah send order berstatus
-// COMPLETED (dibaca dalam transaksi berlock).
-func (s *Service) allStopsCompleted(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (bool, error) {
+// allStopsDelivered memeriksa apakah SEMUA stop sebuah send order berstatus
+// DELIVERED (dibaca dalam transaksi berlock).
+func (s *Service) allStopsDelivered(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (bool, error) {
 	stops, err := s.repo.GetSendOrderStopsByOrderID(ctx, tx, orderID)
 	if err != nil {
 		return false, err
@@ -1359,7 +1366,7 @@ func (s *Service) allStopsCompleted(ctx context.Context, tx pgx.Tx, orderID uuid
 		return false, nil
 	}
 	for _, st := range stops {
-		if st.Status != stopStatusCompleted {
+		if st.Status != stopStatusDelivered {
 			return false, nil
 		}
 	}
@@ -1367,7 +1374,7 @@ func (s *Service) allStopsCompleted(ctx context.Context, tx pgx.Tx, orderID uuid
 }
 
 // autoDeliverSendOrder menandai order DELIVERED + audit, lalu memicu 3-way
-// settlement — dipanggil saat seluruh stop COMPLETED (stop-level flow).
+// settlement — dipanggil saat seluruh stop DELIVERED (stop-level flow).
 func (s *Service) autoDeliverSendOrder(ctx context.Context, tx pgx.Tx, order *SendOrder) error {
 	ok, err := s.repo.MarkSendOrderDelivered(ctx, tx, order.ID)
 	if err != nil {
@@ -1389,12 +1396,19 @@ func (s *Service) autoDeliverSendOrder(ctx context.Context, tx pgx.Tx, order *Se
 	return s.settleSendOrderTx(ctx, tx, order)
 }
 
-// normalizeStopStatus menormalkan status stop yang diterima dari request:
-// "DELIVERED" (dokumentasi API) → "COMPLETED" (nilai CHECK constraint DB).
+// normalizeStopStatus menormalkan status stop yang diterima dari request ke
+// enum 4-nilai (TD-015): PENDING, PICKED_UP, DELIVERED, CANCELLED. Nilai
+// legacy (COMPLETED→DELIVERED, ARRIVED→PICKED_UP, SKIPPED→CANCELLED) tetap
+// diterima untuk kompatibilitas data antarversi. PENDING tidak diset lewat
+// endpoint ini (hanya terminal), sehingga mengembalikan "" (invalid).
 func normalizeStopStatus(s string) string {
 	switch s {
-	case stopStatusCompleted, "DELIVERED":
-		return stopStatusCompleted
+	case stopStatusDelivered, "COMPLETED":
+		return stopStatusDelivered
+	case stopStatusPickedUp, "ARRIVED":
+		return stopStatusPickedUp
+	case stopStatusCancelled, "SKIPPED":
+		return stopStatusCancelled
 	default:
 		return ""
 	}

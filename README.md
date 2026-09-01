@@ -1,112 +1,199 @@
-# G-Flow Super-App — Backend
+# G-Flow Super-App
 
-Backend untuk G-Flow Super-App. Saat ini fokus pada **Phase 1: Wallet & Authentication** (wallet engine PayPulse dengan top-up, transfer, dan idempotensi + JWT/RBAC) dan **Phase 2: G-Ride** (booking, dispatch, cancel, auto-cancel, settlement 80/20).
+Backend (Go) + Mobile (Flutter) untuk G-Flow Super-App ecosystem:
+**PayPulse** (wallet & auth), **G-Ride** (ride-hailing), **G-Food** (food delivery),
+**G-Send** (instant logistics multi-stop), dan **Admin Web Panel** (dashboard, ledger,
+user management, transaction reversal).
+
+> Dokumentasi lengkap ada di folder [`docs/`](./docs/), termasuk
+> [API Reference](./docs/API_REFERENCE.md) dan [OpenAPI spec](./docs/openapi.yaml).
+
+---
 
 ## Tech Stack
-- **Go** 1.26.1
-- **PostgreSQL** 14 (pgx/v5, pgxpool)
-- **Redis** (go-redis/v9) — cache idempotensi + rate limit (opsional, graceful degradation)
+
+**Backend (Modular Monolith, Golang)**
+- **Go** 1.26
+- **PostgreSQL** 14+ (pgx/v5, pgxpool)
+- **Redis** (go-redis/v9) — idempotency L1, token blacklist, driver location, distributed lock
 - **Gin** HTTP framework
+- JWT (HS256) + RBAC, structured logging (slog JSON), graceful shutdown
+
+**Mobile (Flutter)**
+- `apps/customer_app` — Ride, Food, Send, Wallet
+- `apps/driver_app` — Accept orders, multi-stop delivery, earnings
+- `apps/merchant_app` — Catalog management, order processing, analytics
+
+**Admin Web Panel**
+- `apps/admin_web` — Next.js (dashboard, ledger, users, reversal 4.2.4)
+
+---
 
 ## Prerequisites
-- Go 1.22+
-- Docker (untuk database & Redis local)
-- PostgreSQL client (`psql`) untuk menjalankan migration
 
-## Setup Database
+- Go 1.22+ (disarankan 1.26)
+- Flutter (untuk develop mobile apps)
+- Docker (untuk PostgreSQL & Redis lokal)
+- PostgreSQL client (`psql`) untuk migration
 
-1. Buat file `.env` dari contoh (opsional, salin dari `.env.example`):
+---
+
+## Setup Database (Lokal / Docker)
+
+1. Salin env contoh:
    ```bash
-   cp .env.example .env
+   cp .env.example .env     # Linux/Mac
+   copy .env.example .env   # Windows
    ```
 
 2. Jalankan PostgreSQL & Redis via Docker Compose:
    ```bash
-   docker-compose up -d
+   docker-compose up -d     # postgres:15432, redis:6380
    ```
 
-3. Jalankan migration:
+3. Jalankan semua migration:
    ```bash
-   export DATABASE_URL=postgresql://postgres:password@localhost:5432/g_flow_dev
-   ./scripts/migrate.sh        # Linux/Mac
-   # atau
-   # set DATABASE_URL=postgresql://postgres:password@localhost:5432/g_flow_dev
-   # scripts\migrate.bat       # Windows
+   # Linux/Mac
+   export DATABASE_URL=postgresql://postgres:password@localhost:15432/g_flow_dev
+   ./scripts/migrate.sh
+
+   # Windows PowerShell
+   $env:DATABASE_URL='postgresql://postgres:password@localhost:15432/g_flow_dev'
+   scripts\migrate.bat
    ```
 
-## Run Server
-```bash
-go run cmd/api/main.go
-```
+   Secara manual per file:
+   ```bash
+   for f in migrations/*.up.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"; done
+   ```
 
-Server berjalan di `http://localhost:8080`. Endpoint tersedia:
+> Untuk Supabase, gunakan connection string project dan jalankan migration yang sama
+> (lihat [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md)).
 
-| Method | Path | Deskripsi |
-|--------|------|-----------|
-| GET    | `/health` | Health check |
-| GET    | `/ready` | Readiness check (DB + Redis) |
-| POST   | `/api/v1/auth/register` | Registrasi user (public) |
-| POST   | `/api/v1/auth/login` | Login & token JWT (public) |
-| POST   | `/api/v1/auth/logout` | Logout (revoke token) |
-| POST   | `/api/v1/wallets/:wallet_id/topup` | Top-up wallet |
-| POST   | `/api/v1/wallets/:wallet_id/transfer` | Transfer antar wallet |
-| GET    | `/api/v1/wallets/:wallet_id/balance` | Cek saldo wallet |
-| POST   | `/webhooks/topup` | Webhook top-up (internal) |
-| POST   | `/api/v1/rides/book` | Booking ride (header `X-Idempotency-Key` wajib) |
-| POST   | `/api/v1/rides/:order_id/accept` | Driver menerima order |
-| PATCH  | `/api/v1/rides/:order_id/status` | Transisi status (`DRIVER_ARRIVED`/`TRIP_STARTED`/`COMPLETED`/`CANCELLED`) |
+---
 
-## Test dengan curl
-
-Pastikan `wallet_id` dan `user_id` sudah ada di DB (insert manual / integration test).
+## Build & Run Server
 
 ```bash
-# Contoh TopUp
-curl -X POST http://localhost:8080/api/v1/wallets/<wallet_id>/topup \
-  -H "Content-Type: application/json" \
-  -d '{"amount":500000,"idempotency_key":"test-1"}'
-
-# Contoh Transfer
-curl -X POST http://localhost:8080/api/v1/wallets/<from_wallet_id>/transfer \
-  -H "Content-Type: application/json" \
-  -d '{"to_wallet_id":"<to_wallet_id>","amount":100000,"idempotency_key":"test-2","description":"p2p"}'
-
-# Cek saldo
-curl http://localhost:8080/api/v1/wallets/<wallet_id>/balance
+go mod tidy
+go build -o api.exe ./cmd/api
+./api.exe          # Linux: ./api
 ```
+
+Server berjalan di `http://localhost:8080`.
+
+Periksa kesehatan:
+```bash
+curl http://localhost:8080/health   # liveness
+curl http://localhost:8080/ready    # readiness (DB + Redis)
+```
+
+### Environment Variables (`.env`)
+
+| Variable | Wajib | Keterangan |
+|----------|-------|------------|
+| `DATABASE_URL` | Ya | Connection string PostgreSQL |
+| `REDIS_URL` | Opsional | `redis://...`; kosongkan = tanpa Redis (graceful degradation) |
+| `PORT` | Tidak | Default `8080` |
+| `ENV` | Tidak | `development` (debug) / `production` (info) |
+| `JWT_SECRET` | Ya | Secret untuk penandatanganan JWT |
+
+---
 
 ## Run Tests
 
+### Unit test (tanpa DB/Redis eksternal)
 ```bash
-# Unit test biasa (tanpa DB/Redis eksternal)
 go test ./... -cover
+```
 
-# Integration test — prasyarat: PostgreSQL docker-compose (port 15432) sudah
-# di-migrate dan Redis:6380 up. Set DATABASE_URL sebelum menjalankan:
+### Integration test (butuh PostgreSQL + Redis)
+Prasyarat: `docker-compose up -d` sudah jalan dan telah dimigrasi.
+
+```bash
+# Linux/Mac
 export DATABASE_URL=postgresql://postgres:password@localhost:15432/g_flow_dev
-#     Windows PowerShell: $env:DATABASE_URL='postgresql://postgres:password@localhost:15432/g_flow_dev'
 
-# Integration test per modul:
+# Windows PowerShell
+$env:DATABASE_URL='postgresql://postgres:password@localhost:15432/g_flow_dev'
+
+# Jalankan semua integration test
+go test -tags integration ./internal/... -v
+
+# Atau per modul
 go test -tags integration ./internal/wallet/ -run Integration -v
 go test -tags integration ./internal/ride/ -run Integration -v
 ```
 
-> Catatan: integration test ride memakai build tag `integration` dan me-reset
-> saldo wallet sistem ke 0 tiap test agar idempotent lintas run.
+> Integration test menggunakan build tag `integration` dan me-reset saldo wallet sistem
+> agar idempotent lintas run.
 
-## Struktur
+### Flutter apps
+```bash
+cd apps/customer_app && flutter test
+cd apps/driver_app && flutter test
+cd apps/merchant_app && flutter test
+```
+
+---
+
+## Struktur Proyek
+
 ```
 cmd/api/               # entrypoint + router Gin
-internal/config/       # konfigurasi dari environment
-internal/db/           # pool PostgreSQL
-internal/wallet/       # repository, ledger, service, handler (+ test)
-internal/middleware/   # auth middleware
-migrations/            # SQL migration
-scripts/               # script migration
+internal/
+  config/              # konfigurasi dari environment (TD-013 log level)
+  db/                  # pool PostgreSQL
+  middleware/          # auth middleware, recovery, logger
+  auth/                # register/login/logout, JWT, RBAC, blacklist
+  wallet/              # PayPulse: repository, ledger, service, handler
+  ride/                # G-Ride: booking, dispatch, cancel, settlement
+  food/                # G-Food: merchant, menu, order, 4-way settlement
+  send/                # G-Send: order multi-stop, 3-way settlement
+  location/            # driver location tracking (Redis + flush worker)
+  driver/              # driver available orders / capacity (TD-009)
+  worker/              # auto-cancel + purge idempotency cache
+  admin/               # dashboard, ledger, user mgmt, reversal 2FA (4.2.4)
+migrations/            # SQL migration (001-011)
+scripts/               # migration & test helper scripts
+apps/
+  customer_app/        # Flutter customer
+  driver_app/          # Flutter driver
+  merchant_app/        # Flutter merchant
+  admin_web/           # Next.js admin panel
+docs/                  # seluruh dokumentasi proyek
 ```
 
+---
+
+## Endpoint Utama
+
+Lihat [API_REFERENCE.md](./docs/API_REFERENCE.md) untuk tabel lengkap. Ringkasan:
+
+| Area | Contoh Endpoint |
+|------|-----------------|
+| Auth | `POST /api/v1/auth/register`, `/login`, `/logout` |
+| Wallet | `POST /wallets/:id/topup`, `/transfer`, `GET /balance` |
+| Ride | `POST /rides/book`, `POST /rides/:id/accept`, `PATCH /rides/:id/status` |
+| Food | `GET /merchants`, `GET /merchants/:id/items`, `POST /food-orders` |
+| Send | `POST /send-orders`, `GET /send-orders/:id` |
+| Driver | `GET /drivers/available-orders`, `POST /drivers/location` |
+| Admin | `GET /admin/ledger`, `POST /admin/transactions/:id/reverse` |
+| Health | `GET /health`, `GET /ready` |
+
+---
+
 ## Roadmap
-1. ~~Wallet & Authentication (Phase 1)~~ — dalam progres
-2. JWT/RBAC & OTP
-3. Integrasi payment gateway
-4. Aplikasi Flutter
+
+- [x] Phase 1: Wallet & Auth (PayPulse, JWT/RBAC)
+- [x] Phase 2: G-Ride (ride-hailing)
+- [x] Phase 3: G-Food & G-Send (food logistics)
+- [x] Phase 4: Hardening, Admin Panel, Deployment, Documentation
+  - [x] 4.1 Testing suite (coverage ≥85%)
+  - [x] 4.2 Admin Web Panel (termasuk reversal 2FA)
+  - [x] 4.3 Deployment infrastructure (Supabase)
+  - [x] 4.4 Documentation (user guides, API docs, deployment)
+  - [x] 4.5 Final polish & smoke test
+
+Detail lengkap: [`docs/BLUEPRINT ROADMAP.txt`](./docs/BLUEPRINT%20ROADMAP.txt) dan
+[`docs/ROADMAP 04 HARDENING DEPLOY.txt`](./docs/ROADMAP%2004%20HARDENING%20DEPLOY.txt).

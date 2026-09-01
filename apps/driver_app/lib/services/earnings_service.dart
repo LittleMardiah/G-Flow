@@ -4,7 +4,7 @@ import 'api_client.dart';
 /// Fallback DEMO untuk earning summary. Endpoint GET /drivers/earnings
 /// belum ada di backend (BLUEPRINT) → pakai dataset mock saat
 /// kUseMockEarnings=true.
-const bool kUseMockEarnings = true;
+const bool kUseMockEarnings = false;
 
 class EarningsService {
   const EarningsService(this.apiClient);

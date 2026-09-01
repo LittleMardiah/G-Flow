@@ -293,12 +293,12 @@ func TestRepo_GetSendOrderStopsByOrderID(t *testing.T) {
 		WithArgs(fOrderID).
 		WillReturnRows(pgxmock.NewRows(sendOrderStopCols).
 			AddRow(sendOrderStopRowValues(fStop1ID, fOrderID, 1, stopStatusPending)...).
-			AddRow(sendOrderStopRowValues(fStop2ID, fOrderID, 2, stopStatusCompleted)...))
+			AddRow(sendOrderStopRowValues(fStop2ID, fOrderID, 2, stopStatusDelivered)...))
 	stops, err := r.GetSendOrderStopsByOrderID(context.Background(), mDB, fOrderID)
 	assert.NoError(t, err)
 	assert.Len(t, stops, 2)
 	assert.Equal(t, fStop1ID, stops[0].ID)
-	assert.Equal(t, stopStatusCompleted, stops[1].Status)
+	assert.Equal(t, stopStatusDelivered, stops[1].Status)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 
 	mDB.ExpectQuery("FROM send_order_stops").WithArgs(fOrderID).WillReturnRows(pgxmock.NewRows(sendOrderStopCols))
@@ -316,9 +316,9 @@ func TestRepo_UpdateSendOrderStopStatus(t *testing.T) {
 	proof := "https://img/1.jpg"
 	var nilProof *string
 	mDB.ExpectExec("UPDATE send_order_stops").
-		WithArgs(fStop1ID, stopStatusCompleted, &proof).
+		WithArgs(fStop1ID, stopStatusDelivered, &proof).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
-	ok, err := r.UpdateSendOrderStopStatus(context.Background(), mDB, fStop1ID, stopStatusCompleted, &proof)
+	ok, err := r.UpdateSendOrderStopStatus(context.Background(), mDB, fStop1ID, stopStatusDelivered, &proof)
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -328,8 +328,8 @@ func TestRepo_UpdateSendOrderStopStatus(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, ok)
 
-	mDB.ExpectExec("UPDATE send_order_stops").WithArgs(fStop1ID, stopStatusCompleted, nilProof).WillReturnError(errors.New("db down"))
-	_, err = r.UpdateSendOrderStopStatus(context.Background(), mDB, fStop1ID, stopStatusCompleted, nilProof)
+	mDB.ExpectExec("UPDATE send_order_stops").WithArgs(fStop1ID, stopStatusDelivered, nilProof).WillReturnError(errors.New("db down"))
+	_, err = r.UpdateSendOrderStopStatus(context.Background(), mDB, fStop1ID, stopStatusDelivered, nilProof)
 	assert.Error(t, err)
 }
 
@@ -491,12 +491,12 @@ func TestRepo_GetSendOrderStops(t *testing.T) {
 		WithArgs(fOrderID).
 		WillReturnRows(pgxmock.NewRows(sendOrderStopCols).
 			AddRow(sendOrderStopRowValues(fStop1ID, fOrderID, 1, stopStatusPending)...).
-			AddRow(sendOrderStopRowValues(fStop2ID, fOrderID, 2, stopStatusCompleted)...))
+			AddRow(sendOrderStopRowValues(fStop2ID, fOrderID, 2, stopStatusDelivered)...))
 	stops, err := r.GetSendOrderStops(context.Background(), fOrderID)
 	assert.NoError(t, err)
 	assert.Len(t, stops, 2)
 	assert.Equal(t, 1, stops[0].StopNumber)
-	assert.Equal(t, stopStatusCompleted, stops[1].Status)
+	assert.Equal(t, stopStatusDelivered, stops[1].Status)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 
 	mDB.ExpectQuery("FROM send_order_stops").WithArgs(fOrderID).WillReturnRows(pgxmock.NewRows(sendOrderStopCols))

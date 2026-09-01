@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/g-flow/g-flow/internal/db"
@@ -16,12 +17,20 @@ type Config struct {
 	App AppConfig
 }
 
-// AppConfig adalah konfigurasi spesifik aplikasi (HTTP & auth).
+// LogLevel default per environment (TD-013): development = debug,
+// production = info. Bisa di-override explicit via LOG_LEVEL env.
+const (
+	DefaultLogLevelDevelopment = "debug"
+	DefaultLogLevelProduction  = "info"
+)
+
+// AppConfig adalah konfigurasi spesifik aplikasi (HTTP & auth & logging).
 type AppConfig struct {
 	Port      string
 	Env       string
 	RedisURL  string
 	JWTSecret string
+	LogLevel  string
 }
 
 // Load membaca konfigurasi dari environment variable.
@@ -36,7 +45,12 @@ func Load() (*Config, error) {
 			Env:       os.Getenv("ENV"),
 			RedisURL:  os.Getenv("REDIS_URL"),
 			JWTSecret: os.Getenv("JWT_SECRET"),
+			LogLevel:  os.Getenv("LOG_LEVEL"),
 		},
+	}
+
+	if err := cfg.App.ApplyLogLevelDefault(); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -57,6 +71,7 @@ func LoadWithDefaults() (*Config, error) {
 			Env:       os.Getenv("ENV"),
 			RedisURL:  os.Getenv("REDIS_URL"),
 			JWTSecret: os.Getenv("JWT_SECRET"),
+			LogLevel:  os.Getenv("LOG_LEVEL"),
 		},
 	}
 
@@ -65,6 +80,10 @@ func LoadWithDefaults() (*Config, error) {
 	}
 	if cfg.App.Env == "" {
 		cfg.App.Env = "development"
+	}
+
+	if err := cfg.App.ApplyLogLevelDefault(); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -81,4 +100,41 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: DATABASE_URL wajib diisi")
 	}
 	return nil
+}
+
+// ApplyLogLevelDefault (TD-013) menetapkan LogLevel default berdasarkan Env
+// bila LOG_LEVEL tidak di-set secara eksplisit:
+//   - development → debug
+//   - production / selain development → info
+//
+// Nilai yang valid hanya salah satu dari: debug, info, warn, error.
+func (a *AppConfig) ApplyLogLevelDefault() error {
+	if a.LogLevel == "" {
+		switch a.Env {
+		case "", "development", "dev", "local", "test":
+			a.LogLevel = DefaultLogLevelDevelopment
+		default:
+			a.LogLevel = DefaultLogLevelProduction
+		}
+	}
+	switch a.LogLevel {
+	case "debug", "info", "warn", "error":
+		return nil
+	default:
+		return fmt.Errorf("config: LOG_LEVEL tidak valid (%q), gunakan debug/info/warn/error", a.LogLevel)
+	}
+}
+
+// SlogLevel memetakan LogLevel string ke slog.Level (debug/info/warn/error).
+func (a *AppConfig) SlogLevel() slog.Level {
+	switch a.LogLevel {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

@@ -578,7 +578,7 @@ CREATE TABLE IF NOT EXISTS send_order_stops (
   notes               TEXT,
 
   CONSTRAINT stop_number_positive CHECK (stop_number > 0),
-  CONSTRAINT stops_status_valid CHECK (status IN ('PENDING', 'ARRIVED', 'COMPLETED', 'SKIPPED')),
+  CONSTRAINT stops_status_valid CHECK (status IN ('PENDING', 'PICKED_UP', 'DELIVERED', 'CANCELLED')),
   CONSTRAINT allocated_fare_non_negative CHECK (allocated_fare >= 0),
 
   FOREIGN KEY (order_id) REFERENCES send_orders(id) ON DELETE CASCADE,

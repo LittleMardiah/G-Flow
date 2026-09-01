@@ -15,7 +15,7 @@ import 'api_client.dart';
 ///      untuk marker bergerak di peta.
 /// Selama endpoint di atas belum tersedia, tracking memakai simulasi
 /// `RideMockSimulator` sehingga demo customer app tetap berjalan.
-const bool kUseMockRideData = true;
+const bool kUseMockRideData = false;
 
 class RideService {
   const RideService(this.apiClient);

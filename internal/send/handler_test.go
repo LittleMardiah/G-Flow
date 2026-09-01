@@ -253,9 +253,9 @@ func TestHandler_UpdateSendOrderStop(t *testing.T) {
 	c.Set("user_id", fDriverID.String())
 	svc.On("UpdateSendOrderStop", mock.Anything, mock.MatchedBy(func(r UpdateSendOrderStopRequest) bool {
 		return r.OrderID == fOrderID && r.StopID == fStop1ID && r.UserID == fDriverID &&
-			r.Status == stopStatusCompleted && r.DeliveryPhotoURL == "https://img/1.jpg"
+			r.Status == "COMPLETED" && r.DeliveryPhotoURL == "https://img/1.jpg"
 	})).Return(&UpdateSendOrderStopResponse{
-		OrderID: fOrderID, StopID: fStop1ID, StopStatus: stopStatusCompleted, OrderStatus: sendStatusInTransit,
+		OrderID: fOrderID, StopID: fStop1ID, StopStatus: stopStatusDelivered, OrderStatus: sendStatusInTransit,
 	}, nil)
 	h := NewHandler(svc)
 	h.UpdateSendOrderStop(c)
@@ -340,7 +340,7 @@ func TestHandler_StatusForError(t *testing.T) {
 		{ErrDriverInactive, http.StatusUnprocessableEntity},
 		{ErrInsufficientDriverBalance, http.StatusUnprocessableEntity},
 		{ErrDriverCapacityExceeded, http.StatusUnprocessableEntity},
-		{ErrStopAlreadyCompleted, http.StatusInternalServerError},
+		{ErrStopAlreadyDelivered, http.StatusInternalServerError},
 		{errors.New("other"), http.StatusInternalServerError},
 	}
 	for _, tc := range cases {
