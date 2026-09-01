@@ -31,4 +31,10 @@ psql $DATABASE_URL -f migrations/007_auto_cancel_worker.up.sql
 # Migration 008
 psql $DATABASE_URL -f migrations/008_fix_idempotency_cache.up.sql
 
+# Migration 009
+psql $DATABASE_URL -f migrations/009_fix_order_updated_at.up.sql
+
+# Migration 010
+psql $DATABASE_URL -f migrations/010_admin_lockouts.up.sql
+
 echo "Migrations completed."

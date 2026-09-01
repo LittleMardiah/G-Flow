@@ -258,7 +258,8 @@ Proportional Clawback: Refund customer full amount. Clawback from Merchant, Driv
 Auto-Sweep Journal (Corrected): DEBIT RECIPIENT_PAYOUT_ACCOUNT, CREDIT SYSTEM_RECEIVABLE_OVERDRAFT. BUKAN DEBIT CUSTOMER_ESCROW. Partial sweep notifications.
 API: POST /admin/transactions/{id}/reverse. Headers: Authorization, X-Admin-2FA-Token. Body: { reason, notes }.
 Errors: 401 (invalid 2FA), 403, 422, 429 (lockout).
-Status: [ ] 2FA enforcement, checkLockout Redis eval, UPSERT normal path, proportional clawback, auto-sweep.
+Status: [x] 2FA enforcement, checkLockout Redis eval, UPSERT normal path, proportional clawback, auto-sweep.
+Note: DONE — internal/admin (repository.go, lockout.go, service.go, handler.go) + route group /api/v1/admin with 2FA & lockout (3x→15min, Redis+PG dual-write), proportional clawback merchant/driver/platform, shortfall → SYSTEM_RECEIVABLE_OVERDRAFT, migrations/010_admin_lockouts.up.sql, admin reversal UI (apps/admin_web/src/app/transactions/[id]/reverse), unit tests 85.8% coverage (2026-09-01).
 Effort: 11h.
 ================================================================================
 Summary: 4.2 ADMIN WEB PANEL

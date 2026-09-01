@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/g-flow/g-flow/internal/admin"
 	"github.com/g-flow/g-flow/internal/auth"
 	"github.com/g-flow/g-flow/internal/config"
 	"github.com/g-flow/g-flow/internal/db"
@@ -108,6 +109,15 @@ func main() {
 	driverRepository := driver.NewRepository(pool)
 	driverService := driver.NewService(driverRepository, rdb)
 	driverHandler := driver.NewHandler(driverService)
+
+	// Wire up dependencies admin (Task 4.2.4 Transaction Reversal).
+	// Service memakai pool untuk transaksi reversal (clawback proporsional +
+	// shortfall -> SYSTEM_RECEIVABLE_OVERDRAFT), Redis untuk lockout 2FA (L1)
+	// dengan fallback PostgreSQL (L2/persisten), dan validator 2FA statis MVP.
+	adminRepository := admin.NewRepository(pool)
+	adminService := admin.NewService(adminRepository, pool, slog.Default())
+	adminTwoFA := admin.NewStaticTwoFactorValidator("")
+	adminHandler := admin.NewHandler(adminService, pool, rdb, slog.Default(), adminTwoFA)
 
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
 	// dan Logger (JSON terstruktur / F014) dipasang sebelum route apapun.
@@ -214,6 +224,18 @@ func main() {
 		sendOrders.PATCH("/:id", sendHandler.UpdateSendOrderStatus)
 		sendOrders.POST("/:id/accept", auth.RBACMiddleware("driver"), sendHandler.AcceptSendOrder)
 		sendOrders.PATCH("/:id/stops/:stop_id", auth.RBACMiddleware("driver"), sendHandler.UpdateSendOrderStop)
+	}
+
+	// Admin endpoints (Task 4.2.4 Transaction Reversal).
+	// Semua resource admin dilindungi Auth + RBAC role 'admin'; 2FA tambahan
+	// divalidasi di dalam handler via header X-Admin-2FA-Token.
+	adminGroup := r.Group("/api/v1/admin",
+		middleware.AuthMiddleware(jwtService, blacklistService),
+		auth.RBACMiddleware("admin"),
+	)
+	{
+		adminGroup.GET("/transactions/:id", adminHandler.GetTransaction)
+		adminGroup.POST("/transactions/:id/reverse", adminHandler.ReverseTransaction)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.

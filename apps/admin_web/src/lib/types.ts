@@ -71,3 +71,32 @@ export interface UserListResponse {
   total_count: number;
   users: AdminUser[];
 }
+
+export interface LedgerItemView {
+  wallet_id: string;
+  wallet_type: string;
+  entry_type: string;
+  amount: number;
+  reference: string;
+  balance: number;
+}
+
+export interface TransactionDetail {
+  transaction_id: string;
+  refund_wallet: string;
+  total_amount: number;
+  entries: LedgerItemView[];
+  merchant_share: number;
+  driver_share: number;
+  platform_share: number;
+  potential_shortfall: number;
+  reversed: boolean;
+}
+
+export interface ReverseTransactionResponse {
+  reversal_id: string;
+  transaction_id: string;
+  refunded: number;
+  shortfall: number;
+  has_sweep: boolean;
+}

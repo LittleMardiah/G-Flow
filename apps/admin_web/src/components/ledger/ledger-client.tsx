@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -207,6 +208,7 @@ export function LedgerClient() {
                 <TableHead>Amount</TableHead>
                 <TableHead>Reference</TableHead>
                 <TableHead>Created At</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -232,11 +234,19 @@ export function LedgerClient() {
                   <TableCell className="text-gray-500">
                     {new Date(entry.created_at).toLocaleString()}
                   </TableCell>
+                  <TableCell>
+                    <Link
+                      href={`/transactions/${encodeURIComponent(entry.reference)}/reverse`}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      Reverse
+                    </Link>
+                  </TableCell>
                 </TableRow>
               ))}
               {(ledger.data?.ledger ?? []).length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-6 text-center text-gray-400">
+                  <TableCell colSpan={7} className="py-6 text-center text-gray-400">
                     No ledger entries
                   </TableCell>
                 </TableRow>

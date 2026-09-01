@@ -30,4 +30,10 @@ if errorlevel 1 exit /b 1
 psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\008_fix_idempotency_cache.up.sql
 if errorlevel 1 exit /b 1
 
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\009_fix_order_updated_at.up.sql
+if errorlevel 1 exit /b 1
+
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\010_admin_lockouts.up.sql
+if errorlevel 1 exit /b 1
+
 echo Migrations completed.

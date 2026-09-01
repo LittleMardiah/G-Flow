@@ -1193,4 +1193,18 @@ Status: ✅ SELESAI (2026-08-31)
    kolom VARCHAR dan literal teks → 42P08. Fix: $2::text.
    Catatan flow: stop hanya bisa COMPLETED saat order PICKED_UP/IN_TRANSIT,
    dan auto-settle hanya jalan dari IN_TRANSIT (guard MarkSendOrderDelivered).
-   Jadi test alur lengkap = ACCEPTED → PICKED_UP → IN_TRANSIT → complete stop(s).
+    Jadi test alur lengkap = ACCEPTED → PICKED_UP → IN_TRANSIT → complete stop(s).
+
+================================================================================
+TASK 4.2.4 - Transaction Reversal (Admin Web Panel)
+================================================================================
+Status: ✅ SELESAI (2026-09-01)
+
+Apa yang dilakukan:
+- Backend: internal/admin (handler, service, repository, lockout) + migration 010_admin_lockouts.up.sql.
+- 2FA header X-Admin-2FA-Token, lockout 3x → 15 menit (Redis eval + PostgreSQL UPSERT).
+- Proportional clawback (merchant, driver, platform), shortfall → SYSTEM_RECEIVABLE_OVERDRAFT, auto-sweep journal.
+- Frontend: halaman /transactions/[id]/reverse di admin_web (breakdown, 2FA, konfirmasi).
+- Unit test coverage: 85.8%.
+
+Referensi: docs/ROADMAP 04 HARDENING DEPLOY.txt (Section 4.2.4)

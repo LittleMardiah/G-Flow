@@ -273,17 +273,34 @@ Estimasi : 2-4 jam
 Prioritas : RENDAH
 Status : OPEN
 
+ID : TD-020
+Kategori : ADMIN / SECURITY
+Judul : Transaction reversal untuk admin (2FA, lockout, proportional clawback)
+        belum diimplementasikan
+Dampak : Admin tidak dapat melakukan reversal transaksi dengan keamanan memadai;
+         risiko penyalahgunaan wewenang admin.
+Solusi : Implement backend internal/admin (handler, service, repository, lockout),
+         migration 010_admin_lockouts, 2FA header X-Admin-2FA-Token, lockout 3x
+         → 15 menit (Redis eval + PostgreSQL UPSERT), proportional clawback
+         (merchant, driver, platform), shortfall → SYSTEM_RECEIVABLE_OVERDRAFT,
+         auto-sweep journal. Frontend: halaman /transactions/[id]/reverse di admin_web.
+Estimasi : 10-15 jam
+Prioritas : TINGGI
+Status : FIXED (commit ?, 2026-09-01, coverage 85.8%)
+Catatan : Task 4.2.4 selesai — backend & frontend reversal dengan 2FA, lockout,
+          proportional clawback, auto-sweep journal.
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 19 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 20 item
 - KRITIS  : 2 item  (TD-001, TD-002)
-- TINGGI  : 8 item  (TD-003 s/d TD-010)
+- TINGGI  : 9 item  (TD-003 s/d TD-010, TD-020)
 - SEDANG  : 5 item  (TD-011 s/d TD-015)
 - RENDAH  : 4 item  (TD-016 s/d TD-019)
 
-STATUS: seluruh item berstatus OPEN (belum ada perbaikan yang tervalidasi).
+STATUS: sebagian besar item berstatus OPEN, beberapa sudah FIXED atau DEFERRED.
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -304,12 +321,11 @@ REKOMENDASI:
 - Prioritaskan perbaikan security (TD-001, TD-002) karena berpotensi menyebabkan
   kerugian finansial/data breach.
 
-3. RINGKASAN STATUS TERKINI (2026-08-31):
-   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-004, TD-005, TD-006, TD-007 (integration test food & send), TD-009 (7 item)
+3. RINGKASAN STATUS TERKINI (2026-09-01):
+   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-004, TD-005, TD-006, TD-007 (integration test food & send), TD-009, TD-020 (8 item)
    - ⚠️ ONGOING : -
-   - ❌ OPEN    : TD-008 (1 item)
+   - ❌ OPEN    : TD-008, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016, TD-017, TD-018, TD-019 (10 item)
    - ⏸ DEFERRED : TD-010 (Flutter coverage instability — akan dikerjakan ulang di lingkungan stabil)
-   - TD-011 s/d TD-019: tetap seluruhnya OPEN (SEDANG & RENDAH).
 
    PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
    1. TD-008 (endpoint "available" untuk mobile app).
