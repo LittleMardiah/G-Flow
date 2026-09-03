@@ -1208,3 +1208,34 @@ Apa yang dilakukan:
 - Unit test coverage: 85.8%.
 
 Referensi: docs/ROADMAP 04 HARDENING DEPLOY.txt (Section 4.2.4)
+
+================================================================================
+=== TASK 4.4 & 4.5 - DOCUMENTATION & FINAL POLISH (COMPLETED) ===
+================================================================================
+Status: ✅ SELESAI (2026-09-03)
+
+Apa yang dilakukan:
+1. 4.4 Documentation:
+   - OpenAPI spec & API Reference lengkap.
+   - Deployment Guide (laptop + ngrok) — aplikasi dapat diakses publik via
+     laptop+ngrok, deployment guide siap.
+   - 4 User Guides (Customer, Driver, Merchant, Admin).
+   - README update.
+2. 4.5 Contingency & Final Polish:
+   - Smoke test integrasi: go test -tags integration -p 1 ./internal/... → 7/7 PASS.
+   - Unit test: go test ./... → ALL PASS.
+   - go mod tidy & go mod verify → SUCCESS.
+
+Hasil Verifikasi:
+- ✅ Smoke test integration (go test -tags integration -p 1 ./internal/...) → 7/7 PASS.
+- ✅ Unit test (go test ./...) → ALL PASS.
+- ✅ go mod tidy & go mod verify → SUCCESS.
+
+Commit final:
+- '90527f4 feat(final): resolve all remaining technical debts (TD-011 to TD-019)
+  and complete Roadmap 04'
+
+Referensi:
+- docs/ROADMAP 04 HARDENING DEPLOY.txt (Sections 4.4 & 4.5)
+
+Status: ✅ ROADMAP 04 100% COMPLETE. SIAP UNTUK LIVE DEMO ATAU VIDEO PORTOFOLIO.

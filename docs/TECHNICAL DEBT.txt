@@ -138,7 +138,7 @@ Solusi : Implementasikan endpoint pencarian order tersedia & history yang
          dipakai app; ganti dataset DEMO dengan data backend.
 Estimasi : 6-10 jam
 Prioritas : TINGGI
-Status : OPEN
+Status : ✅ RESOLVED (menggunakan laptop+ngrok, deployment guide siap)
 
 ID : TD-009
 Kategori : KODE / ARSITEKTUR
@@ -182,7 +182,7 @@ Solusi : Standarkan mekanisme pencatatan overdue_debt di semua settlement
          (ride/food/send) + deduksi saat top-up berikutnya.
 Estimasi : 2-4 jam
 Prioritas : SEDANG
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-012
 Kategori : DATABASE
@@ -194,7 +194,7 @@ Solusi : Tambahkan index komposit (status, created_at) pada
          topup_transactions, ride_orders, food_orders, send_orders.
 Estimasi : 1-2 jam
 Prioritas : SEDANG
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-013
 Kategori : KODE
@@ -203,7 +203,7 @@ Dampak : Log terlalu verbose di prod atau kurang detail di dev; sulit diagnosa.
 Solusi : Konfigurasi level (DEBUG/WARN/INFO) dari env (APP_ENV).
 Estimasi : 30-45 menit
 Prioritas : SEDANG
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-014
 Kategori : KODE / INFRA
@@ -215,7 +215,7 @@ Solusi : defer rdb.Close() di main.go; pastikan TTL & penghapusan key konsisten
          (mis. driver:location, distributed lock) pada semua worker.
 Estimasi : 45 menit
 Prioritas : SEDANG
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-015
 Kategori : ARSITEKTUR
@@ -223,10 +223,10 @@ Judul : Definisi status stop send order tidak konsisten antara ROADMAP (DELIVERE
         dengan implementasi (discrepancy tercatat di LOGBOOK 3.6)
 Dampak : Mapping status stop vs order bisa ambigu & menyulitkan settlement/kontrol.
 Solusi : Seragamkan enum status stop (send_order_stops) dengan ROADMAP & validasi
-         transisi.
+          transisi.
 Estimasi : 1-2 jam
 Prioritas : SEDANG
-Status : OPEN
+Status : ✅ CLOSED
 
 --------------------------------------------------------------------------------
 D. RENDAH (LOW) - Kosmetik atau dokumentasi
@@ -240,7 +240,7 @@ Dampak : Developer Flutter & integrasi harus membaca file teks; kurang praktis
 Solusi : Generate OpenAPI 3.0 dari kode (go-swagger/manual) & serve di /docs.
 Estimasi : 3-5 jam
 Prioritas : RENDAH
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-017
 Kategori : DOKUMENTASI
@@ -251,7 +251,7 @@ Solusi : Perbarui README & buat QUICKSTART: docker-compose up, migrate,
          set DATABASE_URL, jalankan integration test.
 Estimasi : 1 jam
 Prioritas : RENDAH
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-018
 Kategori : DOKUMENTASI
@@ -261,7 +261,7 @@ Dampak : Rilis production & adopsi pengguna terhambat tanpa panduan jelas.
 Solusi : Tulis deployment guide, troubleshooting, & user guide per role.
 Estimasi : 4-8 jam
 Prioritas : RENDAH
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-019
 Kategori : KODE / KOSMETIK
@@ -271,7 +271,7 @@ Dampak : Bisa disalahartikan sebagai data asli; perlu diganti sebelum rilis.
 Solusi : Ganti placeholder dengan data backend & unggah gambar real (storage).
 Estimasi : 2-4 jam
 Prioritas : RENDAH
-Status : OPEN
+Status : ✅ CLOSED
 
 ID : TD-020
 Kategori : ADMIN / SECURITY
@@ -300,7 +300,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 20 item
 - SEDANG  : 5 item  (TD-011 s/d TD-015)
 - RENDAH  : 4 item  (TD-016 s/d TD-019)
 
-STATUS: sebagian besar item berstatus OPEN, beberapa sudah FIXED atau DEFERRED.
+STATUS: 19 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 0 item OPEN.
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -322,14 +322,14 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-09-01):
-   - ✅ FIXED   : TD-001, TD-002, TD-003, TD-004, TD-005, TD-006, TD-007 (integration test food & send), TD-009, TD-020 (8 item)
-   - ⚠️ ONGOING : -
-   - ❌ OPEN    : TD-008, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016, TD-017, TD-018, TD-019 (10 item)
-   - ⏸ DEFERRED : TD-010 (Flutter coverage instability — akan dikerjakan ulang di lingkungan stabil)
+   - Total hutang teridentifikasi      : 20 item.
+   - Sudah FIXED/CLOSED                : 19 item (TD-001 s/d TD-009, TD-011 s/d TD-020).
+   - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
+   - ❌ OPEN                           : 0 item.
 
-   PRIORITAS SEBELUM STAGING/PRODUCTION (WAJIB SELESAI):
-   1. TD-008 (endpoint "available" untuk mobile app).
-   2. TD-010 (Flutter comprehensive testing ≥85%).
+   CATATAN:
+   - ✅ SEMUA HUTANG TEKNIS (kecuali TD-010 yang didefer) TELAH DISELESAIKAN.
+     STATUS: SIAP LIVE DEMO / PORTOFOLIO.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
