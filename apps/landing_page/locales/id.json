@@ -10,19 +10,11 @@
     "toggleLang": "Ganti bahasa"
   },
   "hero": {
-    "badge": "Super App untuk Semua Kebutuhan",
-    "title1": "Satu Aplikasi.",
-    "title2": "Semua yang Kamu Butuhkan.",
-    "titleAccent": "Semua yang Kamu Butuhkan.",
-    "subtitle": "G-Flow menghadirkan ride-hailing, pesan-antar makanan, kirim paket, dan dompet digital dalam satu ekosistem yang mulus, cepat, dan aman dibangun dengan Go, Flutter, dan lebih banyak lagi.",
+    "badge": "v1.0 — Portfolio Project",
+    "title": "Super App untuk Semua Kebutuhan",
+    "subtitle": "Satu ekosistem terintegrasi untuk ride, food, send, dan wallet — cepat, aman, dan nyaman digunakan.",
     "demo": "Lihat Demo",
-    "github": "GitHub Repo",
-    "statServices": "Layanan Inti",
-    "statUptime": "Uptime",
-    "statLanguages": "App Seluler",
-    "statValueServices": "4",
-    "statValueUptime": "99.9%",
-    "statValueLanguages": "3"
+    "github": "GitHub Repo"
   },
   "features": {
     "badge": "Fitur",
@@ -48,7 +40,21 @@
   "screenshots": {
     "badge": "Aplikasi",
     "title": "Lihat Aplikasi dalam Aksi",
-    "subtitle": "Cuplikan dari aplikasi pelanggan G-Flow di berbagai perangkat."
+    "subtitle": "Cuplikan dari aplikasi pelanggan G-Flow di berbagai perangkat.",
+    "items": {
+      "home": {
+        "title": "Beranda",
+        "desc": "Semua layanan — ride, food, send, dan wallet — dalam satu layar."
+      },
+      "ride": {
+        "title": "G-Ride",
+        "desc": "Pesan kendaraan dan pantau pengemudi secara real-time."
+      },
+      "food": {
+        "title": "G-Food",
+        "desc": "Jelajahi merchant dan pesan makanan favoritmu."
+      }
+    }
   },
   "tech": {
     "badge": "Teknologi",
@@ -80,28 +86,32 @@
     "title": "Apa Kata Pengguna",
     "subtitle": "Kesan dari pengguna yang mencoba ekosistem G-Flow.",
     "t1": {
+      "initials": "RK",
       "name": "Rina Kartika",
       "role": "Pengguna Harian",
       "quote": "Pindah antar layanan tanpa keluar dari aplikasi terasa luar biasa mulus. Pembayarannya juga cepat banget."
     },
     "t2": {
+      "initials": "BS",
       "name": "Budi Santoso",
       "role": "Pengemudi",
       "quote": "Order masuk rapi dan estimasi pendapatan jelas. Fitur multi-stop bikin penghasilan saya naik."
     },
     "t3": {
+      "initials": "SP",
       "name": "Sinta Puspita",
       "role": "Pemilik Merchant",
       "quote": "Dashboard merchant sangat membantu. Pesanan dan laporan penjualan tersaji real-time dan mudah dipahami."
     }
   },
   "cta": {
-    "title": "Tertarik melihat kode?",
-    "subtitle": "Jelajahi source code, dokumentasi API, dan arsitektur lengkap G-Flow di GitHub.",
-    "github": "Kunjungi GitHub",
-    "demo": "Lihat Demo"
+    "title": "Siap Membangun Bersama?",
+    "subtitle": "Lihat kode di GitHub atau hubungi saya untuk diskusi lebih lanjut.",
+    "github": "GitHub",
+    "contact": "Hubungi Saya"
   },
   "footer": {
+    "social": "Ikuti",
     "desc": "Ekosistem super-app: G-Ride, G-Food, G-Send, dan PayPulse — dibangun dengan Go dan Flutter.",
     "rights": "Hak cipta © {year} G-Flow. Seluruh hak cipta dilindungi.",
     "madeWith": "Dibangun dengan Go, Flutter & Next.js"

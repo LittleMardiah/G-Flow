@@ -10,19 +10,11 @@
     "toggleLang": "Switch language"
   },
   "hero": {
-    "badge": "Super App for Everything",
-    "title1": "One App.",
-    "title2": "Everything You Need.",
-    "titleAccent": "Everything You Need.",
-    "subtitle": "G-Flow brings ride-hailing, food delivery, package courier, and digital wallet into one seamless, fast, and secure ecosystem built with Go, Flutter, and more.",
+    "badge": "v1.0 — Portfolio Project",
+    "title": "Super App for Everything You Need",
+    "subtitle": "One integrated ecosystem for ride, food, send, and wallet — fast, secure, and effortless to use.",
     "demo": "View Demo",
-    "github": "GitHub Repo",
-    "statServices": "Core Services",
-    "statUptime": "Uptime",
-    "statLanguages": "Mobile Apps",
-    "statValueServices": "4",
-    "statValueUptime": "99.9%",
-    "statValueLanguages": "3"
+    "github": "GitHub Repo"
   },
   "features": {
     "badge": "Features",
@@ -48,7 +40,21 @@
   "screenshots": {
     "badge": "The App",
     "title": "See the App in Action",
-    "subtitle": "Screenshots of the G-Flow customer app across devices."
+    "subtitle": "Screenshots of the G-Flow customer app across devices.",
+    "items": {
+      "home": {
+        "title": "Home",
+        "desc": "Every service — ride, food, send, and wallet — on a single screen."
+      },
+      "ride": {
+        "title": "G-Ride",
+        "desc": "Book a ride and track your driver in real time."
+      },
+      "food": {
+        "title": "G-Food",
+        "desc": "Explore merchants and order your favorite meals."
+      }
+    }
   },
   "tech": {
     "badge": "Technology",
@@ -80,28 +86,32 @@
     "title": "What Users Say",
     "subtitle": "Impressions from people who tried the G-Flow ecosystem.",
     "t1": {
+      "initials": "RK",
       "name": "Rina Kartika",
       "role": "Daily User",
       "quote": "Switching between services without leaving the app feels incredibly smooth. Payments are really fast too."
     },
     "t2": {
+      "initials": "BS",
       "name": "Budi Santoso",
       "role": "Driver",
       "quote": "Orders come in neatly and earnings are clearly estimated. Multi-stop features boosted my income."
     },
     "t3": {
+      "initials": "SP",
       "name": "Sinta Puspita",
       "role": "Merchant Owner",
       "quote": "The merchant dashboard is very helpful. Orders and sales reports are real-time and easy to understand."
     }
   },
   "cta": {
-    "title": "Interested in the code?",
-    "subtitle": "Explore the source code, API docs, and full G-Flow architecture on GitHub.",
-    "github": "Go to GitHub",
-    "demo": "View Demo"
+    "title": "Ready to Build Together?",
+    "subtitle": "Check the code on GitHub or contact me for further discussion.",
+    "github": "GitHub",
+    "contact": "Contact Me"
   },
   "footer": {
+    "social": "Follow",
     "desc": "Super-app ecosystem: G-Ride, G-Food, G-Send, and PayPulse — built with Go and Flutter.",
     "rights": "Copyright © {year} G-Flow. All rights reserved.",
     "madeWith": "Built with Go, Flutter & Next.js"

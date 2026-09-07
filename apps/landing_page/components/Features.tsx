@@ -1,30 +1,30 @@
 "use client";
 
-import { Car, UtensilsCrossed, Package, Wallet } from "lucide-react";
+import { RideIcon, FoodIcon, SendIcon, WalletIcon } from "@/components/icons";
 import { Reveal } from "@/components/Reveal";
 import { useLang } from "@/app/i18n/config";
 
 const FEATURES = [
-  { key: "ride", icon: Car },
-  { key: "food", icon: UtensilsCrossed },
-  { key: "send", icon: Package },
-  { key: "wallet", icon: Wallet },
+  { key: "ride", icon: RideIcon },
+  { key: "food", icon: FoodIcon },
+  { key: "send", icon: SendIcon },
+  { key: "wallet", icon: WalletIcon },
 ] as const;
 
 export default function Features() {
   const { t } = useLang();
 
   return (
-    <section id="fitur" className="py-24">
+    <section id="fitur" className="py-24 lg:py-28">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <Reveal className="mx-auto max-w-2xl text-center">
-          <span className="text-xs font-bold uppercase tracking-widest text-accent">
+          <span className="text-xs font-bold uppercase tracking-widest text-secondary-dark">
             {t("features.badge")}
           </span>
-          <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-neutral-900 sm:text-4xl">
+          <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-text-primary sm:text-4xl">
             {t("features.title")}
           </h2>
-          <p className="mt-4 text-base leading-relaxed text-neutral-600 sm:text-lg">
+          <p className="mt-4 text-base leading-relaxed text-text-support sm:text-lg">
             {t("features.subtitle")}
           </p>
         </Reveal>
@@ -34,14 +34,14 @@ export default function Features() {
             const Icon = feature.icon;
             return (
               <Reveal delay={0.08 * i} key={feature.key}>
-                <article className="group h-full rounded-2xl border border-neutral-200 bg-white p-7 shadow-sm transition duration-300 hover:-translate-y-1.5 hover:border-primary/30 hover:shadow-xl hover:shadow-primary/10">
-                  <div className="flex h-13 w-13 items-center justify-center rounded-2xl bg-primary-50 p-3 text-primary transition-colors duration-300 group-hover:bg-primary group-hover:text-white">
-                    <Icon className="h-7 w-7" strokeWidth={1.8} />
+                <article className="group h-full rounded-card border border-neutral-200 bg-white p-7 shadow-sm transition duration-300 hover:scale-[1.02] hover:border-secondary/40 hover:shadow-soft">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors duration-300 group-hover:bg-primary group-hover:text-white">
+                    <Icon className="h-6 w-6" />
                   </div>
-                  <h3 className="mt-5 text-xl font-bold text-neutral-900">
+                  <h3 className="mt-5 text-lg font-bold text-text-primary">
                     {t(`features.${feature.key}.title`)}
                   </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-neutral-600">
+                  <p className="mt-3 text-sm leading-relaxed text-text-support">
                     {t(`features.${feature.key}.desc`)}
                   </p>
                 </article>
