@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "beranda": "Beranda",
+    "fitur": "Fitur",
+    "teknologi": "Teknologi",
+    "aplikasi": "Aplikasi",
+    "kontak": "Kontak",
+    "demo": "Lihat Demo",
+    "menu": "Menu navigasi",
+    "toggleLang": "Ganti bahasa"
+  },
+  "hero": {
+    "badge": "Super App untuk Semua Kebutuhan",
+    "title1": "Satu Aplikasi.",
+    "title2": "Semua yang Kamu Butuhkan.",
+    "titleAccent": "Semua yang Kamu Butuhkan.",
+    "subtitle": "G-Flow menghadirkan ride-hailing, pesan-antar makanan, kirim paket, dan dompet digital dalam satu ekosistem yang mulus, cepat, dan aman dibangun dengan Go, Flutter, dan lebih banyak lagi.",
+    "demo": "Lihat Demo",
+    "github": "GitHub Repo",
+    "statServices": "Layanan Inti",
+    "statUptime": "Uptime",
+    "statLanguages": "App Seluler",
+    "statValueServices": "4",
+    "statValueUptime": "99.9%",
+    "statValueLanguages": "3"
+  },
+  "features": {
+    "badge": "Fitur",
+    "title": "Empat Layanan, Satu Ekosistem",
+    "subtitle": "Didesain sebagai modular monolith dengan API terpadu, setiap fitur berjalan cepat dan dapat diandalkan.",
+    "ride": {
+      "title": "G-Ride",
+      "desc": "Pesan kendaraan dalam hitungan detik dengan penjadwalan pengemudi real-time dan penanganan pembatalan yang andal."
+    },
+    "food": {
+      "title": "G-Food",
+      "desc": "Pesan makanan dari merchant favoritmu dengan penyelesaian pembayaran 4 arah yang aman antara pelanggan, merchant, dan pengemudi."
+    },
+    "send": {
+      "title": "G-Send",
+      "desc": "Kirim paket instan dengan rute multi-stop, pelacakan lokasi pengemudi real-time, dan pembagian pembayaran 3 arah."
+    },
+    "wallet": {
+      "title": "PayPulse",
+      "desc": "Dompet digital dengan pencatatan buku besar (ledger) ganda, top-up, transfer instan, dan keamanan JWT + RBAC."
+    }
+  },
+  "screenshots": {
+    "badge": "Aplikasi",
+    "title": "Lihat Aplikasi dalam Aksi",
+    "subtitle": "Cuplikan dari aplikasi pelanggan G-Flow di berbagai perangkat."
+  },
+  "tech": {
+    "badge": "Teknologi",
+    "title": "Dibangun di Atas Teknologi Modern",
+    "subtitle": "Stack yang tangguh dan scalable dari backend hingga aplikasi seluler.",
+    "go": {
+      "name": "Go",
+      "desc": "Backend modular monolith berperforma tinggi dengan Gin, JWT, dan graceful shutdown."
+    },
+    "flutter": {
+      "name": "Flutter",
+      "desc": "Aplikasi pelanggan, pengemudi, dan merchant lintas-platform dalam satu basis kode."
+    },
+    "next": {
+      "name": "Next.js",
+      "desc": "Framework React untuk panel admin dan halaman web yang cepat, SEO-friendly."
+    },
+    "supabase": {
+      "name": "Supabase",
+      "desc": "PostgreSQL terkelola untuk penyimpanan data dan infrastruktur deployment."
+    },
+    "redis": {
+      "name": "Redis",
+      "desc": "Idempotensi, daftar hitam token, dan pelacakan lokasi pengemudi secara real-time."
+    }
+  },
+  "testimonials": {
+    "badge": "Testimoni",
+    "title": "Apa Kata Pengguna",
+    "subtitle": "Kesan dari pengguna yang mencoba ekosistem G-Flow.",
+    "t1": {
+      "name": "Rina Kartika",
+      "role": "Pengguna Harian",
+      "quote": "Pindah antar layanan tanpa keluar dari aplikasi terasa luar biasa mulus. Pembayarannya juga cepat banget."
+    },
+    "t2": {
+      "name": "Budi Santoso",
+      "role": "Pengemudi",
+      "quote": "Order masuk rapi dan estimasi pendapatan jelas. Fitur multi-stop bikin penghasilan saya naik."
+    },
+    "t3": {
+      "name": "Sinta Puspita",
+      "role": "Pemilik Merchant",
+      "quote": "Dashboard merchant sangat membantu. Pesanan dan laporan penjualan tersaji real-time dan mudah dipahami."
+    }
+  },
+  "cta": {
+    "title": "Tertarik melihat kode?",
+    "subtitle": "Jelajahi source code, dokumentasi API, dan arsitektur lengkap G-Flow di GitHub.",
+    "github": "Kunjungi GitHub",
+    "demo": "Lihat Demo"
+  },
+  "footer": {
+    "desc": "Ekosistem super-app: G-Ride, G-Food, G-Send, dan PayPulse — dibangun dengan Go dan Flutter.",
+    "rights": "Hak cipta © {year} G-Flow. Seluruh hak cipta dilindungi.",
+    "madeWith": "Dibangun dengan Go, Flutter & Next.js"
+  }
+}

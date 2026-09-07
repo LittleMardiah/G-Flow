@@ -1,0 +1,109 @@
+{
+  "nav": {
+    "beranda": "Home",
+    "fitur": "Features",
+    "teknologi": "Technology",
+    "aplikasi": "App",
+    "kontak": "Contact",
+    "demo": "View Demo",
+    "menu": "Navigation menu",
+    "toggleLang": "Switch language"
+  },
+  "hero": {
+    "badge": "Super App for Everything",
+    "title1": "One App.",
+    "title2": "Everything You Need.",
+    "titleAccent": "Everything You Need.",
+    "subtitle": "G-Flow brings ride-hailing, food delivery, package courier, and digital wallet into one seamless, fast, and secure ecosystem built with Go, Flutter, and more.",
+    "demo": "View Demo",
+    "github": "GitHub Repo",
+    "statServices": "Core Services",
+    "statUptime": "Uptime",
+    "statLanguages": "Mobile Apps",
+    "statValueServices": "4",
+    "statValueUptime": "99.9%",
+    "statValueLanguages": "3"
+  },
+  "features": {
+    "badge": "Features",
+    "title": "Four Services, One Ecosystem",
+    "subtitle": "Designed as a modular monolith with a unified API, every feature runs fast and reliably.",
+    "ride": {
+      "title": "G-Ride",
+      "desc": "Book a ride in seconds with real-time driver dispatch and reliable cancellation handling."
+    },
+    "food": {
+      "title": "G-Food",
+      "desc": "Order from your favorite merchants with secure 4-way settlement between customers, merchants, and drivers."
+    },
+    "send": {
+      "title": "G-Send",
+      "desc": "Send packages instantly with multi-stop routes, real-time driver tracking, and 3-way payment splits."
+    },
+    "wallet": {
+      "title": "PayPulse",
+      "desc": "Digital wallet with double-entry ledger, instant top-up, transfers, and JWT + RBAC security."
+    }
+  },
+  "screenshots": {
+    "badge": "The App",
+    "title": "See the App in Action",
+    "subtitle": "Screenshots of the G-Flow customer app across devices."
+  },
+  "tech": {
+    "badge": "Technology",
+    "title": "Built on Modern Technology",
+    "subtitle": "A robust, scalable stack from backend to mobile apps.",
+    "go": {
+      "name": "Go",
+      "desc": "High-performance modular monolith backend with Gin, JWT, and graceful shutdown."
+    },
+    "flutter": {
+      "name": "Flutter",
+      "desc": "Cross-platform customer, driver, and merchant apps in a single codebase."
+    },
+    "next": {
+      "name": "Next.js",
+      "desc": "React framework for the admin panel and fast, SEO-friendly web pages."
+    },
+    "supabase": {
+      "name": "Supabase",
+      "desc": "Managed PostgreSQL for data storage and deployment infrastructure."
+    },
+    "redis": {
+      "name": "Redis",
+      "desc": "Idempotency, token blacklist, and real-time driver location tracking."
+    }
+  },
+  "testimonials": {
+    "badge": "Testimonials",
+    "title": "What Users Say",
+    "subtitle": "Impressions from people who tried the G-Flow ecosystem.",
+    "t1": {
+      "name": "Rina Kartika",
+      "role": "Daily User",
+      "quote": "Switching between services without leaving the app feels incredibly smooth. Payments are really fast too."
+    },
+    "t2": {
+      "name": "Budi Santoso",
+      "role": "Driver",
+      "quote": "Orders come in neatly and earnings are clearly estimated. Multi-stop features boosted my income."
+    },
+    "t3": {
+      "name": "Sinta Puspita",
+      "role": "Merchant Owner",
+      "quote": "The merchant dashboard is very helpful. Orders and sales reports are real-time and easy to understand."
+    }
+  },
+  "cta": {
+    "title": "Interested in the code?",
+    "subtitle": "Explore the source code, API docs, and full G-Flow architecture on GitHub.",
+    "github": "Go to GitHub",
+    "demo": "View Demo"
+  },
+  "footer": {
+    "desc": "Super-app ecosystem: G-Ride, G-Food, G-Send, and PayPulse — built with Go and Flutter.",
+    "rights": "Copyright © {year} G-Flow. All rights reserved.",
+    "madeWith": "Built with Go, Flutter & Next.js"
+  }
+}
