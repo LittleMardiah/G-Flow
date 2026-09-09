@@ -1,7 +1,17 @@
 ﻿# Env files
 .env
 .env.local
+.env.development
+.env.test
+.env.production
 .env.*.local
+
+# Secrets & sensitive docs
+docs/DATABASE SUPABASE PASSWORD G-FLOW.txt
+docs/**/*PASSWORD*
+*.pem
+*.key
+api.exe
 
 # Logs & coverage
 logs/
@@ -44,3 +54,4 @@ packages/*/.dart_tool/
 
 # OpenCode cache
 .cache/
+.vercel

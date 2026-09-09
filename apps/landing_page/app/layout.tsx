@@ -1,23 +1,30 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Space_Grotesk, DM_Sans } from "next/font/google";
 import "./globals.css";
-import { LanguageProvider } from "@/app/i18n/config";
 
-const inter = Inter({
-  variable: "--font-inter",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--gflow-display",
   subsets: ["latin"],
   display: "swap",
+  weight: ["600", "700"],
+});
+
+const dmSans = DM_Sans({
+  variable: "--gflow-body",
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {
-  title: "G-Flow — Super App Ecosystem",
+  title: "G-Flow — Bayar • Pesan • Kirim",
   description:
-    "G-Flow menghadirkan G-Ride, G-Food, G-Send, dan PayPulse dalam satu ekosistem super-app — dibangun dengan Go, Flutter, dan Next.js.",
+    "Akses mobilitas harian, pesan kuliner favorit, antar paket instan, hingga transaksi digital tanpa hambatan dalam satu genggaman aman dan transparan.",
   keywords: ["G-Flow", "super app", "ride-hailing", "food", "wallet", "Go", "Flutter"],
   openGraph: {
-    title: "G-Flow — Super App Ecosystem",
+    title: "G-Flow — Bayar • Pesan • Kirim",
     description:
-      "G-Ride, G-Food, G-Send, dan PayPulse dalam satu ekosistem super-app.",
+      "Satu Aplikasi untuk Semua. Mobilitas, kuliner, kirim paket, hingga transaksi digital.",
     type: "website",
   },
 };
@@ -28,10 +35,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id" className={`${inter.variable}`}>
-      <body className="min-h-full antialiased">
-        <LanguageProvider>{children}</LanguageProvider>
-      </body>
+    <html lang="id" className={`dark ${spaceGrotesk.variable} ${dmSans.variable}`}>
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="min-h-full antialiased">{children}</body>
     </html>
   );
 }

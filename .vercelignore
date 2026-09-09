@@ -1,0 +1,30 @@
+# Static deploy only serves root index.html.
+# Ignore non-web content from the monorepo, keeping apps/landing_page available.
+api.exe
+*.exe
+*.o
+*.out
+*.cover
+cover*
+coverage*
+auth_cover*
+wallet_cover*
+zzz
+.funcs.txt
+funcs.txt
+final_progress.log
+.env
+.env.*
+.git
+.vercel
+apps/customer_app
+apps/driver_app
+apps/merchant_app
+cmd
+migrations
+scripts
+docs
+internal
+logs
+node_modules
+*.log
