@@ -5,16 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 
-import '../lib/services/api_client.dart';
-import '../lib/services/food_order_service.dart';
-import '../lib/services/merchant_service.dart';
-import '../lib/services/ride_service.dart';
-import '../lib/services/send_order_service.dart';
+import 'package:customer_app/services/api_client.dart';
+import 'package:customer_app/services/food_order_service.dart';
+import 'package:customer_app/services/merchant_service.dart';
+import 'package:customer_app/services/ride_service.dart';
+import 'package:customer_app/services/send_order_service.dart';
 
 /// Fake base class (pengganti mockito) agar test tidak butuh dev dependency
 /// mockito. Semua method default melempar UnimplementedError; subclass cukup
 /// meng-override yang dibutuhkan.
 abstract class Fake {
+  @override
   NoSuchMethodError noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName} not implemented');
 }

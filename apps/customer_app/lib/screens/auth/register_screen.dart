@@ -36,6 +36,7 @@ class RegisterScreen extends ConsumerWidget {
                   'password': passController.text,
                   'user_type': 'customer',
                 });
+                if (!context.mounted) return;
                 if (auth.error == null) {
                   Navigator.pop(context);
                 }

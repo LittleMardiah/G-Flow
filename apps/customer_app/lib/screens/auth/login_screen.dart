@@ -34,17 +34,17 @@ class LoginScreen extends ConsumerWidget {
               if (auth.error != null) Text(auth.error!, style: const TextStyle(color: Colors.red)),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: auth.isLoading ? null : () async {
-                  if (emailController.text.trim().isEmpty || passController.text.isEmpty) {
-                    ref.read(authProvider.notifier).state = ref.read(authProvider.notifier).state.copyWith(
-                      error: 'Email dan password wajib diisi'
+onPressed: auth.isLoading ? null : () async {
+                  final email = emailController.text.trim();
+                  final pass = passController.text;
+                  if (email.isEmpty || pass.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Email dan password wajib diisi')),
                     );
                     return;
                   }
-                  await ref.read(authProvider.notifier).login(
-                    emailController.text.trim(),
-                    passController.text,
-                  );
+                  await ref.read(authProvider.notifier).login(email, pass);
+                  if (!context.mounted) return;
                   if (ref.read(authProvider).isAuthenticated) {
                     Navigator.pushReplacementNamed(context, '/home');
                   }
