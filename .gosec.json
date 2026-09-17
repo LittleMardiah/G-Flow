@@ -1,0 +1,10 @@
+{
+  "exclude": [
+    "G104",
+    "G304"
+  ],
+  "severity": "medium",
+  "confidence": "medium",
+  "nosec": false,
+  "tests": false
+}
