@@ -1,23 +1,46 @@
-﻿# Env files
+﻿# Env & Secrets
 .env
-.env.local
-.env.development
-.env.test
-.env.production
-.env.*.local
-
-# Secrets & sensitive docs
-docs/DATABASE SUPABASE PASSWORD G-FLOW.txt
-docs/**/*PASSWORD*
+.env.*
+!.env.example
 *.pem
 *.key
+docs/*PASSWORD*
+docs/**/*PASSWORD*
+
+# Binary
+*.exe
 api.exe
 
-# Logs & coverage
-logs/
+# Coverage & Test Artifacts
+*.out
+*_cover*
+coverage*
+cover*
+zzz
+funcs.txt
+*.bak
+*.original
+
+# Logs
 *.log
-coverage.out
-*.cover
+logs/
+final_progress.log
+
+# Prompt & temporary
+prompt*.txt
+prompt_*.txt
+
+# Build artifacts
+apps/*/build/
+apps/*/.next/
+apps/*/node_modules/
+apps/*/coverage/
+apps/*/.dart_tool/
+**/node_modules/
+**/.next/
+
+# Vercel
+.vercel
 
 # OS & IDE
 .DS_Store
@@ -26,32 +49,7 @@ Thumbs.db
 .idea/
 *.iml
 
-# Build output
-build/
-dist/
-*.exe
-*.dll
-*.so
-*.dylib
-node_modules/
-.terraform/
-*.apk
-
 # Backend Go
 vendor/
 *.test
-*.mod
-*.sum
-coverage.out
 profiler/
-
-# Flutter
-apps/*/build/
-apps/*/.dart_tool/
-apps/*/pubspec.lock
-packages/*/build/
-packages/*/.dart_tool/
-
-# OpenCode cache
-.cache/
-.vercel

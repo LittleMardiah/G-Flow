@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="id"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&amp;family=DM+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+          "text-primary": "#fafafa",
+          "surface-container-lowest": "#0e0e10",
+          "primary-fixed-dim": "#ffb874",
+          "on-surface-variant": "#dbc2ad",
+          "inverse-primary": "#8c5000",
+          "on-secondary-fixed-variant": "#47464a",
+          "on-secondary": "#303033",
+          "on-tertiary-fixed": "#001e2d",
+          "surface-container-high": "#2a2a2c",
+          "primary-fixed": "#ffdcbf",
+          "on-tertiary-container": "#004764",
+          "primary": "#ffbd7f",
+          "surface-container": "#201f22",
+          "surface-bright": "#39393b",
+          "surface-tint": "#ffb874",
+          "tertiary-container": "#00bbfe",
+          "text-muted": "#71717a",
+          "zinc-glow": "rgba(39, 39, 42, 0.35)",
+          "on-error-container": "#ffdad6",
+          "secondary-fixed": "#e4e1e6",
+          "tertiary-fixed": "#c5e7ff",
+          "accent-glow": "rgba(255, 149, 0, 0.15)",
+          "on-primary-fixed-variant": "#6a3b00",
+          "secondary": "#c8c5ca",
+          "surface-elevated": "#18181b",
+          "on-secondary-fixed": "#1b1b1e",
+          "on-primary-fixed": "#2d1600",
+          "on-tertiary-fixed-variant": "#004c6a",
+          "border-hover": "rgba(255, 149, 0, 0.4)",
+          "on-background": "#e5e1e4",
+          "on-secondary-container": "#b7b4b8",
+          "text-secondary": "#a1a1aa",
+          "on-primary": "#4b2800",
+          "inverse-on-surface": "#313032",
+          "on-surface": "#e5e1e4",
+          "accent-soft": "rgba(255, 149, 0, 0.08)",
+          "outline-variant": "#554334",
+          "on-error": "#690005",
+          "surface-container-highest": "#353437",
+          "secondary-container": "#47464a",
+          "success-dot": "#22c55e",
+          "error-container": "#93000a",
+          "tertiary-fixed-dim": "#7fd0ff",
+          "surface-variant": "#353437",
+          "on-tertiary": "#00344a",
+          "on-primary-container": "#643700",
+          "secondary-fixed-dim": "#c8c5ca",
+          "surface-container-low": "#1c1b1d",
+          "outline": "#a38d7a",
+          "surface": "#121215",
+          "error": "#ffb4ab",
+          "tertiary": "#8ad3ff",
+          "inverse-surface": "#e5e1e4",
+          "surface-dim": "#131315",
+          "background": "#131315",
+          "primary-container": "#ff9500",
+          "border-subtle": "#27272a"
+        },
+        "borderRadius": {
+          "DEFAULT": "0.25rem",
+          "lg": "0.5rem",
+          "xl": "0.75rem",
+          "full": "9999px"
+        },
+        "spacing": {
+          "card-padding": "1.5rem",
+          "max-width": "1240px",
+          "gutter-mobile": "1rem",
+          "section-padding-desktop": "7rem",
+          "gutter-desktop": "2rem",
+          "section-padding-mobile": "5rem"
+        },
+        "fontFamily": {
+          "headline-md-mobile": [
+            "Space Grotesk"
+          ],
+          "headline-lg-mobile": [
+            "Space Grotesk"
+          ],
+          "label-sm": [
+            "DM Sans"
+          ],
+          "headline-md": [
+            "Space Grotesk"
+          ],
+          "display-hero": [
+            "Space Grotesk"
+          ],
+          "display-hero-mobile": [
+            "Space Grotesk"
+          ],
+          "headline-lg": [
+            "Space Grotesk"
+          ],
+          "body-sm": [
+            "DM Sans"
+          ],
+          "body-lg": [
+            "DM Sans"
+          ],
+          "label-md": [
+            "DM Sans"
+          ],
+          "body-base": [
+            "DM Sans"
+          ]
+        },
+        "fontSize": {
+          "headline-md-mobile": [
+            "20px",
+            {
+              "lineHeight": "28px",
+              "letterSpacing": "-0.01em",
+              "fontWeight": "600"
+            }
+          ],
+          "headline-lg-mobile": [
+            "28px",
+            {
+              "lineHeight": "34px",
+              "letterSpacing": "-0.02em",
+              "fontWeight": "700"
+            }
+          ],
+          "label-sm": [
+            "11px",
+            {
+              "lineHeight": "14px",
+              "letterSpacing": "0.04em",
+              "fontWeight": "500"
+            }
+          ],
+          "headline-md": [
+            "24px",
+            {
+              "lineHeight": "32px",
+              "letterSpacing": "-0.02em",
+              "fontWeight": "600"
+            }
+          ],
+          "display-hero": [
+            "56px",
+            {
+              "lineHeight": "64px",
+              "letterSpacing": "-0.03em",
+              "fontWeight": "700"
+            }
+          ],
+          "display-hero-mobile": [
+            "36px",
+            {
+              "lineHeight": "42px",
+              "letterSpacing": "-0.02em",
+              "fontWeight": "700"
+            }
+          ],
+          "headline-lg": [
+            "40px",
+            {
+              "lineHeight": "48px",
+              "letterSpacing": "-0.02em",
+              "fontWeight": "700"
+            }
+          ],
+          "body-sm": [
+            "14px",
+            {
+              "lineHeight": "20px",
+              "letterSpacing": "0em",
+              "fontWeight": "400"
+            }
+          ],
+          "body-lg": [
+            "18px",
+            {
+              "lineHeight": "28px",
+              "letterSpacing": "-0.01em",
+              "fontWeight": "400"
+            }
+          ],
+          "label-md": [
+            "12px",
+            {
+              "lineHeight": "16px",
+              "letterSpacing": "0.02em",
+              "fontWeight": "500"
+            }
+          ],
+          "body-base": [
+            "16px",
+            {
+              "lineHeight": "24px",
+              "letterSpacing": "0em",
+              "fontWeight": "400"
+            }
+          ]
+        }
+      },
+    },
+  };</script></head><body class="bg-background font-body-base text-body-base text-on-surface antialiased selection:bg-primary-container selection:text-on-primary"><header class="fixed top-0 left-0 right-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border-subtle"><div class="h-16 max-w-[1240px] mx-auto px-gutter-mobile lg:px-gutter-desktop flex items-center justify-between gap-4"><div class="flex items-center gap-3 shrink-0"><img alt="G-Flow Logo" class="h-8 w-auto object-contain" src="https://lh3.googleusercontent.com/aida/AEtjO1UYd-O4dIpoTbnqJRisOxSz9XI1siLRcBC4Sa2C2Hcur4bWJMsjIOfNyA6ARfT3n1gkWngJJH18KwMcAi977N2uss62CmZuHQUYDp9t74iHRhZIYiEaY7RjF03yIZtiYi4D1SNptj6RA8OKHmR-t-6yFqJTJZJxRqZz7i8qisyP3JJL4JB7DhjDHQuEOK8yZYlm4ZqX26smCQdH29Vbot2KIVxPQwUcjcU0lomw3iNbZ9sFPpSqtiR2jhh_"/><span class="font-headline-md text-headline-md text-text-primary tracking-tight">G-Flow</span><div class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-elevated border border-border-subtle"><span class="w-1.5 h-1.5 rounded-full bg-success-dot"></span><span class="font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">Ecosystem</span></div></div><nav class="hidden md:flex items-center gap-8" data-active-classes="text-text-primary font-medium"><a aria-current="page" class="transition-colors text-text-primary font-medium" data-path="beranda" href="#beranda">Beranda</a><a class="font-body-sm text-body-sm text-text-secondary hover:text-text-primary transition-colors" data-path="layanan" href="#layanan">Layanan</a><a class="font-body-sm text-body-sm text-text-secondary hover:text-text-primary transition-colors" data-path="mitra" href="#mitra">Mitra</a><a class="font-body-sm text-body-sm text-text-secondary hover:text-text-primary transition-colors" data-path="kontak" href="#kontak">Kontak</a></nav><div class="flex items-center gap-3 shrink-0"><a class="inline-flex items-center justify-center px-5 py-2.5 rounded-full bg-primary-container text-surface-container-lowest font-label-md text-label-md font-semibold tracking-tight hover:opacity-90 transition-all shadow-[0_4px_16px_rgba(255,149,0,0.25)]" data-path="unduh" href="#unduh">Unduh Aplikasi</a><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-16 bg-background"><div class="flex flex-col w-full">
+<!-- SECTION HERO (#beranda) -->
+<section class="relative w-full overflow-hidden border-b border-border-subtle bg-surface-container-lowest" id="beranda">
+<!-- Ambient zinc radial gradient overlay -->
+<div class="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[850px] h-[550px] bg-zinc-glow rounded-full blur-[140px] pointer-events-none opacity-40"></div>
+<div class="absolute -top-24 right-12 w-[320px] h-[320px] bg-accent-glow rounded-full blur-[100px] pointer-events-none"></div>
+<div class="max-w-[1240px] mx-auto px-gutter-mobile lg:px-gutter-desktop pt-16 pb-20 lg:pt-24 lg:pb-32 relative z-10">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-10 items-center">
+<!-- Left Column: Content (7 cols) -->
+<div class="lg:col-span-7 flex flex-col items-start">
+<!-- Live Status Pill Badge -->
+<div class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-surface-elevated border border-border-subtle mb-6">
+<span class="w-2 h-2 rounded-full bg-success-dot animate-pulse"></span>
+<span class="font-label-md text-label-md text-text-secondary tracking-wide">Layanan 24/7 • 2,4 Juta Pengguna</span>
+</div>
+<!-- Hero Headline -->
+<h1 class="font-display-hero text-display-hero-mobile sm:text-display-hero text-text-primary tracking-tight mb-4">
+            Bayar • Pesan • Kirim.<br/>
+<span class="text-text-secondary">Satu Aplikasi untuk Semua.</span>
+</h1>
+<!-- Body Description -->
+<p class="font-body-lg text-body-lg text-text-secondary max-w-xl mb-9">
+            Akses mobilitas harian, pesan kuliner favorit, antar paket instan, hingga transaksi digital tanpa hambatan dalam satu genggaman aman dan transparan.
+          </p>
+<!-- CTAs -->
+<div class="flex flex-wrap items-center gap-4 mb-14">
+<a class="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full bg-primary-container text-surface-container-lowest font-body-base text-body-base font-semibold tracking-tight hover:opacity-90 transition-all duration-200 shadow-[0_8px_24px_rgba(255,149,0,0.28)] hover:-translate-y-0.5" href="#layanan">
+<span>Mulai Sekarang</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</a>
+<a class="inline-flex items-center justify-center px-7 py-3.5 rounded-full bg-transparent border border-border-subtle text-text-secondary hover:text-text-primary hover:bg-surface-elevated font-body-base text-body-base transition-all duration-200" href="#layanan">
+              Lihat Layanan
+            </a>
+</div>
+<!-- Social Proof Grid -->
+<div class="w-full pt-8 border-t border-border-subtle grid grid-cols-3 gap-4">
+<div>
+<div class="flex items-center gap-1 text-primary-container mb-1">
+<span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="font-headline-md text-headline-md text-text-primary">4.9</span>
+</div>
+<p class="font-label-sm text-label-sm text-text-muted">App Store • Play Store</p>
+</div>
+<div class="border-l border-border-subtle pl-4 sm:pl-6">
+<span class="block font-headline-md text-headline-md text-text-primary mb-1">2,4M+</span>
+<p class="font-label-sm text-label-sm text-text-muted">Pengguna Aktif Bulanan</p>
+</div>
+<div class="border-l border-border-subtle pl-4 sm:pl-6">
+<span class="block font-headline-md text-headline-md text-text-primary mb-1">99,9%</span>
+<p class="font-label-sm text-label-sm text-text-muted">Sukses Transaksi</p>
+</div>
+</div>
+</div>
+<!-- Right Column: Mockup Trio (5 cols) -->
+<div class="lg:col-span-5 relative flex items-center justify-center min-h-[460px] lg:min-h-[520px] py-4 group">
+<!-- Mockup 1: Back-Left (G-Food Order Card) -->
+<div class="absolute w-[240px] sm:w-[260px] bg-surface rounded-2xl border border-border-subtle p-4 shadow-2xl transition-all duration-500 ease-out transform -rotate-6 -translate-x-16 sm:-translate-x-24 translate-y-3 group-hover:-rotate-3 group-hover:-translate-x-20 z-10">
+<div class="flex items-center justify-between border-b border-border-subtle pb-3 mb-3">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-accent-soft flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[16px]">restaurant</span>
+</div>
+<span class="font-headline-md-mobile text-text-primary text-[13px]">G-Food</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-accent-soft text-primary-container font-label-sm text-[10px]">Dalam Pengantaran</span>
+</div>
+<div class="space-y-2">
+<div class="flex items-center justify-between text-[12px] text-text-primary">
+<span class="font-medium">2x Nasi Bebek Betutu Spesial</span>
+<span class="text-text-muted">Rp 84.000</span>
+</div>
+<div class="w-full bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-primary-container h-full w-3/4 rounded-full"></div>
+</div>
+<div class="flex items-center justify-between text-[11px] text-text-muted pt-1">
+<span>Driver: Budi S. (Honda Beat)</span>
+<span class="text-primary-container font-medium">ETA 6 Menit</span>
+</div>
+</div>
+</div>
+<!-- Mockup 2: Back-Right (G-Send Courier Status) -->
+<div class="absolute w-[240px] sm:w-[260px] bg-surface rounded-2xl border border-border-subtle p-4 shadow-2xl transition-all duration-500 ease-out transform rotate-6 translate-x-16 sm:translate-x-24 translate-y-4 group-hover:rotate-3 group-hover:translate-x-20 z-10">
+<div class="flex items-center justify-between border-b border-border-subtle pb-3 mb-3">
+<div class="flex items-center gap-2">
+<div class="w-7 h-7 rounded-lg bg-accent-soft flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[16px]">local_shipping</span>
+</div>
+<span class="font-headline-md-mobile text-text-primary text-[13px]">G-Send Instant</span>
+</div>
+<span class="font-label-sm text-[10px] text-success-dot flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-success-dot"></span>Terlacak
+              </span>
+</div>
+<div class="rounded-lg bg-surface-container-low p-2.5 mb-2 border border-border-subtle/50">
+<p class="font-label-sm text-[11px] text-text-muted uppercase">Nomor Resi</p>
+<p class="font-mono text-[12px] text-text-primary tracking-wider">GF-92841-JKT</p>
+</div>
+<div class="flex items-center justify-between text-[11px] text-text-secondary">
+<span>Tujuan: SCBD Lot 28</span>
+<span class="text-primary-container font-medium">OTP: 4921</span>
+</div>
+</div>
+<!-- Mockup 3: Front-Center Dominant (G-Flow Core Dashboard) -->
+<div class="relative w-[280px] sm:w-[300px] bg-surface-elevated rounded-[28px] border border-zinc-700/60 p-5 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] z-20 transition-transform duration-500 ease-out group-hover:-translate-y-2">
+<!-- Screen Header -->
+<div class="flex items-center justify-between mb-5">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-primary-container border border-border-subtle">
+<span class="material-symbols-outlined text-[18px]">account_circle</span>
+</div>
+<div>
+<p class="font-label-sm text-[10px] text-text-muted leading-tight">Selamat Siang</p>
+<p class="font-headline-md-mobile text-[13px] text-text-primary">Faris Adrian</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-text-secondary text-[20px]">notifications</span>
+</div>
+<!-- Balance Card -->
+<div class="bg-surface rounded-xl p-3.5 border border-border-subtle mb-4">
+<span class="font-label-sm text-label-sm text-text-muted block mb-0.5">Saldo PayPulse</span>
+<div class="flex items-baseline justify-between">
+<span class="font-headline-md text-headline-md text-text-primary tracking-tight">Rp 482.500</span>
+<span class="text-[11px] text-primary-container bg-accent-soft px-1.5 py-0.5 rounded font-medium">+2.450 Poin</span>
+</div>
+<div class="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-border-subtle">
+<button class="flex flex-col items-center gap-1 py-1 rounded bg-surface-container-high/60 hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[16px] text-primary-container">arrow_upward</span>
+<span class="font-label-sm text-[10px] text-text-secondary">Bayar</span>
+</button>
+<button class="flex flex-col items-center gap-1 py-1 rounded bg-surface-container-high/60 hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[16px] text-primary-container">add_card</span>
+<span class="font-label-sm text-[10px] text-text-secondary">Top Up</span>
+</button>
+<button class="flex flex-col items-center gap-1 py-1 rounded bg-surface-container-high/60 hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[16px] text-primary-container">receipt_long</span>
+<span class="font-label-sm text-[10px] text-text-secondary">Riwayat</span>
+</button>
+</div>
+</div>
+<!-- 4 Quick Services Grid -->
+<div class="grid grid-cols-4 gap-2 mb-4">
+<div class="flex flex-col items-center gap-1">
+<div class="w-11 h-11 rounded-xl bg-accent-soft border border-border-subtle flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[20px]">two_wheeler</span>
+</div>
+<span class="font-label-sm text-[11px] text-text-secondary">G-Ride</span>
+</div>
+<div class="flex flex-col items-center gap-1">
+<div class="w-11 h-11 rounded-xl bg-accent-soft border border-border-subtle flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[20px]">directions_car</span>
+</div>
+<span class="font-label-sm text-[11px] text-text-secondary">G-Car</span>
+</div>
+<div class="flex flex-col items-center gap-1">
+<div class="w-11 h-11 rounded-xl bg-accent-soft border border-border-subtle flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[20px]">restaurant</span>
+</div>
+<span class="font-label-sm text-[11px] text-text-secondary">G-Food</span>
+</div>
+<div class="flex flex-col items-center gap-1">
+<div class="w-11 h-11 rounded-xl bg-accent-soft border border-border-subtle flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[20px]">inventory_2</span>
+</div>
+<span class="font-label-sm text-[11px] text-text-secondary">G-Send</span>
+</div>
+</div>
+<!-- Activity Card -->
+<div class="rounded-xl bg-surface-container-lowest/80 p-3 border border-border-subtle flex items-center justify-between">
+<div class="flex items-center gap-2.5">
+<div class="w-7 h-7 rounded-full bg-emerald-950 flex items-center justify-center text-success-dot">
+<span class="material-symbols-outlined text-[15px]">check_circle</span>
+</div>
+<div>
+<p class="font-label-sm text-[11px] text-text-primary">G-Ride Selesai</p>
+<p class="font-label-sm text-[10px] text-text-muted">Kuningan → Blok M</p>
+</div>
+</div>
+<span class="font-label-sm text-[11px] text-text-secondary">-Rp 16.000</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION SERVICES (#layanan) — Asymmetric Bento Grid (2:1 and 1:2) -->
+<section class="w-full bg-background border-b border-border-subtle py-20 lg:py-28 relative" id="layanan">
+<div class="max-w-[1240px] mx-auto px-gutter-mobile lg:px-gutter-desktop">
+<!-- Section Header -->
+<div class="max-w-2xl mb-16">
+<span class="font-label-md text-label-md uppercase tracking-wider text-primary-container font-semibold block mb-3">Ekosistem Utama</span>
+<h2 class="font-headline-lg text-headline-lg-mobile sm:text-headline-lg text-text-primary mb-4 tracking-tight">
+          Layanan Harian yang Didesain untuk Efisiensi Waktu Anda.
+        </h2>
+<p class="font-body-base text-body-base text-text-secondary">
+          Setiap fitur dibangun dengan fokus pada kecepatan respon, keandalan armada, dan transparansi tarif tanpa biaya tersembunyi.
+        </p>
+</div>
+<!-- Bento Grid Rows -->
+<div class="space-y-6">
+<!-- Bento Row 1: (2 cols + 1 col) -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+<!-- Card 1: G-Ride & G-Car (Span 2) -->
+<div class="lg:col-span-2 rounded-2xl bg-surface border border-border-subtle p-6 sm:p-8 hover:border-border-hover transition-all duration-300 hover:-translate-y-1 relative overflow-hidden flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-6">
+<div class="w-11 h-11 rounded-xl bg-accent-soft flex items-center justify-center text-primary-container border border-border-subtle">
+<span class="material-symbols-outlined text-[24px]">moped</span>
+</div>
+<span class="font-label-md text-label-md font-medium text-primary-container uppercase tracking-wider">G-Ride &amp; G-Car</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-text-primary mb-3">Mobilitas Cepat Tanpa Drama Macet</h3>
+<p class="font-body-base text-body-base text-text-secondary mb-6 max-w-xl">
+                Penjemputan terdekat dalam hitungan menit dengan armada terverifikasi dan estimasi harga pasti di awal tanpa lonjakan tersembunyi.
+              </p>
+<ul class="space-y-2.5 mb-8 text-text-secondary font-body-sm text-body-sm">
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Penjemputan rata-rata di bawah 4 menit di area perkotaan</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Pelacakan lokasi presisi tinggi secara real-time</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Jaminan asuransi perjalanan otomatis di setiap trip</span>
+</li>
+</ul>
+</div>
+<!-- Visual Component Simulation: Ride ETA Status -->
+<div class="mt-4 rounded-xl bg-surface-elevated border border-border-subtle p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[20px]">near_me</span>
+</div>
+<div>
+<div class="font-headline-md-mobile text-[14px] text-text-primary">Kuningan Sentral → Grand Indonesia</div>
+<div class="font-label-sm text-[12px] text-text-muted">3,8 km • Estimasi tiba 14:22 WIB</div>
+</div>
+</div>
+<div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-soft border border-border-subtle shrink-0">
+<span class="w-2 h-2 rounded-full bg-primary-container"></span>
+<span class="font-label-md text-[12px] text-primary-container font-semibold">Tarif Tetap: Rp 18.000</span>
+</div>
+</div>
+</div>
+<!-- Card 2: G-Food (Span 1) -->
+<div class="lg:col-span-1 rounded-2xl bg-surface border border-border-subtle p-6 sm:p-8 hover:border-border-hover transition-all duration-300 hover:-translate-y-1 flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-6">
+<div class="w-11 h-11 rounded-xl bg-accent-soft flex items-center justify-center text-primary-container border border-border-subtle">
+<span class="material-symbols-outlined text-[24px]">soup_kitchen</span>
+</div>
+<span class="font-label-md text-label-md font-medium text-primary-container uppercase tracking-wider">G-Food</span>
+</div>
+<h3 class="font-headline-md text-headline-md-mobile sm:text-headline-md text-text-primary mb-3">Kuliner Hangat Langsung ke Meja</h3>
+<p class="font-body-base text-body-base text-text-secondary mb-6">
+                Ribuan mitra kuliner terkurasi dengan kurir tas insulated untuk menjaga temperatur makanan tetap prima.
+              </p>
+<ul class="space-y-2.5 mb-6 text-text-secondary font-body-sm text-body-sm">
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Ribuan kurasi resto lokal &amp; brand favorit</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Estimasi masak &amp; antar akurat per menit</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Promo ongkir jujur langsung di checkout</span>
+</li>
+</ul>
+</div>
+<div class="pt-4 border-t border-border-subtle flex items-center justify-between text-text-muted font-label-sm text-label-sm">
+<span>Tas Insulated Khusus</span>
+<span class="text-success-dot font-medium">Higienis 100%</span>
+</div>
+</div>
+</div>
+<!-- Bento Row 2: (1 col + 2 cols) -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+<!-- Card 3: G-Send (Span 1) -->
+<div class="lg:col-span-1 rounded-2xl bg-surface border border-border-subtle p-6 sm:p-8 hover:border-border-hover transition-all duration-300 hover:-translate-y-1 flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-6">
+<div class="w-11 h-11 rounded-xl bg-accent-soft flex items-center justify-center text-primary-container border border-border-subtle">
+<span class="material-symbols-outlined text-[24px]">inventory_2</span>
+</div>
+<span class="font-label-md text-label-md font-medium text-primary-container uppercase tracking-wider">G-Send</span>
+</div>
+<h3 class="font-headline-md text-headline-md-mobile sm:text-headline-md text-text-primary mb-3">Kirim Dokumen &amp; Paket Tiba Hari Ini</h3>
+<p class="font-body-base text-body-base text-text-secondary mb-6">
+                Layanan logistik on-demand aman dengan bukti foto serah terima dan kode verifikasi penerima langsung.
+              </p>
+<ul class="space-y-2.5 mb-6 text-text-secondary font-body-sm text-body-sm">
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Instant &amp; Same-Day delivery terjamin</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Foto bukti serah terima langsung di app</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Asuransi proteksi barang bernilai tinggi</span>
+</li>
+</ul>
+</div>
+<div class="pt-4 border-t border-border-subtle flex items-center justify-between text-text-muted font-label-sm text-label-sm">
+<span>Keamanan Validasi</span>
+<span class="text-primary-container font-medium">OTP Wajib</span>
+</div>
+</div>
+<!-- Card 4: PayPulse (Span 2) -->
+<div class="lg:col-span-2 rounded-2xl bg-surface border border-border-subtle p-6 sm:p-8 hover:border-border-hover transition-all duration-300 hover:-translate-y-1 relative overflow-hidden flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-6">
+<div class="w-11 h-11 rounded-xl bg-accent-soft flex items-center justify-center text-primary-container border border-border-subtle">
+<span class="material-symbols-outlined text-[24px]">account_balance_wallet</span>
+</div>
+<span class="font-label-md text-label-md font-medium text-primary-container uppercase tracking-wider">PayPulse by G-Flow</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-text-primary mb-3">Dompet Digital Cerdas &amp; Transaksi Sekali Sentuh</h3>
+<p class="font-body-base text-body-base text-text-secondary mb-6 max-w-xl">
+                Satu saldo terintegrasi untuk seluruh kebutuhan mobilitas, scan QRIS di jutaan merchant, dan transfer antar bank instan tanpa biaya ribet.
+              </p>
+<ul class="space-y-2.5 mb-8 text-text-secondary font-body-sm text-body-sm">
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Standar enkripsi perbankan berlapis dan otentikasi biometrik</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Pembayaran QRIS instan di seluruh merchant nasional</span>
+</li>
+<li class="flex items-center gap-2">
+<span class="text-text-muted">•</span>
+<span>Riwayat pengeluaran rapi dengan kategorisasi otomatis</span>
+</li>
+</ul>
+</div>
+<!-- Visual Component Simulation: PayPulse Interactive Preview -->
+<div class="mt-4 rounded-xl bg-surface-elevated border border-border-subtle p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined text-[20px]">qr_code_scanner</span>
+</div>
+<div>
+<div class="font-headline-md-mobile text-[14px] text-text-primary">QRIS Nasional Siap Pakai</div>
+<div class="font-label-sm text-[12px] text-text-muted">Kompatibel di 30+ juta gerai di Indonesia</div>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="px-3 py-1 rounded bg-surface-container border border-border-subtle text-text-secondary font-label-sm text-[12px]">
+                  Cashback 5% Poin
+                </div>
+<div class="px-3 py-1 rounded bg-primary-container text-surface-container-lowest font-label-md text-[12px] font-semibold">
+                  Scan Cepat
+                </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- MITRA & EKOSISTEM SUBSECTION (#mitra) -->
+<section class="w-full bg-surface-container-lowest border-b border-border-subtle py-20 lg:py-28" id="mitra">
+<div class="max-w-[1240px] mx-auto px-gutter-mobile lg:px-gutter-desktop">
+<div class="text-center max-w-2xl mx-auto mb-16">
+<span class="font-label-md text-label-md uppercase tracking-wider text-primary-container font-semibold block mb-3">Peluang Pertumbuhan</span>
+<h2 class="font-headline-lg text-headline-lg-mobile sm:text-headline-lg text-text-primary mb-4 tracking-tight">
+          Tumbuh Nyata Bersama Jaringan G-Flow
+        </h2>
+<p class="font-body-base text-body-base text-text-secondary">
+          Bergabunglah dengan ratusan ribu wirausaha dan pengemudi yang mandiri secara finansial dalam ekosistem terbuka.
+        </p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<!-- Driver Card -->
+<div class="rounded-2xl bg-surface border border-border-subtle p-8 sm:p-10 hover:border-border-hover transition-all duration-300 hover:-translate-y-1 flex flex-col justify-between">
+<div>
+<div class="w-12 h-12 rounded-xl bg-accent-soft flex items-center justify-center text-primary-container border border-border-subtle mb-6">
+<span class="material-symbols-outlined text-[26px]">sports_motorsports</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-text-primary mb-3">Gabung Menjadi Mitra Pengemudi</h3>
+<p class="font-body-base text-body-base text-text-secondary mb-6">
+              Atur waktu kerja Anda sendiri secara bebas. Dapatkan skema bonus yang transparan, proteksi kecelakaan kerja, dan pencairan saldo penghasilan setiap hari tanpa potongan tersembunyi.
+            </p>
+<div class="space-y-2 mb-8 text-text-secondary font-body-sm text-body-sm">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-[18px]">check</span>
+<span>Pencairan dana langsung ke rekening bank harian</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-[18px]">check</span>
+<span>Program santunan &amp; asuransi kecelakaan mitra aktif</span>
+</div>
+</div>
+</div>
+<a class="inline-flex items-center gap-2 text-primary-container font-headline-md-mobile text-[15px] font-semibold hover:gap-3 transition-all duration-200" href="#kontak">
+<span>Daftar Mitra Driver</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</a>
+</div>
+<!-- Merchant Card -->
+<div class="rounded-2xl bg-surface border border-border-subtle p-8 sm:p-10 hover:border-border-hover transition-all duration-300 hover:-translate-y-1 flex flex-col justify-between">
+<div>
+<div class="w-12 h-12 rounded-xl bg-accent-soft flex items-center justify-center text-primary-container border border-border-subtle mb-6">
+<span class="material-symbols-outlined text-[26px]">storefront</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-text-primary mb-3">Kembangkan Bisnis Kuliner &amp; Usaha Anda</h3>
+<p class="font-body-base text-body-base text-text-secondary mb-6">
+              Perluas jangkauan pembeli di seluruh kota melalui Merchant Hub. Akses laporan penjualan real-time, manajemen katalog menu instan, dan kampanye promosi tepat sasaran.
+            </p>
+<div class="space-y-2 mb-8 text-text-secondary font-body-sm text-body-sm">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-[18px]">check</span>
+<span>Dashboard analitik performa menu dan jam sibuk</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container text-[18px]">check</span>
+<span>Dukungan materi promosi terverifikasi di aplikasi</span>
+</div>
+</div>
+</div>
+<a class="inline-flex items-center gap-2 text-primary-container font-headline-md-mobile text-[15px] font-semibold hover:gap-3 transition-all duration-200" href="#kontak">
+<span>Daftar Merchant Hub</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</a>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION CONTACT & PARTNERSHIP (#kontak) -->
+<section class="w-full bg-background py-20 lg:py-28 relative" id="kontak">
+<div class="max-w-[1240px] mx-auto px-gutter-mobile lg:px-gutter-desktop">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-14">
+<!-- Left Column: Information & Trust (5 cols) -->
+<div class="lg:col-span-5 flex flex-col justify-between">
+<div>
+<span class="font-label-md text-label-md uppercase tracking-wider text-primary-container font-semibold block mb-3">Hubungi Kami</span>
+<h2 class="font-headline-lg text-headline-lg-mobile sm:text-headline-lg text-text-primary mb-5 tracking-tight">
+              Mari Bangun Ekosistem Bersama G-Flow
+            </h2>
+<p class="font-body-base text-body-base text-text-secondary mb-10">
+              Punya pertanyaan seputar kemitraan korporat, integrasi armada skala besar, atau dukungan operasional? Tim kami siap berdiskusi langsung dengan Anda.
+            </p>
+<div class="space-y-6 mb-10">
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-xl bg-surface-elevated border border-border-subtle flex items-center justify-center text-primary-container shrink-0">
+<span class="material-symbols-outlined text-[20px]">mail</span>
+</div>
+<div>
+<span class="font-label-sm text-label-sm text-text-muted block">Surel Kemitraan</span>
+<a class="font-body-base text-body-base text-text-primary hover:text-primary-container transition-colors" href="mailto:kemitraan@gflow.id">kemitraan@gflow.id</a>
+</div>
+</div>
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-xl bg-surface-elevated border border-border-subtle flex items-center justify-center text-primary-container shrink-0">
+<span class="material-symbols-outlined text-[20px]">call</span>
+</div>
+<div>
+<span class="font-label-sm text-label-sm text-text-muted block">Telepon Operasional</span>
+<p class="font-body-base text-body-base text-text-primary">+62 21 5088 2900</p>
+<p class="font-label-sm text-label-sm text-text-muted">Senin – Jumat, 08.00 – 18.00 WIB</p>
+</div>
+</div>
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-xl bg-surface-elevated border border-border-subtle flex items-center justify-center text-primary-container shrink-0">
+<span class="material-symbols-outlined text-[20px]">apartment</span>
+</div>
+<div>
+<span class="font-label-sm text-label-sm text-text-muted block">Kantor Pusat</span>
+<p class="font-body-base text-body-base text-text-primary">G-Flow Tower, Kawasan SCBD Lot 28</p>
+<p class="font-body-sm text-body-sm text-text-muted">Jl. Jend. Sudirman Kav. 52-53, Jakarta Selatan 12190</p>
+</div>
+</div>
+</div>
+</div>
+<div class="p-4 rounded-xl bg-surface border border-border-subtle flex items-center gap-3">
+<span class="material-symbols-outlined text-success-dot text-[22px]">verified_user</span>
+<p class="font-label-sm text-label-sm text-text-secondary">
+              Respon resmi kemitraan dijamin dalam kurun waktu 1x24 jam kerja.
+            </p>
+</div>
+</div>
+<!-- Right Column: Form Pengajuan Kemitraan (7 cols) -->
+<div class="lg:col-span-7">
+<div class="rounded-2xl bg-surface border border-border-subtle p-6 sm:p-10 shadow-xl relative">
+<h3 class="font-headline-md text-headline-md text-text-primary mb-2">Formulir Kemitraan</h3>
+<p class="font-body-sm text-body-sm text-text-secondary mb-8">
+              Lengkapi informasi awal bisnis atau instansi Anda untuk kami tindaklanjuti.
+            </p>
+<form class="space-y-5" id="contact-form" onsubmit="event.preventDefault(); handleFormSubmit();">
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+<div class="space-y-2">
+<label class="font-label-sm text-label-sm text-text-secondary" for="name">Nama Lengkap</label>
+<input class="w-full bg-surface-elevated border border-border-subtle focus:border-primary-container focus:outline-none text-text-primary px-4 py-3 rounded-xl font-body-sm text-body-sm placeholder:text-text-muted transition-colors" id="name" placeholder="Contoh: Faris Adrian" required="" type="text"/>
+</div>
+<div class="space-y-2">
+<label class="font-label-sm text-label-sm text-text-secondary" for="contact">Email Bisnis / WhatsApp</label>
+<input class="w-full bg-surface-elevated border border-border-subtle focus:border-primary-container focus:outline-none text-text-primary px-4 py-3 rounded-xl font-body-sm text-body-sm placeholder:text-text-muted transition-colors" id="contact" placeholder="faris@perusahaan.co.id" required="" type="text"/>
+</div>
+</div>
+<div class="space-y-2">
+<label class="font-label-sm text-label-sm text-text-secondary" for="category">Kategori Kemitraan</label>
+<div class="relative">
+<select class="w-full bg-surface-elevated border border-border-subtle focus:border-primary-container focus:outline-none text-text-primary px-4 py-3 rounded-xl font-body-sm text-body-sm transition-colors appearance-none cursor-pointer" id="category">
+<option class="bg-surface" value="armada">Mitra Armada Korporat</option>
+<option class="bg-surface" value="merchant">Integrasi Merchant Nasional</option>
+<option class="bg-surface" value="paypulse">Kerjasama Ekosistem PayPulse</option>
+<option class="bg-surface" value="umum">Pertanyaan Umum &amp; Media</option>
+</select>
+<span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none text-[18px]">expand_more</span>
+</div>
+</div>
+<div class="space-y-2">
+<label class="font-label-sm text-label-sm text-text-secondary" for="message">Pesan / Kebutuhan Kerjasama</label>
+<textarea class="w-full bg-surface-elevated border border-border-subtle focus:border-primary-container focus:outline-none text-text-primary px-4 py-3 rounded-xl font-body-sm text-body-sm placeholder:text-text-muted transition-colors resize-none" id="message" placeholder="Jelaskan secara singkat jenis kemitraan yang ingin Anda jalankan bersama G-Flow..." required="" rows="4"></textarea>
+</div>
+<button class="w-full py-4 rounded-full bg-primary-container text-surface-container-lowest font-body-base text-body-base font-semibold tracking-tight hover:opacity-90 transition-all duration-200 shadow-[0_4px_16px_rgba(255,149,0,0.25)] flex items-center justify-center gap-2" id="submit-btn" type="submit">
+<span>Kirim Pengajuan Kemitraan</span>
+<span class="material-symbols-outlined text-[18px]">send</span>
+</button>
+<div class="hidden p-3 rounded-lg bg-emerald-950/40 border border-emerald-800 text-success-dot font-label-md text-center text-label-md" id="form-success">
+                Terima kasih. Pengajuan Anda telah terkirim ke tim kemitraan G-Flow.
+              </div>
+</form>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+<script>
+  function handleFormSubmit() {
+    const btn = document.getElementById('submit-btn');
+    const success = document.getElementById('form-success');
+    if (!btn || !success) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined text-[18px] animate-spin">progress_activity</span><span>Memproses...</span>';
+
+    setTimeout(() => {
+      btn.classList.add('hidden');
+      success.classList.remove('hidden');
+    }, 900);
+  }
+</script></main><footer class="w-full bg-surface-container-lowest border-t border-border-subtle py-8"><div class="max-w-[1240px] mx-auto px-gutter-mobile lg:px-gutter-desktop flex flex-col md:flex-row items-center justify-between gap-6"><div class="flex items-center gap-3 text-text-secondary font-body-sm text-body-sm"><span class="font-headline-md text-headline-md-mobile text-text-primary tracking-tight">G-Flow</span><span class="text-border-subtle">|</span><span>© 2025 • Ekosistem Indonesia</span></div><div class="flex flex-wrap items-center gap-6 text-text-muted font-body-sm text-body-sm"><a class="text-text-muted hover:text-text-secondary transition-colors" data-path="kebijakan-privasi" href="#">Kebijakan Privasi</a><a class="text-text-muted hover:text-text-secondary transition-colors" data-path="syarat-dan-ketentuan" href="#">Syarat &amp; Ketentuan</a><a class="inline-flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors" data-path="developer-docs" href="#"><span class="material-symbols-outlined text-[16px]">terminal</span>Developer Docs</a><a class="inline-flex items-center gap-1.5 text-text-muted hover:text-text-secondary transition-colors" data-path="github" href="#"><span class="material-symbols-outlined text-[16px]">code</span>GitHub</a></div></div></footer></body></html>

@@ -22,7 +22,7 @@ class MerchantService {
       'sort': sort,
     };
     if (search != null && search.trim().isNotEmpty) params['search'] = search.trim();
-    final res = await apiClient.get('/api/v1/merchants$_params(params)');
+    final res = await apiClient.get('/api/v1/merchants${_params(params)}');
     final data = res.data is Map<String, dynamic> ? (res.data as Map)['data'] : null;
     final items = _extractList(data, 'merchants');
     return items.map(Merchant.fromJson).toList();
