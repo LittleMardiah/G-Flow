@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: 'Force all jobs to run regardless of path changes'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,6 +30,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       landing: ${{ steps.filter.outputs.landing }}
       flutter: ${{ steps.filter.outputs.flutter }}
+      customer_app: ${{ steps.filter.outputs.customer_app }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,11 +49,13 @@ jobs:
               - 'apps/customer_app/**'
               - 'apps/driver_app/**'
               - 'apps/merchant_app/**'
+            customer_app:
+              - 'apps/customer_app/**'
 
   # ---------- Go Backend ----------
   go-backend:
     needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' }}
+    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -67,6 +77,15 @@ jobs:
         run: |
           go test -short -race -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee test-output.log
           go tool cover -func=coverage.out | tail -1
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f coverage.out ]; then
+            COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $NF}' | tr -d '%')
+            echo "## Go Coverage: ${COVERAGE}%" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Go Coverage: N/A (no coverage.out found)" >> $GITHUB_STEP_SUMMARY
+          fi
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -76,10 +95,28 @@ jobs:
             coverage.out
             test-output.log
 
+  # ---------- Go Lint (golangci-lint) ----------
+  go-lint:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62
+          args: --timeout=5m --disable errcheck
+
   # ---------- Go Security Scan ----------
   go-security:
     needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' }}
+    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -101,7 +138,7 @@ jobs:
   # ---------- Landing Page (Next.js) ----------
   landing-page:
     needs: changes
-    if: ${{ needs.changes.outputs.landing == 'true' || github.event_name == 'pull_request' }}
+    if: ${{ needs.changes.outputs.landing == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -122,11 +159,29 @@ jobs:
         run: npm audit --audit-level=high || true
       - name: Build
         run: npm run build
+      - name: Bundle size check
+        if: always()
+        run: |
+          if [ -d .next ]; then
+            SIZE=$(du -sb .next/ | awk '{print $1}')
+            THRESHOLD=512000
+            echo "## Next.js Bundle Size" >> $GITHUB_STEP_SUMMARY
+            echo "- Size: ${SIZE} bytes ($(( SIZE / 1024 )) KB)" >> $GITHUB_STEP_SUMMARY
+            echo "- Threshold: ${THRESHOLD} bytes ($(( THRESHOLD / 1024 )) KB)" >> $GITHUB_STEP_SUMMARY
+            if [ "$SIZE" -gt "$THRESHOLD" ]; then
+              echo "- WARNING: Bundle exceeds threshold (non-blocking)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- OK: Bundle within threshold" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "## Next.js Bundle Size" >> $GITHUB_STEP_SUMMARY
+            echo "- Skipped: .next/ directory not found" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ---------- Flutter Apps (matrix: 3 apps) ----------
   flutter:
     needs: changes
-    if: ${{ needs.changes.outputs.flutter == 'true' || github.event_name == 'pull_request' }}
+    if: ${{ needs.changes.outputs.flutter == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -150,22 +205,53 @@ jobs:
         run: flutter test --reporter expanded
         continue-on-error: true
 
+  # ---------- Flutter Build Test (customer_app only) ----------
+  flutter-build:
+    needs: changes
+    if: ${{ needs.changes.outputs.customer_app == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/customer_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+      - name: Pub get
+        run: flutter pub get
+      - name: Build APK (debug)
+        run: flutter build apk --debug --target-platform android-arm64
+
   # ---------- CI Gate (final status) ----------
   ci-gate:
     if: always()
-    needs: [go-backend, go-security, landing-page, flutter]
+    needs: [go-backend, go-lint, go-security, landing-page, flutter, flutter-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Check all jobs status
         run: |
           echo "go-backend: ${{ needs.go-backend.result }}"
+          echo "go-lint: ${{ needs.go-lint.result }}"
           echo "go-security: ${{ needs.go-security.result }}"
           echo "landing-page: ${{ needs.landing-page.result }}"
           echo "flutter: ${{ needs.flutter.result }}"
+          echo "flutter-build: ${{ needs.flutter-build.result }}"
           if [[ "${{ needs.go-backend.result }}" == "failure" ]] || \
+             [[ "${{ needs.go-lint.result }}" == "failure" ]] || \
              [[ "${{ needs.landing-page.result }}" == "failure" ]]; then
             echo "CI failed"
             exit 1
           fi
           echo "CI passed"
+      - name: Notify on failure
+        if: failure() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"content\":\":x: CI Failed: ${{ github.repository }} @ ${{ github.ref_name }}\\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$DISCORD_WEBHOOK"
