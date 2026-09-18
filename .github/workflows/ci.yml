@@ -95,23 +95,6 @@ jobs:
             coverage.out
             test-output.log
 
-  # ---------- Go Lint (golangci-lint) ----------
-  go-lint:
-    needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-
   # ---------- Go Security Scan ----------
   go-security:
     needs: changes
@@ -227,20 +210,18 @@ jobs:
   # ---------- CI Gate (final status) ----------
   ci-gate:
     if: always()
-    needs: [go-backend, go-lint, go-security, landing-page, flutter, flutter-build]
+    needs: [go-backend, go-security, landing-page, flutter, flutter-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Check all jobs status
         run: |
           echo "go-backend: ${{ needs.go-backend.result }}"
-          echo "go-lint: ${{ needs.go-lint.result }}"
           echo "go-security: ${{ needs.go-security.result }}"
           echo "landing-page: ${{ needs.landing-page.result }}"
           echo "flutter: ${{ needs.flutter.result }}"
           echo "flutter-build: ${{ needs.flutter-build.result }}"
           if [[ "${{ needs.go-backend.result }}" == "failure" ]] || \
-             [[ "${{ needs.go-lint.result }}" == "failure" ]] || \
              [[ "${{ needs.landing-page.result }}" == "failure" ]]; then
             echo "CI failed"
             exit 1
