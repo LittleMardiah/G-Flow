@@ -110,8 +110,7 @@ jobs:
           cache-dependency-path: go.sum
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.62
-          args: --timeout=5m --disable errcheck
+          version: latest
 
   # ---------- Go Security Scan ----------
   go-security:
