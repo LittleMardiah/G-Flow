@@ -1,12 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:merchant_app/providers/auth_provider.dart';
 import 'package:merchant_app/services/api_client.dart';
 
-class FakeDio extends DioAdapter {
+class FakeDio implements HttpClientAdapter {
   final _requests = <(String, String, Map<String, dynamic>?)>[];
   final List<Response> responses;
   final List<Object> errors;
@@ -14,19 +15,35 @@ class FakeDio extends DioAdapter {
   FakeDio({required this.responses, this.errors = const []});
 
   @override
-  Future<Response> fetch(RequestOptions options, Stream<List<int>>? requestStream, Future<void>? cancelFuture) async {
+  Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
     _requests.add((options.method, options.path, options.data as Map<String, dynamic>?));
     if (errors.isNotEmpty) {
-      final e = errors.removeAt(0);
-      if (e is Exception) throw e;
-      if (e is DioException) throw e;
+      throw errors.removeAt(0);
     }
-    return responses.isEmpty
-        ? Response(requestOptions: options, statusCode: 200, data: const {'data': {}})
-        : responses.removeAt(0);
+    if (responses.isEmpty) {
+      return ResponseBody.fromString('{}', 200,
+          headers: const {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    }
+    final r = responses.removeAt(0);
+    final data = r.data;
+    final body = data is String ? data : _encode(data);
+    return ResponseBody.fromString(body, r.statusCode ?? 200,
+        headers: const {Headers.contentTypeHeader: [Headers.jsonContentType]});
   }
 
+  @override
+  void close({bool force = false}) {}
+
   List<(String, String, Map<String, dynamic>?)> get requests => List.of(_requests);
+}
+
+String _encode(Object? o) {
+  if (o is String) return '"${o.replaceAll('"', '\\"')}"';
+  if (o is Map) return '{${o.entries.map((e) => '"${e.key}":${_encode(e.value)}').join(',')}}';
+  if (o is List) return '[${o.map(_encode).join(',')}]';
+  if (o is bool) return o.toString();
+  if (o is num) return o.toString();
+  return 'null';
 }
 
 class FakeStorage extends Fake implements FlutterSecureStorage {
@@ -122,7 +139,7 @@ void main() {
       final ok = await notifier.login('m@m.com', 'pass');
 
       expect(ok, isFalse);
-      expect(notifier.state.error, contains('StateError'));
+      expect(notifier.state.error, contains('Login gagal'));
     });
 
     test('registerUser success', () async {

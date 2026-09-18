@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:driver_app/config/constants.dart';
-import 'package:driver_app/models/driver_order.dart';
 import 'package:driver_app/providers/auth_provider.dart';
 import 'package:driver_app/providers/order_provider.dart';
 import 'package:driver_app/screens/dashboard_screen.dart';
@@ -13,6 +11,8 @@ import 'package:driver_app/services/api_client.dart';
 import 'package:driver_app/services/location_service.dart';
 
 import 'test_helpers.dart';
+
+class FakeHttpOverrides extends HttpOverrides {}
 
 Widget _build({
   FakeOrderService? service,

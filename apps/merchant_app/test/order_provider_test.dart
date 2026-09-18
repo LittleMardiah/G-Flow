@@ -5,13 +5,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:merchant_app/models/merchant_order.dart';
 import 'package:merchant_app/providers/auth_provider.dart';
 import 'package:merchant_app/providers/order_provider.dart';
 import 'package:merchant_app/services/api_client.dart';
 import 'package:merchant_app/services/order_service.dart';
 
-class FakeDioAdapter extends HttpClientAdapter {
+class FakeDioAdapter implements HttpClientAdapter {
   final List<Map<String, dynamic>> responses;
   final List<Object> errors;
   int callCount = 0;
@@ -26,7 +25,7 @@ class FakeDioAdapter extends HttpClientAdapter {
       if (e is DioException) throw e;
       throw e;
     }
-    final body = idx < responses.length ? _encode(responses[idx]['body'] ?? {}) : '{}{data":{}}';
+    final body = idx < responses.length ? _encode(responses[idx]['body'] ?? {}) : '{"data":{}}';
     return ResponseBody.fromString(body, responses[idx]['status'] ?? 200, headers: const {
       Headers.contentTypeHeader: [Headers.jsonContentType],
     });
@@ -37,7 +36,7 @@ class FakeDioAdapter extends HttpClientAdapter {
 }
 
 String _encode(Object? o) {
-  if (o is String) return o;
+  if (o is String) return '"${o.replaceAll('"', '\\"')}"';
   if (o is Map) return '{${o.entries.map((e) => '"${e.key}":${_encode(e.value)}').join(',')}}';
   if (o is List) return '[${o.map(_encode).join(',')}]';
   if (o is bool) return o.toString();
@@ -75,18 +74,8 @@ void main() {
   late FakeStorage storage;
   late ProviderContainer container;
 
-  ProviderContainer makeContainer({required FakeDioAdapter adapter}) {
-    final s = FakeStorage()..store['merchant_id'] = 'm1';
-    final api = _api(adapter, s);
-    return ProviderContainer(overrides: [
-      storageProvider.overrideWithValue(s),
-      apiClientProvider.overrideWithValue(api),
-      orderServiceProvider.overrideWithValue(OrderService(api)),
-    ]);
-  }
-
   tearDown(() {
-    container?.dispose();
+    container.dispose();
   });
 
   group('OrdersNotifier', () {

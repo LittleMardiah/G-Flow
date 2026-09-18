@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:driver_app/models/driver_earning.dart';
 import 'package:driver_app/providers/auth_provider.dart';
-import 'package:driver_app/providers/earnings_provider.dart';
 import 'package:driver_app/screens/earnings_screen.dart';
 import 'package:driver_app/services/api_client.dart';
 import 'package:driver_app/services/earnings_service.dart';

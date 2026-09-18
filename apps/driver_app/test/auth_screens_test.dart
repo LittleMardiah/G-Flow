@@ -113,8 +113,8 @@ void main() {
       final router = GoRouter(
         initialLocation: '/register',
         routes: [
-          GoRoute(path: '/register', builder: (_, __) => const RegisterScreen()),
-          GoRoute(path: '/login', builder: (_, __) => const Scaffold(body: Center(child: Text('Login page')))),
+          GoRoute(path: '/register', builder: (_, _) => const RegisterScreen()),
+          GoRoute(path: '/login', builder: (_, _) => const Scaffold(body: Center(child: Text('Login page')))),
         ],
       );
       return ProviderScope(

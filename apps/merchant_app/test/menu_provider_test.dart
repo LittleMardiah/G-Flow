@@ -5,9 +5,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:merchant_app/models/merchant_item.dart';
-import 'package:merchant_app/models/merchant_menu.dart';
-import 'package:merchant_app/models/merchant_order.dart';
 import 'package:merchant_app/providers/auth_provider.dart';
 import 'package:merchant_app/providers/menu_provider.dart';
 import 'package:merchant_app/providers/analytics_provider.dart';
@@ -16,7 +13,7 @@ import 'package:merchant_app/services/api_client.dart';
 import 'package:merchant_app/services/menu_service.dart';
 import 'package:merchant_app/services/order_service.dart';
 
-class FakeDioAdapter extends HttpClientAdapter {
+class FakeDioAdapter implements HttpClientAdapter {
   final List<Map<String, dynamic>> responses;
   final List<Object> errors;
   int callCount = 0;
@@ -42,7 +39,7 @@ class FakeDioAdapter extends HttpClientAdapter {
 }
 
 String _encode(Object? o) {
-  if (o is String) return o;
+  if (o is String) return '"${o.replaceAll('"', '\\"')}"';
   if (o is Map) return '{${o.entries.map((e) => '"${e.key}":${_encode(e.value)}').join(',')}}';
   if (o is List) return '[${o.map(_encode).join(',')}]';
   if (o is bool) return o.toString();
@@ -71,7 +68,7 @@ void main() {
   late ProviderContainer container;
 
   tearDown(() {
-    container?.dispose();
+    container.dispose();
   });
 
   ProviderContainer menuContainer(FakeDioAdapter adapter) {

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,7 +9,7 @@ import 'package:merchant_app/services/menu_service.dart';
 import 'package:merchant_app/services/merchant_service.dart';
 import 'package:merchant_app/services/order_service.dart';
 
-class FakeDioAdapter extends HttpClientAdapter {
+class FakeDioAdapter implements HttpClientAdapter {
   final List<Map<String, dynamic>> responses;
   int callCount = 0;
   final List<RequestOptions> requests = [];

@@ -148,7 +148,6 @@ void main() {
 
   group('DriverOrder copyWith', () {
     test('updates status and stops', () {
-      final stop = const DriverStop(id: 'a', status: 'PENDING');
       final o = DriverOrder.fromSendJson({
         'order_id': 's-1',
         'stops': [

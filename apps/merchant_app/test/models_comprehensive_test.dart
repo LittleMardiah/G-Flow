@@ -365,8 +365,6 @@ void main() {
     });
 
     test('week period starts 6 days ago', () {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
       final s = AnalyticsSummary.compute(const [], 'week');
       // 7 days: today + 6 prior days
       expect(s.dailyRevenue.length, 7);
