@@ -1,6 +1,4 @@
--- ============================================================================
 -- MIGRATION 012: OVERDUE DEBT AUTO-SYNC TRIGGER (TD-011)
--- ============================================================================
 -- Overdue debt (users.overdue_debt, Bug #47) sebelumnya hanya di-set pada
 -- jalur top-up (pelunasan) dan di-gate saat booking/order (Debt Gate
 -- Universal). TD-011 menstandarkan pencatatan hutang agar konsisten pada
@@ -16,7 +14,6 @@
 --     lama yang belum lunas).
 --   - Bila NEW.balance >= 0 => trigger tidak mengubah overdue_debt (jalur
 --     top-up yang menetapkan sisa hutang).
--- ============================================================================
 
 CREATE OR REPLACE FUNCTION fn_sync_overdue_debt_from_wallet()
 RETURNS TRIGGER AS $$
@@ -52,6 +49,4 @@ CREATE TRIGGER trg_sync_overdue_debt
   FOR EACH ROW
   EXECUTE FUNCTION fn_sync_overdue_debt_from_wallet();
 
--- ============================================================================
 -- END OF MIGRATION 012
--- ============================================================================

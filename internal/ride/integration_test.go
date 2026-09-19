@@ -343,11 +343,9 @@ func assertCancelEvent(t *testing.T, e *testEnv, ctx context.Context, orderID uu
 	require.Contains(t, string(metadata), reason)
 }
 
-// ============================================================================
 // TC-INT-RD-001 — E2E WALLET: booking → accept → arrival → trip → completed
 // (settlement otomatis 80/20). Escrow dilepas penuh, driver digaji 80%,
 // platform 20%, ledger double-entry seimbang.
-// ============================================================================
 func TestIntegrationRide_E2EWalletSettlement(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -417,10 +415,8 @@ func TestIntegrationRide_E2EWalletSettlement(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-INT-RD-002 — Konkurrensi Accept: 10 driver berlomba menerima satu order.
 // Tepat satu 200, sembilan 409; order di-assign satu driver & satu event.
-// ============================================================================
 func TestIntegrationRide_ConcurrentAccept(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -487,9 +483,7 @@ func TestIntegrationRide_ConcurrentAccept(t *testing.T) {
 	require.Equal(t, "BUSY", ws, "driver pemenang harus BUSY")
 }
 
-// ============================================================================
 // TC-INT-RD-003 — Customer cancel sebelum assign → refund penuh tanpa penalti.
-// ============================================================================
 func TestIntegrationRide_CustomerCancelFullRefund(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -522,10 +516,8 @@ func TestIntegrationRide_CustomerCancelFullRefund(t *testing.T) {
 	assertCancelEvent(t, e, ctx, orderID, "CUSTOMER_CANCEL")
 }
 
-// ============================================================================
 // TC-INT-RD-006 — Driver Emergency Cancel (setelah assign) → refund penuh,
 // driver kembali IDLE, metadata audit {"reason":"DRIVER_EMERGENCY"}.
-// ============================================================================
 func TestIntegrationRide_DriverEmergencyCancel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -563,10 +555,8 @@ func TestIntegrationRide_DriverEmergencyCancel(t *testing.T) {
 	assertCancelEvent(t, e, ctx, orderID, "DRIVER_EMERGENCY")
 }
 
-// ============================================================================
 // TC-INT-RD-007 — Auto-Cancel Worker: order SEARCHING_DRIVER yang melewati
 // expires_at (TTL 15 menit) dibatalkan dengan reason EXPIRED + refund.
-// ============================================================================
 func TestIntegrationRide_AutoCancelExpired(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -602,11 +592,9 @@ func TestIntegrationRide_AutoCancelExpired(t *testing.T) {
 	assertCancelEvent(t, e, ctx, orderID, "EXPIRED")
 }
 
-// ============================================================================
 // TC-INT-RD-008 — Settlement CASH (COD): komisi platform 20% di-debit dari
 // wallet driver. Positif: balance masih ≥ -50.000 → driver tetap ACTIVE.
 // Negatif: balance menembus ceiling -50.000 → driver SUSPENDED.
-// ============================================================================
 func TestIntegrationRide_CashSettlement(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

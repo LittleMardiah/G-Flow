@@ -1,6 +1,4 @@
--- ============================================================================
 -- MIGRATION 001: INITIAL SCHEMA — G-Flow Super-App (Phase 1: Wallet & Auth)
--- ============================================================================
 -- Version : 001
 -- Phase   : 1 (Wallet & Authentication)
 -- Doc ref : DATABASE_SCHEMA v10.4-FINAL, LOGIC_FLOW v6.1-FINAL,
@@ -28,11 +26,8 @@
 --   users, wallets, ledger_entries, idempotency_cache, topup_transactions.
 -- Tabel lain (ride/food/send/voucher/dll.) akan dibuat pada migration
 -- berikutnya (Phase 2+).
--- ============================================================================
 
--- ============================================================================
 -- EXTENSIONS
--- ============================================================================
 -- pg_uuidv7 OPSIONAL (tidak dipakai; kita pakai gen_random_uuid).
 -- cube & earthdistance disertakan untuk kompatibilitas penuh schema v10.4
 -- (dibutuhkan oleh table driver_locations / spatial index nanti, dan aman
@@ -42,9 +37,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;        -- menyediakan gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS cube;
 CREATE EXTENSION IF NOT EXISTS earthdistance;
 
--- ============================================================================
 -- ENUMS (strict type safety — subset yang dibutuhkan Phase 1)
--- ============================================================================
 CREATE TYPE user_type_enum AS ENUM
   ('customer', 'driver', 'merchant', 'admin', 'system');
 
@@ -57,9 +50,7 @@ CREATE TYPE wallet_type_enum AS ENUM
 
 CREATE TYPE entry_type_enum AS ENUM ('DEBIT', 'CREDIT');
 
--- ============================================================================
 -- TABLE: users (core identity)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS users (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -116,9 +107,7 @@ CREATE INDEX idx_users_type    ON users(user_type);
 CREATE INDEX idx_users_status  ON users(status);
 CREATE INDEX idx_users_created ON users(created_at);
 
--- ============================================================================
 -- TABLE: wallets (PayPulse core — single source of truth for balance)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS wallets (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -145,9 +134,7 @@ CREATE INDEX idx_wallets_status ON wallets(status);
 CREATE UNIQUE INDEX idx_system_wallet_unique ON wallets(wallet_type)
   WHERE user_id IS NULL;
 
--- ============================================================================
 -- TABLE: ledger_entries (double-entry bookkeeping — immutable)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS ledger_entries (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   wallet_id       UUID NOT NULL,
@@ -179,12 +166,9 @@ CREATE INDEX idx_ledger_created   ON ledger_entries(created_at DESC);
 CREATE INDEX idx_ledger_type      ON ledger_entries(entry_type);
 CREATE INDEX idx_ledger_reversal  ON ledger_entries(is_reversed) WHERE is_reversed = TRUE;
 
--- ============================================================================
 -- CONSTRAINT TRIGGER (DEFERRABLE): validasi double-entry di akhir transaksi
--- ============================================================================
 -- reference_id WAJIB untuk semua transaksi finansial (kecuali system adjustment).
 -- SUM(DEBIT) harus = SUM(CREDIT) per reference_id.
--- ============================================================================
 CREATE OR REPLACE FUNCTION validate_ledger_balance()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -221,9 +205,7 @@ AFTER INSERT ON ledger_entries
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION validate_ledger_balance();
 
--- ============================================================================
 -- IMMUTABILITY: ledger entries tidak bisa dimodifikasi (kecuali is_reversed)
--- ============================================================================
 CREATE OR REPLACE FUNCTION raise_immutability_error()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -246,9 +228,7 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER ledger_immutable BEFORE UPDATE OR DELETE ON ledger_entries
 FOR EACH ROW EXECUTE FUNCTION raise_immutability_error();
 
--- ============================================================================
 -- TRIGGER sync_wallet_balance
--- ============================================================================
 -- DESIGN DECISION #3 (PENTING):
 --   Trigger ini hanya mengupdate `ledger_entries.balance_after` dan
 --   `wallets.balance`. Trigger TIDAK melakukan `SELECT ... FOR UPDATE`
@@ -261,7 +241,6 @@ FOR EACH ROW EXECUTE FUNCTION raise_immutability_error();
 --   balapan terhadap `UPDATE wallets SET balance = balance +/- ...` di sini.
 --
 --   UPDATE is_reversed=true -> reversal (entry lama di-kompensasi).
--- ============================================================================
 CREATE OR REPLACE FUNCTION sync_wallet_balance()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -301,9 +280,7 @@ CREATE TRIGGER ledger_sync_balance
 BEFORE INSERT OR UPDATE OF is_reversed ON ledger_entries
 FOR EACH ROW EXECUTE FUNCTION sync_wallet_balance();
 
--- ============================================================================
 -- TABLE: idempotency_cache (duplicate prevention — L2 PostgreSQL)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS idempotency_cache (
   key           VARCHAR(255) PRIMARY KEY,
   user_id       UUID NOT NULL,
@@ -327,9 +304,7 @@ CREATE INDEX idx_idempotency_user    ON idempotency_cache(user_id);
 CREATE INDEX idx_idempotency_expires ON idempotency_cache(expires_at);
 CREATE INDEX idx_idempotency_state   ON idempotency_cache(state) WHERE state = 'PROCESSING';
 
--- ============================================================================
 -- TABLE: topup_transactions (intermediary — PENDING -> COMPLETED/FAILED/EXPIRED)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS topup_transactions (
   id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                UUID NOT NULL,
@@ -368,16 +343,13 @@ CREATE INDEX idx_topup_status  ON topup_transactions(status);
 CREATE INDEX idx_topup_created ON topup_transactions(requested_at DESC);
 CREATE INDEX idx_topup_external ON topup_transactions(external_transaction_id);
 
--- ============================================================================
 -- SEED: SYSTEM USERS & SYSTEM WALLETS
--- ============================================================================
 -- Menggunakan UUID fixed deterministik:
 --   SYSTEM_ESCROW       = ...0001
 --   SYSTEM_PLATFORM     = ...0002
 --   SYSTEM_BANK_GATEWAY = ...0003
 -- password_hash dikosong-kan ("SYSTEM_USER" sentinel) karena akun sistem
 -- tidak melakukan login password.
--- ============================================================================
 INSERT INTO users (id, email, name, user_type, status, password_hash, is_online) VALUES
   ('00000000-0000-0000-0000-000000000001', 'system.escrow@g-flow.system',     'SYSTEM_ESCROW',       'system', 'ACTIVE', 'SYSTEM_USER', FALSE),
   ('00000000-0000-0000-0000-000000000002', 'system.platform@g-flow.system',   'SYSTEM_PLATFORM',     'system', 'ACTIVE', 'SYSTEM_USER', FALSE),
@@ -396,14 +368,11 @@ INSERT INTO wallets (id, user_id, wallet_type, balance, status) VALUES
   ('00000000-0000-0000-0000-000000000003', NULL, 'SYSTEM_BANK_GATEWAY', 0, 'ACTIVE')
 ON CONFLICT DO NOTHING;
 
--- ============================================================================
 -- ROW-LEVEL SECURITY (RLS) — Phase 1 core tables
--- ============================================================================
 -- Catatan: Dalam konteks Supabase, auth.uid() & auth.jwt() tersedia.
 -- Untuk deployment non-Supabase (pure PostgreSQL + Go), RLS policies ini
 -- tetap dibuat agar schema konsisten, namun aplikasi bergantung pada
 -- layering RBAC di Go dan koneksi DB dengan role yang aman.
--- ============================================================================
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 -- CREATE POLICY "Users can view own data" ON users
 --   FOR SELECT USING (id = auth.uid());
@@ -446,11 +415,8 @@ ALTER TABLE topup_transactions DISABLE ROW LEVEL SECURITY;
 -- CREATE POLICY "Users can insert topup" ON topup_transactions
 --   FOR INSERT WITH CHECK (user_id = auth.uid());
 
--- ============================================================================
 -- POST-MIGRATION SANITY CHECKS (informational — bisa dijalankan manual)
--- ============================================================================
 -- SELECT id, email, user_type FROM users WHERE user_type = 'system';
 -- SELECT id, user_id, wallet_type, balance FROM wallets ORDER BY id;
--- ============================================================================
 
 -- END OF MIGRATION 001.

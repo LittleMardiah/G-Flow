@@ -35,9 +35,7 @@ func foodLockExpect(mDB pgxmock.PgxPoolIface, tag string) {
 		WillReturnResult(pgconn.NewCommandTag(tag))
 }
 
-// ============================================================================
 // settleFoodOrderTx — error branches
-// ============================================================================
 
 func TestSettleFoodOrderTx_NoDriver(t *testing.T) {
 	order := fFoodOrder(foodStatusInTransit, PaymentMethodCash, nil)
@@ -384,9 +382,7 @@ func TestSettleFoodOrderTx_SuccessCash(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // holdFoodEscrow — semua cabang
-// ============================================================================
 
 func Test_holdFoodEscrow_NoWallet(t *testing.T) {
 	svc := NewService(new(mockRepo), nil, nil, new(mockLedger))
@@ -518,9 +514,7 @@ func Test_holdFoodEscrow_Success(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // refundFoodEscrow — error branches
-// ============================================================================
 
 func Test_refundFoodEscrow_SystemWalletNotFound(t *testing.T) {
 	repo := new(mockRepo)
@@ -571,9 +565,7 @@ func Test_refundFoodEscrow_LedgerError(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // CreateFoodOrder — error branches
-// ============================================================================
 
 func TestCreateFoodOrder_GetCustomerError(t *testing.T) {
 	repo := new(mockRepo)
@@ -860,9 +852,7 @@ func TestCreateFoodOrder_RedisInvalidCached(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidCachedResponse)
 }
 
-// ============================================================================
 // UpdateFoodOrderStatus — error branches
-// ============================================================================
 
 func TestUpdateFoodOrderStatus_GetOrderError(t *testing.T) {
 	repo := new(mockRepo)
@@ -1097,9 +1087,7 @@ func TestUpdateFoodOrderStatus_CommitError(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // GetFoodOrder / History error branches
-// ============================================================================
 
 func TestGetFoodOrder_GetOrderError(t *testing.T) {
 	repo := new(mockRepo)
@@ -1137,9 +1125,7 @@ func TestGetFoodOrderHistory_ListError(t *testing.T) {
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 }
 
-// ============================================================================
 // redisSet + cacheResponse + misc coverage
-// ============================================================================
 
 func Test_redisSet_Writes(t *testing.T) {
 	mr := miniredis.RunT(t)

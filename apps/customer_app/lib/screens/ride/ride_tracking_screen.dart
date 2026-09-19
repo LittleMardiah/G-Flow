@@ -280,9 +280,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       id.length > 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase();
 }
 
-// ---------------------------------------------------------------------------
 // Status (stepper)
-// ---------------------------------------------------------------------------
 
 class _StatusCard extends StatelessWidget {
   const _StatusCard({required this.order, this.driverLocation});
@@ -445,9 +443,7 @@ class _StatusStepper extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Kartu driver
-// ---------------------------------------------------------------------------
 
 class _DriverCard extends StatelessWidget {
   const _DriverCard({
@@ -599,9 +595,7 @@ class _SearchingCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Rincian order
-// ---------------------------------------------------------------------------
 
 class _OrderDetailsCard extends StatelessWidget {
   const _OrderDetailsCard({required this.order});
@@ -703,9 +697,7 @@ class _OrderDetailsCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Aksi terminal & cancel
-// ---------------------------------------------------------------------------
 
 class _TerminalBox extends StatelessWidget {
   const _TerminalBox({required this.order, required this.onDone});
@@ -778,9 +770,7 @@ class _CancelButton extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Error & helper view
-// ---------------------------------------------------------------------------
 
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.message, required this.onRetry});
@@ -871,9 +861,7 @@ class _DemoBadge extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Helper murni
-// ---------------------------------------------------------------------------
 
 const Map<String, String> _statusText = {
   'SEARCHING_DRIVER': 'Mencari driver',

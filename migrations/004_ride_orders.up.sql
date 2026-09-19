@@ -1,13 +1,10 @@
--- ============================================================================
 -- MIGRATION 004: RIDE HAILING (Phase 2) — ride_orders, ride_order_events,
 --                 driver_locations, enums
--- ============================================================================
 -- Version : 004
 -- Phase   : 2 (Ride Hailing / G-Ride)
 -- Doc ref : DATABASE_SCHEMA v10.4-FINAL (LOCKED), ROADMAP_02 v2.3-FINAL,
 --           API_CONTRACT v1.0, LOGIC_FLOW v6.1-FINAL
 --
--- ============================================================================
 -- DESIGN DECISIONS (disepakati bersama sebelum menulis migration):
 --   1. STATUS MACHINE: TIDAK ada status EXPIRED di enum. Time-out order /
 --      auto-cancel worker diwakili oleh CANCELLED + cancellation_reason.
@@ -53,11 +50,8 @@
 --      trigger dari DATABASE_SCHEMA v10.4 (LOCKED) untuk konsistensi.
 --      ★ Trigger update_driver_online_timestamp perlu direview (menulis
 --      ke users pada setiap update lokasi = write amplification).
--- ============================================================================
 
--- ============================================================================
 -- ENUMS (Phase 2)
--- ============================================================================
 CREATE TYPE order_status_enum AS ENUM (
   'CREATED', 'SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'DRIVER_ARRIVED',
   'TRIP_STARTED', 'COMPLETED', 'CANCELLED', 'SETTLED'
@@ -65,13 +59,10 @@ CREATE TYPE order_status_enum AS ENUM (
 
 CREATE TYPE payment_method_enum AS ENUM ('WALLET', 'CASH', 'QRIS', 'CREDIT_CARD');
 
--- ============================================================================
 -- TABLE: ride_orders (G-Ride) — core order
--- ============================================================================
 -- Status flow : CREATED → SEARCHING_DRIVER → DRIVER_ASSIGNED →
 --               DRIVER_ARRIVED → TRIP_STARTED → COMPLETED → SETTLED
 --               (atau → CANCELLED dari status apa pun yang belum final)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS ride_orders (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -149,9 +140,7 @@ CREATE INDEX idx_ride_payment ON ride_orders(payment_method);
 CREATE INDEX idx_ride_expires ON ride_orders(expires_at)
   WHERE status = 'SEARCHING_DRIVER';
 
--- ============================================================================
 -- TABLE: ride_order_events (audit trail status transisi)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS ride_order_events (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id     UUID NOT NULL,
@@ -171,12 +160,9 @@ CREATE TABLE IF NOT EXISTS ride_order_events (
 CREATE INDEX idx_ride_events_order ON ride_order_events(order_id);
 CREATE INDEX idx_ride_events_created ON ride_order_events(created_at DESC);
 
--- ============================================================================
 -- TABLE: driver_locations (untuk driver matching spatial)
--- ============================================================================
 -- TIDAK ada di migration 001 (hanya komentar). DIBUAT di sini.
 -- Colom mengikuti spec + DATABASE_SCHEMA v10.4.
--- ============================================================================
 CREATE TABLE IF NOT EXISTS driver_locations (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   driver_id   UUID NOT NULL UNIQUE,
@@ -211,9 +197,7 @@ CREATE TRIGGER driver_location_online_update
 AFTER INSERT OR UPDATE ON driver_locations
 FOR EACH ROW EXECUTE FUNCTION update_driver_online_timestamp();
 
--- ============================================================================
 -- ROW-LEVEL SECURITY (menyusul di Phase 4 / hardening — lihat keputusan #8)
--- ============================================================================
 -- ALTER TABLE ride_orders ENABLE ROW LEVEL SECURITY;
 -- CREATE POLICY "Users can view own ride orders" ON ride_orders
 --   FOR SELECT USING (customer_id = auth.uid() OR driver_id = auth.uid());
@@ -237,15 +221,12 @@ FOR EACH ROW EXECUTE FUNCTION update_driver_online_timestamp();
 -- CREATE POLICY "Anyone can view driver locations" ON driver_locations
 --   FOR SELECT USING (TRUE);
 
--- ============================================================================
 -- POST-MIGRATION SANITY CHECKS (informational — bisa dijalankan manual)
--- ============================================================================
 -- SELECT enum_range(NULL::order_status_enum);
 -- SELECT enum_range(NULL::payment_method_enum);
 -- \d ride_orders
 -- \d ride_order_events
 -- \d driver_locations
 -- SELECT count(*) FROM pg_indexes WHERE tablename = 'ride_orders';
--- ============================================================================
 
 -- END OF MIGRATION 004.

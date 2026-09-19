@@ -1,6 +1,4 @@
--- ============================================================================
 -- SEED: PHASE 3 — FOOD MERCHANTS (Task 3.1)
--- ============================================================================
 -- 5 merchant seed: food_merchants + merchant_menus + merchant_items,
 -- lengkap dengan users (user_type='merchant') & wallets ( MERCHANT ).
 --
@@ -11,13 +9,10 @@
 --     merchant_id= 30000000-0000-0000-0000-00000000000{i}
 --   menu & item id memakai pola 4/5xxxxx-.... yang tetap.
 -- Semua INSERT idempotent (ON CONFLICT DO NOTHING) sehingga aman diulang.
--- ============================================================================
 
 BEGIN;
 
--- ============================================================================
 -- 1) USERS (merchant accounts)
--- ============================================================================
 INSERT INTO users (id, email, phone, name, user_type, status, password_hash, kyc_status, created_at, updated_at)
 VALUES
   ('10000000-0000-0000-0000-000000000001', 'warung.nusantara@g-flow.dev',    '+6281200000001', 'Warung Nusantara',       'merchant', 'ACTIVE', 'SEED_USER_NOLOGIN', 'VERIFIED', NOW(), NOW()),
@@ -27,9 +22,7 @@ VALUES
   ('10000000-0000-0000-0000-000000000005', 'kopi.kita@g-flow.dev',          '+6281200000005', 'Kopi Kita',              'merchant', 'ACTIVE', 'SEED_USER_NOLOGIN', 'VERIFIED', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
--- ============================================================================
 -- 2) WALLETS (MERCHANT)
--- ============================================================================
 INSERT INTO wallets (id, user_id, wallet_type, balance, status, created_at, updated_at)
 VALUES
   ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'MERCHANT', 0, 'ACTIVE', NOW(), NOW()),
@@ -39,9 +32,7 @@ VALUES
   ('20000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-000000000005', 'MERCHANT', 0, 'ACTIVE', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
--- ============================================================================
 -- 3) FOOD MERCHANTS
--- ============================================================================
 INSERT INTO food_merchants (
   id, user_id, merchant_name, merchant_description, category,
   latitude, longitude, address, phone,
@@ -81,9 +72,7 @@ INSERT INTO food_merchants (
   )
 ON CONFLICT (id) DO NOTHING;
 
--- ============================================================================
 -- 4) MERCHANT MENUS
--- ============================================================================
 INSERT INTO merchant_menus (id, merchant_id, name, description, sequence_order, is_active)
 VALUES
   -- Merchant 1: Warung Nusantara
@@ -103,9 +92,7 @@ VALUES
   ('40000000-0000-0000-0000-00000000000A', '30000000-0000-0000-0000-000000000005', 'Non-Kopi', 'Minuman tanpa kopi', 2, TRUE)
 ON CONFLICT (id) DO NOTHING;
 
--- ============================================================================
 -- 5) MERCHANT ITEMS
--- ============================================================================
 INSERT INTO merchant_items (id, menu_id, merchant_id, name, description, price, image_url, stock, is_available)
 VALUES
   -- Merchant 1: Warung Nusantara — Menu Utama

@@ -1,6 +1,4 @@
--- ============================================================================
 -- MIGRATION 013: SEND STOP STATUS ENUM 4-NILAI (TD-015)
--- ============================================================================
 -- Menyelaraskan status send_order_stops dengan ROADMAP 03 (3.5.1 / 3.6.3):
 --   SEBELUM : PENDING, ARRIVED, COMPLETED, SKIPPED
 --   SESUDAH : PENDING, PICKED_UP, DELIVERED, CANCELLED
@@ -15,7 +13,6 @@
 --   ARRIVED   -> PICKED_UP
 --   COMPLETED -> DELIVERED
 --   SKIPPED   -> CANCELLED
--- ============================================================================
 
 ALTER TABLE send_order_stops DROP CONSTRAINT IF EXISTS stops_status_valid;
 
@@ -27,6 +24,4 @@ ALTER TABLE send_order_stops
   ADD CONSTRAINT stops_status_valid
   CHECK (status IN ('PENDING', 'PICKED_UP', 'DELIVERED', 'CANCELLED'));
 
--- ============================================================================
 -- END OF MIGRATION 013
--- ============================================================================

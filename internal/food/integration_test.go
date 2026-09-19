@@ -433,12 +433,10 @@ func (e *testEnv) getFoodOrderStatus(t *testing.T, ctx context.Context, orderID 
 	return status
 }
 
-// ============================================================================
 // TC-FOOD-001 — E2E WALLET: merchant register → order → merchant confirm →
 // driver pickup → delivery → settlement 4-way. Escrow dilepas penuh, merchant
 // 85%, driver 90% delivery fee, platform 15% item + 10% delivery fee, ledger
 // double-entry seimbang.
-// ============================================================================
 func TestIntegrationFood_TC_FOOD_001_E2EWalletSettlement(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -524,11 +522,9 @@ func TestIntegrationFood_TC_FOOD_001_E2EWalletSettlement(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-FOOD-002 — E2E CASH: settlement 3-entry dari wallet driver (merchant
 // share + komisi item + komisi delivery). Saldo driver menembus ceiling
 // -50.000 → driver di-SUSPENDED.
-// ============================================================================
 func TestIntegrationFood_TC_FOOD_002_CashDriverSuspended(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -601,10 +597,8 @@ func TestIntegrationFood_TC_FOOD_002_CashDriverSuspended(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-FOOD-003 — Customer cancel sebelum merchant mengonfirmasi → full refund
 // escrow (customer balance pulih, SYSTEM_ESCROW kembali 0, is_refunded TRUE).
-// ============================================================================
 func TestIntegrationFood_TC_FOOD_003_CustomerCancelFullRefund(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -644,10 +638,8 @@ func TestIntegrationFood_TC_FOOD_003_CustomerCancelFullRefund(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-FOOD-004 — Driver emergency cancel (setelah PICKED_UP): order CANCELLED,
 // escrow WALLET di-refund penuh, dan working_status driver kembali IDLE.
-// ============================================================================
 func TestIntegrationFood_TC_FOOD_004_DriverEmergencyCancel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -699,11 +691,9 @@ func TestIntegrationFood_TC_FOOD_004_DriverEmergencyCancel(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-FOOD-005 — Auto-cancel worker (Task 3.7): food order berstatus CREATED
 // yang menunggu konfirmasi merchant > 15 menit dibatalkan otomatis. Untuk
 // WALLET, escrow memegang dana customer → semua dana di-refund penuh.
-// ============================================================================
 func TestIntegrationFood_TC_FOOD_005_AutoCancelExpired(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

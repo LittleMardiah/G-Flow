@@ -181,9 +181,7 @@ class OrderService {
     return unwrapData(res.data) ?? const <String, dynamic>{};
   }
 
-  // ---------------------------------------------------------------------------
   // Mock dataset (DEMO) — konsisten dengan koordinat kampus UI G-Flow.
-  // ---------------------------------------------------------------------------
 
   static const double _baseLat = -6.2088;
   static const double _baseLng = 106.8456;

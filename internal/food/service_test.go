@@ -348,9 +348,7 @@ func setupFoodDB(mDB pgxmock.PgxPoolIface, idemKey string, owner uuid.UUID) {
 		WillReturnResult(pgconn.NewCommandTag("SET"))
 }
 
-// ============================================================================
 // RegisterMerchant
-// ============================================================================
 
 func TestRegisterMerchant_Success(t *testing.T) {
 	repo := new(mockRepo)
@@ -422,9 +420,7 @@ func TestRegisterMerchant_AlreadyExists(t *testing.T) {
 	assert.ErrorIs(t, err, ErrMerchantAlreadyExists)
 }
 
-// ============================================================================
 // UpdateMerchant & catalog
-// ============================================================================
 
 func TestUpdateMerchant_Success(t *testing.T) {
 	repo := new(mockRepo)
@@ -660,9 +656,7 @@ func TestSearchMerchants_NoDistance(t *testing.T) {
 	assert.Nil(t, res[0].DistanceKm)
 }
 
-// ============================================================================
 // CreateFoodOrder — WALLET & CASH
-// ============================================================================
 
 func TestCreateFoodOrder_Success_Wallet(t *testing.T) {
 	repo := new(mockRepo)
@@ -905,9 +899,7 @@ func TestCreateFoodOrder_IdempotentRedis(t *testing.T) {
 	assert.Equal(t, foodStatusConfirmed, resp.Status)
 }
 
-// ============================================================================
 // UpdateFoodOrderStatus — merchant / driver / customer / settlement
-// ============================================================================
 
 func TestUpdateFoodOrderStatus_MerchantConfirm(t *testing.T) {
 	repo := new(mockRepo)
@@ -1162,9 +1154,7 @@ func TestUpdateFoodOrderStatus_LockTimeout(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLockTimeout)
 }
 
-// ============================================================================
 // GetFoodOrder / Items / History
-// ============================================================================
 
 func TestGetFoodOrder_AsCustomer(t *testing.T) {
 	repo := new(mockRepo)
@@ -1231,9 +1221,7 @@ func TestGetFoodOrderHistory_Paging(t *testing.T) {
 	assert.Empty(t, orders)
 }
 
-// ============================================================================
 // helper coverage
-// ============================================================================
 
 func TestFood_Helpers(t *testing.T) {
 	assert.True(t, validLatLng(-6.2, 106.8))

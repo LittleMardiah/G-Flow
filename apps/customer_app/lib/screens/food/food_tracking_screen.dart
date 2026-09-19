@@ -103,7 +103,6 @@ class FoodTrackingScreen extends ConsumerWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 
 class _StatusCard extends StatelessWidget {
   const _StatusCard({required this.order});

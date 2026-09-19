@@ -1,15 +1,12 @@
--- ============================================================================
 -- MIGRATION 005: FOOD & SEND (Phase 3) — food_merchants, merchant_menus,
 --                 merchant_items, item_option_groups, item_options,
 --                 merchant_item_option_groups, food_orders, food_order_items,
 --                 food_order_events, send_orders, send_order_stops,
 --                 send_order_events
--- ============================================================================
 -- Version : 005
 -- Phase   : 3 (Food Delivery & Logistics / G-Food & G-Send)
 -- Doc ref : DATABASE_SCHEMA v10.4-FINAL (LOCKED), ROADMAP_03 v2.3-FINAL
 --
--- ============================================================================
 -- DESIGN DECISIONS (disepakati mengikuti keputusan Migration 004):
 --   1. ENUM: food_order_status_enum, send_order_status_enum, package_type_enum
 --      BELUM ada di migration 001-004. Dibuat di sini. payment_method_enum
@@ -39,11 +36,8 @@
 --      Trigger process_cash_settlement dipasang ke food_orders & send_orders.
 --      (Untuk ride_orders, settlement CASH sudah ditangani di Go service
 --      layer Phase 2 — tidak dibuka ulang di sini.)
--- ============================================================================
 
--- ============================================================================
 -- ENUMS (Phase 3)
--- ============================================================================
 CREATE TYPE food_order_status_enum AS ENUM (
   'CREATED', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP',
   'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED', 'SETTLED'
@@ -56,9 +50,7 @@ CREATE TYPE send_order_status_enum AS ENUM (
 
 CREATE TYPE package_type_enum AS ENUM ('STANDARD', 'FRAGILE', 'LIQUID', 'ELECTRONICS');
 
--- ============================================================================
 -- TABLE: food_merchants (G-Food — Merchant / Restoran)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS food_merchants (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id             UUID NOT NULL UNIQUE,
@@ -106,9 +98,7 @@ CREATE INDEX idx_food_merchants_status ON food_merchants(status);
 -- CREATE POLICY "Merchants can update own data" ON food_merchants
 --   FOR UPDATE USING (user_id = auth.uid());
 
--- ============================================================================
 -- TABLE: merchant_menus (G-Food — Kelompok menu merchant)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS merchant_menus (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id     UUID NOT NULL,
@@ -136,9 +126,7 @@ CREATE INDEX idx_merchant_menus_merchant ON merchant_menus(merchant_id);
 --     merchant_id IN (SELECT id FROM food_merchants WHERE user_id = auth.uid())
 --   );
 
--- ============================================================================
 -- TABLE: merchant_items (G-Food — Item / produk merchant)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS merchant_items (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   menu_id         UUID NOT NULL,
@@ -175,9 +163,7 @@ CREATE INDEX idx_merchant_items_available ON merchant_items(is_available)
 --     merchant_id IN (SELECT id FROM food_merchants WHERE user_id = auth.uid())
 --   );
 
--- ============================================================================
 -- TABLE: item_option_groups (G-Food — Grup opsi item, mis. Ukuran / Topping)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS item_option_groups (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   merchant_id     UUID NOT NULL,
@@ -213,9 +199,7 @@ CREATE INDEX idx_option_groups_merchant ON item_option_groups(merchant_id);
 --     merchant_id IN (SELECT id FROM food_merchants WHERE user_id = auth.uid())
 --   );
 
--- ============================================================================
 -- TABLE: item_options (G-Food — Opsi spesifik, mis. Small/Large/Extra Cheese)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS item_options (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   option_group_id     UUID NOT NULL,
@@ -249,9 +233,7 @@ CREATE INDEX idx_options_merchant ON item_options(merchant_id);
 --     merchant_id IN (SELECT id FROM food_merchants WHERE user_id = auth.uid())
 --   );
 
--- ============================================================================
 -- TABLE: merchant_item_option_groups (G-Food — tabel junction item ↔ opsi)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS merchant_item_option_groups (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id         UUID NOT NULL,
@@ -281,13 +263,10 @@ CREATE INDEX idx_item_option_groups_group ON merchant_item_option_groups(option_
 --             merchant_id IN (SELECT id FROM food_merchants WHERE user_id = auth.uid()))
 --   );
 
--- ============================================================================
 -- TABLE: food_orders (G-Food — order makanan)
--- ============================================================================
 -- Status flow : CREATED → CONFIRMED → PREPARING → READY_FOR_PICKUP →
 --               PICKED_UP → IN_TRANSIT → DELIVERED → SETTLED
 --               (atau → CANCELLED dari status apa pun yang belum final)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS food_orders (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -347,9 +326,7 @@ CREATE TABLE IF NOT EXISTS food_orders (
   -- voucher_id: tidak ada FK (lihat keputusan #2).
 );
 
--- ============================================================================
 -- Trigger auto-calc driver_earning (delivery_fee * 0.9)
--- ============================================================================
 CREATE OR REPLACE FUNCTION calc_food_driver_earning()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -379,9 +356,7 @@ CREATE INDEX idx_food_orders_payment ON food_orders(payment_method);
 -- CREATE POLICY "Users can update own food orders" ON food_orders
 --   FOR UPDATE USING (customer_id = auth.uid() OR merchant_id = auth.uid() OR driver_id = auth.uid());
 
--- ============================================================================
 -- TABLE: food_order_items (G-Food — item dari order makanan)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS food_order_items (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id            UUID NOT NULL,
@@ -430,9 +405,7 @@ CREATE INDEX idx_food_order_items_options ON food_order_items USING GIN (options
 --     EXISTS (SELECT 1 FROM food_orders WHERE id = order_id AND customer_id = auth.uid())
 --   );
 
--- ============================================================================
 -- TABLE: food_order_events (G-Food — audit trail transisi status)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS food_order_events (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id     UUID NOT NULL,
@@ -462,13 +435,10 @@ CREATE INDEX idx_food_events_created ON food_order_events(created_at DESC);
 -- CREATE POLICY "System can insert food events" ON food_order_events
 --   FOR INSERT WITH CHECK (TRUE);
 
--- ============================================================================
 -- TABLE: send_orders (G-Send — order pengiriman paket)
--- ============================================================================
 -- Status flow : CREATED → SEARCHING_DRIVER → DRIVER_ASSIGNED → PICKED_UP →
 --               IN_TRANSIT → DELIVERED → SETTLED
 --               (atau → CANCELLED dari status apa pun yang belum final)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS send_orders (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -548,9 +518,7 @@ CREATE INDEX idx_send_orders_payment ON send_orders(payment_method);
 -- CREATE POLICY "Users can update own send orders" ON send_orders
 --   FOR UPDATE USING (sender_id = auth.uid() OR driver_id = auth.uid());
 
--- ============================================================================
 -- TABLE: send_order_stops (G-Send — multi-stop dengan alokasi ongkos)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS send_order_stops (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id            UUID NOT NULL,
@@ -612,9 +580,7 @@ CREATE INDEX idx_send_stops_created ON send_order_stops(completed_at DESC);
 --     EXISTS (SELECT 1 FROM send_orders WHERE id = order_id AND driver_id = auth.uid())
 --   );
 
--- ============================================================================
 -- TABLE: send_order_events (G-Send — audit trail transisi status)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS send_order_events (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id     UUID NOT NULL,
@@ -639,14 +605,11 @@ CREATE INDEX idx_send_events_created ON send_order_events(created_at DESC);
 -- CREATE POLICY "System can insert send events" ON send_order_events
 --   FOR INSERT WITH CHECK (TRUE);
 
--- ============================================================================
 -- FUNCTION: process_cash_settlement (G-Food & G-Send cash settlement)
--- ============================================================================
 -- Dipasang ke food_orders & send_orders. Saat order TUNGGU (CASH) berubah ke
 -- SETTLED, komisi platform di-DEBIT dari wallet driver & di-CREDIT ke
 -- SYSTEM_PLATFORM (driver menyetor kas dari customer). Menggunakan NEW.*
 -- (keputusan DATABASE_SCHEMA v10.4 — tanpa SELECT ulang redundant).
--- ============================================================================
 CREATE OR REPLACE FUNCTION process_cash_settlement()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -699,15 +662,12 @@ CREATE TRIGGER send_order_cash_settlement
 AFTER UPDATE OF status ON send_orders
 FOR EACH ROW EXECUTE FUNCTION process_cash_settlement();
 
--- ============================================================================
 -- POST-MIGRATION SANITY CHECKS (informational — bisa dijalankan manual)
--- ============================================================================
 -- SELECT enum_range(NULL::food_order_status_enum);
 -- SELECT enum_range(NULL::send_order_status_enum);
 -- SELECT enum_range(NULL::package_type_enum);
 -- \d food_merchants
 -- \d send_orders
 -- SELECT count(*) FROM pg_indexes WHERE tablename = 'food_orders';
--- ============================================================================
 
 -- END OF MIGRATION 005.

@@ -406,11 +406,9 @@ func (e *testEnv) getSendOrderStatus(t *testing.T, ctx context.Context, orderID 
 	return status
 }
 
-// ============================================================================
 // TC-SEND-001 — E2E WALLET single stop: create → driver accept → pickup →
 // stop COMPLETED → auto DELIVERED/3-way settlement. Escrow dilepas 90/10,
 // driver kembali IDLE, ledger seimbang.
-// ============================================================================
 func TestIntegrationSend_TC_SEND_001_E2EWalletSingleStop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -461,11 +459,9 @@ func TestIntegrationSend_TC_SEND_001_E2EWalletSingleStop(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-SEND-002 — E2E WALLET multi-stop (2 stops): stop pertama COMPLETED tidak
 // memicu settlement; setelah seluruh stop COMPLETED → auto DELIVERED + 3-way
 // settlement. Allocated fare terverifikasi (sum == total_fare).
-// ============================================================================
 func TestIntegrationSend_TC_SEND_002_MultiStopSettlement(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -532,11 +528,9 @@ func TestIntegrationSend_TC_SEND_002_MultiStopSettlement(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-SEND-003 — Capacity driver max 3: sekaligus menguji dua guard nyata:
 // (1) driver BUSY → accept order lain ditolak 409 DRIVER_BUSY; (2) kapasitas
 // 3 order aktif → order ke-4 ditolak 422 DRIVER_CAPACITY_EXCEEDED.
-// ============================================================================
 func TestIntegrationSend_TC_SEND_003_DriverCapacity(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -606,10 +600,8 @@ func (e *testEnv) lastErrorCode(t *testing.T, orderID uuid.UUID, driverToken str
 	return out.Error.Code
 }
 
-// ============================================================================
 // TC-SEND-004 — Driver emergency cancel (setelah PICKED_UP): order CANCELLED,
 // escrow WALLET di-refund penuh, working_status driver kembali IDLE.
-// ============================================================================
 func TestIntegrationSend_TC_SEND_004_DriverEmergencyCancel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -649,11 +641,9 @@ func TestIntegrationSend_TC_SEND_004_DriverEmergencyCancel(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
-// ============================================================================
 // TC-SEND-005 — Auto-cancel worker (Task 3.7): send order SEARCHING_DRIVER
 // yang menunggu driver > 10 menit dibatalkan otomatis. WALLET → escrow
 // di-refund penuh; CASH → cancel tanpa escrow.
-// ============================================================================
 func TestIntegrationSend_TC_SEND_005_AutoCancelExpired(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

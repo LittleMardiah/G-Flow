@@ -1,6 +1,4 @@
--- ============================================================================
 -- MIGRATION 009: Add missing updated_at on order tables
--- ============================================================================
 -- Migration 005 melupakan kolom updated_at pada food_orders, send_orders, dan
 -- send_order_stops, padahal seluruh query status/settlement/accept/stop
 -- (food & send repository, worker auto-cancel) menulis updated_at = NOW().
@@ -11,7 +9,6 @@
 -- tabel order sebelumnya).
 --
 -- PATCH: psql -h localhost -p 15432 -U postgres -d g_flow_dev -f 009_fix_order_updated_at.up.sql
--- ============================================================================
 
 ALTER TABLE food_orders
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();

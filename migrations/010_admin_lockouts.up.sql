@@ -1,6 +1,4 @@
--- ============================================================================
 -- MIGRATION 010: TRANSACTION REVERSAL (Task 4.2.4)
--- ============================================================================
 -- Version : 010
 -- Task    : 4.2 Transaction Reversal
 -- Doc ref : ROADMAP 04 HARDENING DEPLOY.txt — 4.2.4
@@ -14,7 +12,6 @@
 --   3. Perluasan enum `wallet_type_enum` dengan SYSTEM_RECEIVABLE_OVERDRAFT
 --      (piutang platform) untuk mencatat shortfall saat clawback reversal
 --      melebihi saldo merchant/driver/platform.
--- ============================================================================
 
 -- 1) admin_lockouts
 CREATE TABLE IF NOT EXISTS admin_lockouts (

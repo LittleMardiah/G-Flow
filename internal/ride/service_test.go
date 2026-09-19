@@ -214,9 +214,7 @@ func timeNowFuture() *time.Time {
 	return &t
 }
 
-// ============================================================================
 // BookRide
-// ============================================================================
 
 func TestBookRide_Success(t *testing.T) {
 	repo := new(mockRepo)
@@ -495,9 +493,7 @@ func TestBookRide_TransitionFailed(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
-// ============================================================================
 // GetOrder
-// ============================================================================
 
 func TestGetOrder(t *testing.T) {
 	repo := new(mockRepo)
@@ -514,9 +510,7 @@ func TestGetOrder(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
-// ============================================================================
 // AcceptOrder
-// ============================================================================
 
 func TestAcceptOrder_Success(t *testing.T) {
 	repo := new(mockRepo)
@@ -688,9 +682,7 @@ func TestAcceptOrder_AssignFailed(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
-// ============================================================================
 // CancelOrder
-// ============================================================================
 
 func TestCancelOrder_BeforeAssign(t *testing.T) {
 	repo := new(mockRepo)
@@ -873,9 +865,7 @@ func TestUpdateRideStatus_SimpleTransition(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // Settlement
-// ============================================================================
 
 func TestSettlement_WalletPayment(t *testing.T) {
 	repo := new(mockRepo)
@@ -1006,9 +996,7 @@ func TestSettlement_CashPayment_BelowCeiling_Suspended(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // Auto-Cancel Worker
-// ============================================================================
 
 func TestAutoCancelExpiredOrders(t *testing.T) {
 	repo := new(mockRepo)
@@ -1041,9 +1029,7 @@ func TestAutoCancelExpiredOrders(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// ============================================================================
 // helpers
-// ============================================================================
 
 func TestHaversineKm(t *testing.T) {
 	d := haversineKm(-6.2, 106.816666, -6.26, 106.816666)
@@ -1201,9 +1187,7 @@ func Test_validLatLng(t *testing.T) {
 	assert.False(t, validLatLng(0, -181))
 }
 
-// ============================================================================
 // Branch tambahan untuk menaikkan coverage service
-// ============================================================================
 
 func TestBookRide_GetCustomerError(t *testing.T) {
 	repo := new(mockRepo)
