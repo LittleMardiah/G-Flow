@@ -9,8 +9,6 @@ const strokeLine: IconProps = {
   strokeLinejoin: "round",
 };
 
-/* ---------- Social ---------- */
-
 export function GitHubIcon(props: IconProps) {
   return (
     <svg
@@ -53,8 +51,6 @@ export function LinkedInIcon(props: IconProps) {
   );
 }
 
-/* ---------- Feature icons (custom SVG) ---------- */
-
 export function RideIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" {...strokeLine} aria-hidden="true" {...props}>
@@ -94,8 +90,6 @@ export function WalletIcon(props: IconProps) {
     </svg>
   );
 }
-
-/* ---------- Tech logos ---------- */
 
 export function GoIcon(props: IconProps) {
   return (

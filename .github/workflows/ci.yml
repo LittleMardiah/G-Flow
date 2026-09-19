@@ -22,7 +22,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  # ---------- Detect path changes ----------
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -52,7 +51,6 @@ jobs:
             customer_app:
               - 'apps/customer_app/**'
 
-  # ---------- Go Backend ----------
   go-backend:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
@@ -95,7 +93,6 @@ jobs:
             coverage.out
             test-output.log
 
-  # ---------- Go Security Scan ----------
   go-security:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
@@ -117,7 +114,6 @@ jobs:
         with:
           sarif_file: gosec-results.sarif
 
-  # ---------- Landing Page (Next.js) ----------
   landing-page:
     needs: changes
     if: ${{ needs.changes.outputs.landing == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
@@ -160,7 +156,6 @@ jobs:
             echo "- Skipped: .next/ directory not found" >> $GITHUB_STEP_SUMMARY
           fi
 
-  # ---------- Flutter Apps (matrix: 3 apps) ----------
   flutter:
     needs: changes
     if: ${{ needs.changes.outputs.flutter == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
@@ -187,7 +182,6 @@ jobs:
         run: flutter test --reporter expanded
         continue-on-error: true
 
-  # ---------- Flutter Build Test (customer_app only) ----------
   flutter-build:
     needs: changes
     if: ${{ needs.changes.outputs.customer_app == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
@@ -207,7 +201,6 @@ jobs:
       - name: Build APK (debug)
         run: flutter build apk --debug --target-platform android-arm64
 
-  # ---------- CI Gate (final status) ----------
   ci-gate:
     if: always()
     needs: [go-backend, go-security, landing-page, flutter, flutter-build]
