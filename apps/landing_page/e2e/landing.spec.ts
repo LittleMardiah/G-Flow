@@ -1,4 +1,12 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, Page } from "@playwright/test";
+
+// Helper: screenshot ke test attachment (masuk ke HTML report).
+async function snap(page: Page, name: string) {
+  await test.info().attach(name, {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+}
 
 const URL = "/";
 
@@ -32,18 +40,28 @@ test("LP-01: Homepage render — hero, section & footer tampil", async ({
   page,
 }) => {
   await gotoHome(page);
+  await snap(page, "01-hero");
 
   const hero = page.locator("#beranda");
   await expect(hero).toBeVisible();
   await expect(hero.getByRole("heading", { level: 1 })).toContainText("Bayar");
 
   const layanan = page.locator("#layanan");
+  await layanan.scrollIntoViewIfNeeded();
   await expect(layanan).toBeVisible();
   await expect(layanan.getByRole("heading", { level: 2 }).first()).toBeVisible();
+  await snap(page, "02-layanan");
+
+  const kontak = page.locator("#kontak");
+  await kontak.scrollIntoViewIfNeeded();
+  await expect(kontak).toBeVisible();
+  await snap(page, "03-kontak");
 
   const contentinfo = page.getByRole("contentinfo");
+  await contentinfo.scrollIntoViewIfNeeded();
   await expect(contentinfo).toBeVisible();
   await expect(contentinfo).toContainText("G-Flow");
+  await snap(page, "04-footer");
 });
 
 test("LP-02: Navigasi anchor — klik link layanan scroll ke section", async ({
@@ -66,6 +84,9 @@ test("LP-02: Navigasi anchor — klik link layanan scroll ke section", async ({
     await expect(navLink).toBeVisible();
     await navLink.click();
     await expect(page.locator(section)).toBeInViewport();
+
+    if (link === "Layanan") await snap(page, "05-nav-layanan");
+    if (link === "Mitra") await snap(page, "06-nav-mitra");
   }
 });
 
@@ -107,12 +128,14 @@ test("LP-04: Contact form — submit kosong memunculkan validasi", async ({
   const form = page.locator("#kontak form");
   await form.scrollIntoViewIfNeeded();
   await expect(form).toBeVisible();
+  await snap(page, "07-form-empty");
 
   const submit = form.getByRole("button", { name: /kirim pengajuan kemitraan/i });
   await expect(submit).toBeVisible();
   await submit.click();
 
   await expect(form).toHaveText(/nama lengkap/i);
+  await snap(page, "08-form-validation");
   expect(page.url()).not.toContain("mailto:");
 
   const invalidFields = await form.locator("input:invalid, textarea:invalid").count();
@@ -127,10 +150,12 @@ test("LP-05: Responsive — desktop & mobile tanpa overflow horizontal", async (
   await page.setViewportSize({ width: 1280, height: 800 });
   await gotoHome(page);
   await expect(page.getByRole("navigation", { name: /navigasi utama/i })).toBeVisible();
+  await snap(page, "09-desktop-1280");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoHome(page);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await snap(page, "10-mobile-390");
 
   const hasHorizontalOverflow = await page.evaluate(() => {
     return document.documentElement.scrollWidth > document.documentElement.clientWidth;
