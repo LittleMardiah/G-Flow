@@ -170,6 +170,17 @@ docker-compose up -d   # postgres:15432, redis:6380
 
 ---
 
+## 11. Admin Default Credentials
+
+Akun admin default dibuat via migration `014_seed_admin.up.sql` (STEP 1C — admin auth, TD-024):
+
+- Email    : `admin@g-flow.local`
+- Password : `AdminP@ssw0rd!2026`
+
+> **Warning:** WAJIB ganti password setelah login pertama di production (TD-030).
+
+---
+
 ## Referensi
 
 - [Backend API](./API_REFERENCE.md)

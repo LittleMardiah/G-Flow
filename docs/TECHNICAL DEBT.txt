@@ -350,17 +350,38 @@ Judul      : Admin web (apps/admin_web) TIDAK punya login page / auth flow.
 Prioritas  : TINGGI
 Status     : OPEN (rencana: STEP 1F)
 
+ID         : TD-030
+Kategori   : SECURITY
+Judul      : Admin default password (AdminP@ssw0rd!2026) didokumentasikan
+             (migration 014 + DEPLOYMENT_GUIDE). Wajib ganti setelah login
+             pertama di production.
+Dampak     : Password default yang di-publish = celah kalau lupa diganti.
+Solusi     : Wajib reset password untuk akun admin setelah login pertama di
+             production (flow force-change-password).
+Prioritas  : TINGGI
+Status     : OPEN
+
+ID         : TD-031
+Kategori   : KODE
+Judul      : Bcrypt hash hardcoded di migration 014_seed_admin.up.sql.
+Dampak     : Hash tidak bisa dirotasi tanpa edit migration; password default
+             konstan di semua environment.
+Solusi     : Untuk production, pertimbangkan env-driven seeding (seed admin
+             via env ADMIN_PASSWORD / script, bukan hardcode migration).
+Prioritas  : SEDANG
+Status     : OPEN
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 27 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 29 item
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
-- TINGGI  : 12 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027)
-- SEDANG  : 6 item  (TD-011 s/d TD-015, TD-026)
+- TINGGI  : 13 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030)
+- SEDANG  : 7 item  (TD-011 s/d TD-015, TD-026, TD-031)
 - RENDAH  : 6 item  (TD-016 s/d TD-019, TD-021, TD-022)
 
-STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 5 item OPEN (TD-022, TD-024 s/d TD-027).
+STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 7 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -382,16 +403,20 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 27 item.
+   - Total hutang teridentifikasi      : 29 item.
    - Sudah FIXED/CLOSED                : 21 item (TD-001 s/d TD-009, TD-011 s/d TD-021, TD-023).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 5 item (TD-022 - Language toggle UI; TD-024, TD-025,
-                                         TD-026, TD-027 - admin auth flow, STEP 1C-1F).
+   - ❌ OPEN                           : 7 item (TD-022 - Language toggle UI; TD-024, TD-025,
+                                         TD-026, TD-027 - admin auth flow, STEP 1C-1F;
+                                         TD-030 - ganti password default admin; TD-031 -
+                                         bcrypt hash hardcoded di migration 014).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
      TD-024 s/d TD-027 (OPEN - rencana STEP 1C-1F: admin seed, login+2FA endpoint,
      lockout refactor, admin web login).
+   - STEP 1C (2026-09-20) menambahkan TD-030 & TD-031. Migration seed admin
+     (014_seed_admin.up.sql) dibuat, belum dijalankan (menunggu user).
    - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================
