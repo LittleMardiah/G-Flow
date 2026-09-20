@@ -371,17 +371,38 @@ Solusi     : Untuk production, pertimbangkan env-driven seeding (seed admin
 Prioritas  : SEDANG
 Status     : OPEN
 
-================================================================================
+ID         : TD-032
+Kategori   : INFRA
+Judul      : docker-compose.yml paksa `platform: linux/amd64`. Di ARM
+             (Apple M-series), bakal emulasi lambat.
+Prioritas  : RENDAH
+Status     : OPEN (ga urgent untuk WSL x86_64)
+
+ID         : TD-033
+Kategori   : SECURITY
+Judul      : POSTGRES_PASSWORD `password` hardcoded di docker-compose.yml.
+             OK untuk dev lokal, tapi jangan dipakai di production.
+Prioritas  : RENDAH
+Status     : OPEN
+
+ID         : TD-034
+Kategori   : INFRA
+Judul      : redis:7-alpine belum upgrade ke redis:7.4-alpine (latest).
+             Minor, bukan blocker.
+Prioritas  : RENDAH
+Status     : OPEN
+
+===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 29 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 32 item
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
 - TINGGI  : 13 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030)
 - SEDANG  : 7 item  (TD-011 s/d TD-015, TD-026, TD-031)
-- RENDAH  : 6 item  (TD-016 s/d TD-019, TD-021, TD-022)
+- RENDAH  : 9 item  (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034)
 
-STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 7 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031).
+STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 10 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-034).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -403,13 +424,16 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 29 item.
+   - Total hutang teridentifikasi      : 32 item.
    - Sudah FIXED/CLOSED                : 21 item (TD-001 s/d TD-009, TD-011 s/d TD-021, TD-023).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 7 item (TD-022 - Language toggle UI; TD-024, TD-025,
-                                         TD-026, TD-027 - admin auth flow, STEP 1C-1F;
-                                         TD-030 - ganti password default admin; TD-031 -
-                                         bcrypt hash hardcoded di migration 014).
+   - ❌ OPEN                           : 10 item (TD-022 - Language toggle UI; TD-024,
+                                          TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
+                                          TD-030 - ganti password default admin; TD-031 -
+                                          bcrypt hash hardcoded di migration 014; TD-032 -
+                                          docker-compose paksa platform linux/amd64; TD-033 -
+                                          POSTGRES_PASSWORD hardcoded; TD-034 - redis belum
+                                          upgrade ke 7.4).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -417,6 +441,9 @@ REKOMENDASI:
      lockout refactor, admin web login).
    - STEP 1C (2026-09-20) menambahkan TD-030 & TD-031. Migration seed admin
      (014_seed_admin.up.sql) dibuat, belum dijalankan (menunggu user).
+   - STEP 1D (2026-09-20) menambahkan TD-032 s/d TD-034 (infra/security
+     docker-compose.yml: platform linux/amd64, POSTGRES_PASSWORD hardcoded,
+     redis belum 7.4) seiring align versi Postgres docker-compose → 15.
    - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================

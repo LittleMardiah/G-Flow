@@ -61,14 +61,14 @@ REKOMENDASI UTAMA — service containers native di workflow `e2e.yml`:
 ```yaml
 services:
   postgres:
-    image: postgres:15-alpine   # menyesuaikan versi prod; repo punya docker-compose postgres:14
+    image: postgres:15-alpine   # menyesuaikan versi prod; repo punya docker-compose postgres:15
   redis:
     image: redis:7-alpine
 ```
 - Job backend menjalankan: `go run ./cmd/api` (atau build binary) + migrasi
   `migrations/*.up.sql` + seed E2E.
 - Alasan: nol biaya, terisolasi per run, deterministik versi. Sesuai docker-compose.yml
-  yang sudah ada (postgres:14-alpine, redis:7-alpine) tapi di CI pakai PG image yang
+  yang sudah ada (postgres:15-alpine, redis:7-alpine) tapi di CI pakai PG image yang
   selaras dengan prod ([PERLU VERIFIKASI] versi Postgres produksi: STP menyebut PG 15).
 - Trade-off vs alternatif:
   - Alternatif A (testcontainers-go di dalam job Go): cocok untuk integration test,
@@ -326,8 +326,9 @@ on:
 5. OTP: simulated code fixture atau memakai provider asli? Mempengaruhi CU-01 & J4.
 6. Landing page tidak punya wireframe kategori Halaman di HALAMAN.txt — apakah e2e
    landing cukup sebatas smoke (tanpa journey bisnis)? Asumsi: ya.
-7. Versi Postgres produksi (STP 15 vs docker-compose 14) — service container CI harus
-   mengikuti versi prod.
+7. Versi Postgres produksi — service container CI harus mengikuti versi prod.
+   [RESOLVED 2026-09-20: docker-compose sudah pakai postgres:15-alpine,
+   konsisten dengan STP & Supabase PostgreSQL 15.]
 8. Video mobile: `adb screenrecord` hanya jalan untuk Android; rencana Android emulator
    dulu, iOS out-of-scope untuk MVP E2E?
 9. Apakah `admin_web` perlu dijadikan job tersendiri di `ci.yml` (sekarang belum ada)?
