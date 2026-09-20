@@ -53,3 +53,7 @@ Thumbs.db
 vendor/
 *.test
 profiler/
+
+# Playwright
+playwright-report/
+test-results/

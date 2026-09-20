@@ -301,17 +301,28 @@ Estimasi : 1 jam
 Prioritas : RENDAH
 Status : ✅ FIXED [2026-09-20]
 
+ID         : TD-022
+Kategori   : FITUR
+Judul      : Language toggle UI (ID/EN) belum dibangun di landing page.
+Dampak     : E2E test LP-03 di-skip gracefully (bukan fail). Landing
+             page cuma tampil 1 bahasa (default ID).
+Solusi     : Bangun tombol toggle ID/EN di Navbar (pakai i18n context
+             yang udah ada di app/i18n/config.tsx).
+Estimasi   : 2-3 jam
+Prioritas  : RENDAH
+Status     : OPEN
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 21 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 22 item
 - KRITIS  : 2 item  (TD-001, TD-002)
 - TINGGI  : 9 item  (TD-003 s/d TD-010, TD-020)
 - SEDANG  : 5 item  (TD-011 s/d TD-015)
-- RENDAH  : 5 item  (TD-016 s/d TD-019, TD-021)
+- RENDAH  : 6 item  (TD-016 s/d TD-019, TD-021, TD-022)
 
-STATUS: 20 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 0 item OPEN.
+STATUS: 20 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 1 item OPEN (TD-022).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -333,13 +344,14 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 21 item.
+   - Total hutang teridentifikasi      : 22 item.
    - Sudah FIXED/CLOSED                : 20 item (TD-001 s/d TD-009, TD-011 s/d TD-021).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 0 item.
+   - ❌ OPEN                           : 1 item (TD-022 - Language toggle UI).
 
    CATATAN:
-   - ✅ SEMUA HUTANG TEKNIS (kecuali TD-010 yang didefer) TELAH DISELESAIKAN.
+   - ✅ SEMUA HUTANG TEKNIS TERIDENTIFIKASI TELAH DISELESAIKAN,
+     kecuali TD-010 (deferred) dan TD-022 (OPEN - language toggle UI).
      STATUS: SIAP LIVE DEMO / PORTOFOLIO.
 
 ================================================================================
