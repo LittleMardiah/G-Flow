@@ -204,7 +204,7 @@ func newTestHandler(t *testing.T, mDB pgxmock.PgxPoolIface, mr *miniredis.Minire
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
-	return NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""))
+	return NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 }
 
 func reverseRouter(h *Handler, adminID uuid.UUID) *gin.Engine {
@@ -825,7 +825,7 @@ func TestRecordFailedAttempt_Fallback(t *testing.T) {
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""))
+	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	attempts, err := h.recordFailedAttempt(context.Background(), testAdminID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), attempts)
@@ -849,7 +849,7 @@ func TestRecordFailedAttempt_LocksViaRedis(t *testing.T) {
 
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""))
+	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	attempts, err := h.recordFailedAttempt(context.Background(), testAdminID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), attempts)
@@ -875,7 +875,7 @@ func TestCheckLockout_RedisErrorFallback(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(true))
 
 	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""))
+	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	locked, err := h.checkLockout(context.Background(), testAdminID)
 	require.NoError(t, err)
 	assert.True(t, locked)

@@ -18,11 +18,14 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"log/slog"
+
+	"github.com/g-flow/g-flow/internal/auth"
 )
 
 // Handler menerima request HTTP terkait administrasi.
@@ -32,17 +35,24 @@ type Handler struct {
 	redis  *redis.Client
 	logger *slog.Logger
 	twoFA  TwoFactorValidator
+	jwt    *auth.JWTService
 }
 
 // NewHandler membuat Handler baru dengan dependency injection.
-func NewHandler(svc *Service, db DB, rdb *redis.Client, logger *slog.Logger, twoFA TwoFactorValidator) *Handler {
-	return &Handler{svc: svc, db: db, redis: rdb, logger: logger, twoFA: twoFA}
+func NewHandler(svc *Service, db DB, rdb *redis.Client, logger *slog.Logger, twoFA TwoFactorValidator, jwtService *auth.JWTService) *Handler {
+	return &Handler{svc: svc, db: db, redis: rdb, logger: logger, twoFA: twoFA, jwt: jwtService}
 }
 
 // reverseRequestBody adalah body request POST .../reverse.
 type reverseRequestBody struct {
 	Reason string `json:"reason"`
 	Notes  string `json:"notes"`
+}
+
+// adminLoginRequestBody adalah body request POST /admin/login.
+type adminLoginRequestBody struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 // ReverseTransaction POST /admin/transactions/:id/reverse
@@ -158,6 +168,53 @@ func (h *Handler) GetTransaction(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
+}
+
+// AdminLogin POST /admin/login (publik, tanpa auth middleware)
+// Memvalidasi kredensial admin lalu menerbitkan access + refresh token JWT.
+func (h *Handler) AdminLogin(c *gin.Context) {
+	var body adminLoginRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "format body tidak valid")
+		return
+	}
+	if strings.TrimSpace(body.Email) == "" || body.Password == "" {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "email dan password wajib diisi")
+		return
+	}
+
+	result, err := h.svc.Login(c.Request.Context(), body.Email, body.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
+			writeError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "email atau password salah")
+		case errors.Is(err, ErrNotAdmin):
+			writeError(c, http.StatusForbidden, "FORBIDDEN", "akun bukan admin")
+		case errors.Is(err, ErrAccountInactive):
+			writeError(c, http.StatusForbidden, "ACCOUNT_INACTIVE", "akun tidak aktif (suspended/frozen)")
+		default:
+			h.logger.Error("admin login failed", "error", err)
+			writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal memproses login")
+		}
+		return
+	}
+
+	accessToken, refreshToken, err := h.jwt.GenerateToken(result.UserID, result.Email, result.UserType)
+	if err != nil {
+		h.logger.Error("admin token generation failed", "user_id", result.UserID, "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal membuat token")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"access_token":  accessToken,
+			"refresh_token": refreshToken,
+			"user_id":       result.UserID,
+			"user_type":     result.UserType,
+		},
+	})
 }
 
 // writeError menulis error response sesuai format API_CONTRACT.

@@ -128,7 +128,7 @@ func main() {
 	adminRepository := admin.NewRepository(pool)
 	adminService := admin.NewService(adminRepository, pool, slog.Default())
 	adminTwoFA := admin.NewStaticTwoFactorValidator(os.Getenv("ADMIN_2FA_SECRET"))
-	adminHandler := admin.NewHandler(adminService, pool, rdb, slog.Default(), adminTwoFA)
+	adminHandler := admin.NewHandler(adminService, pool, rdb, slog.Default(), adminTwoFA, jwtService)
 
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
 	// dan Logger (JSON terstruktur / F014) dipasang sebelum route apapun.
@@ -163,6 +163,9 @@ func main() {
 	// Auth endpoint publik (tanpa auth): register & login.
 	r.POST("/api/v1/auth/register", authHandler.Register)
 	r.POST("/api/v1/auth/login", authHandler.Login)
+
+	// Admin login publik (tanpa auth): khusus role admin, divalidasi di Service.
+	r.POST("/api/v1/admin/login", adminHandler.AdminLogin)
 
 	// Driver location: cari driver terdekat → auth optional / publik.
 	// Lat/lng/radius diambil dari query param; tidak butuh identitas user.

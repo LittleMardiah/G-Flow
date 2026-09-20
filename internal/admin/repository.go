@@ -249,6 +249,26 @@ func (r *Repository) CreateAdminActionLog(ctx context.Context, tx pgx.Tx, adminI
 	return err
 }
 
+// LoginUser adalah baris hasil query login (subset kolom users).
+type LoginUser struct {
+	UserID   uuid.UUID
+	Email    string
+	UserType string
+	Status   string
+	Hash     string
+}
+
+// GetLoginUser mengambil data login user berdasarkan email.
+// Mengembalikan pgx.ErrNoRows jika email tidak terdaftar.
+func (r *Repository) GetLoginUser(ctx context.Context, email string) (LoginUser, error) {
+	var u LoginUser
+	err := r.db.QueryRow(ctx,
+		`SELECT id, email, user_type, status, password_hash FROM users WHERE email = $1`,
+		email,
+	).Scan(&u.UserID, &u.Email, &u.UserType, &u.Status, &u.Hash)
+	return u, err
+}
+
 // GetUserRole mengambil user_type dari users berdasarkan id user.
 // Mengembalikan error jika admin tidak ditemukan.
 func (r *Repository) GetUserRole(ctx context.Context, adminID uuid.UUID) (string, error) {

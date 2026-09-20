@@ -29,9 +29,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Reference type / description constants untuk journal reversal.
@@ -63,6 +66,10 @@ var (
 	ErrReversalFailed      = errors.New("admin: reversal gagal")
 	Err2FAInvalid          = errors.New("admin: 2FA token tidak valid")
 	ErrLockoutActive       = errors.New("admin: akun terkunci karena terlalu banyak percobaan 2FA")
+
+	ErrInvalidCredentials = errors.New("admin: email atau password salah")
+	ErrNotAdmin           = errors.New("admin: akun bukan admin")
+	ErrAccountInactive    = errors.New("admin: akun tidak aktif")
 )
 
 // Share adalah bagian partai (merchant/driver/platform) yang harus di-clawback.
@@ -88,6 +95,13 @@ type ReversalResult struct {
 	HasSweep   bool
 }
 
+// LoginResult adalah output operasi login admin.
+type LoginResult struct {
+	UserID   uuid.UUID
+	Email    string
+	UserType string
+}
+
 // Service adalah business logic reversal transaksi.
 type Service struct {
 	repo   *Repository
@@ -98,6 +112,67 @@ type Service struct {
 // NewService membuat Service reversal baru.
 func NewService(repo *Repository, db DB, logger *slog.Logger) *Service {
 	return &Service{repo: repo, db: db, logger: logger}
+}
+
+// bcryptCost adalah cost hash password admin (12), sama dengan seed admin di
+// migration 014. Digunakan juga untuk dummy hash agar durasi bcrypt compare
+// sebanding (mitigasi timing attack / user enumeration).
+const bcryptCost = 12
+
+// dummyPasswordHash adalah bcrypt hash (cost 12) dari string acak, dihitung
+// sekali saat init. Saat email tidak terdaftar, Login tetap menjalankan
+// bcrypt.CompareHashAndPassword memakai hash ini sehingga durasi respon hampir
+// identik dengan kasus "password salah" — attacker tidak bisa membedakan email
+// yang terdaftar vs tidak.
+var dummyPasswordHash = func() string {
+	h, err := bcrypt.GenerateFromPassword(
+		[]byte("g-flow-dummy-hash-"+uuid.NewString()),
+		bcryptCost,
+	)
+	if err != nil {
+		panic(fmt.Sprintf("admin: gagal generate dummy bcrypt hash: %v", err))
+	}
+	return string(h)
+}()
+
+// Login memvalidasi kredensial admin (email + password) dan mengembalikan
+// identitas user bila valid. Urutan pemeriksaan (bcrypt DULU — mencegah
+// account-type oracle / enumerasi email):
+//
+//	1. Format email (minimal "@" dan ".").
+//	2. bcrypt match password (ErrInvalidCredentials). Email yang tidak
+//	   terdaftar tetap melewati bcrypt compare dengan dummy hash supaya durasi
+//	   respon seragam.
+//	3. user_type == "admin" (akun lain -> ErrNotAdmin).
+//	4. status == "ACTIVE" (ErrAccountInactive).
+func (s *Service) Login(ctx context.Context, email, password string) (*LoginResult, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !validEmail(email) {
+		return nil, ErrInvalidCredentials
+	}
+
+	user, err := s.repo.GetLoginUser(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Email tidak terdaftar: tetap jalankan bcrypt compare dengan dummy
+		// hash supaya durasi respon tidak bocor (timing attack).
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(password))
+		return nil, ErrInvalidCredentials
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Hash), []byte(password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+	if user.UserType != "admin" {
+		return nil, ErrNotAdmin
+	}
+	if user.Status != "ACTIVE" {
+		return nil, ErrAccountInactive
+	}
+
+	return &LoginResult{UserID: user.UserID, Email: user.Email, UserType: user.UserType}, nil
 }
 
 // ReverseTransaction membalikkan transaksi dengan clawback proporsional.
@@ -434,4 +509,9 @@ func clawbackDescription(walletType string) string {
 	default:
 		return descPlatformClawback
 	}
+}
+
+// validEmail melakukan validasi ringan format email (regex ketat di DB CHECK).
+func validEmail(email string) bool {
+	return strings.Contains(email, "@") && strings.Contains(email, ".")
 }
