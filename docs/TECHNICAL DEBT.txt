@@ -312,17 +312,55 @@ Estimasi   : 2-3 jam
 Prioritas  : RENDAH
 Status     : OPEN
 
+ID         : TD-023
+Kategori   : SECURITY
+Judul      : 2FA secret di-hardcode "admin-2fa-secret" di lockout.go:37,
+             wire-up kosong di main.go:128.
+Dampak     : Siapa pun yang melihat repo bisa bypass 2FA admin (security hole).
+Solusi     : Load dari env ADMIN_2FA_SECRET; fail-fast di production bila kosong.
+Prioritas  : KRITIS
+Status     : FIXED (STEP 1B, 2026-09-20)
+
+ID         : TD-024
+Kategori   : FITUR
+Judul      : Admin user seed TIDAK ADA di migrations. Enum user_type='admin'
+             ada, tapi tidak ada INSERT → admin tidak bisa login.
+Prioritas  : TINGGI
+Status     : OPEN (rencana: STEP 1C)
+
+ID         : TD-025
+Kategori   : FITUR
+Judul      : Endpoint POST /api/v1/admin/login TIDAK ADA. Login admin pakai
+             /auth/login generic (tanpa 2FA).
+Prioritas  : TINGGI
+Status     : OPEN (rencana: STEP 1D)
+
+ID         : TD-026
+Kategori   : KODE
+Judul      : internal/admin/handler.go:82-84 — recordFailedAttempt return
+             value dibuang. Lockout 15 menit di-hardcode di SQL (lockout.go:135,
+             :160) terpisah dari konstanta lockoutDuration (lockout.go:28).
+Prioritas  : SEDANG
+Status     : OPEN (rencana: STEP 1E)
+
+ID         : TD-027
+Kategori   : FITUR
+Judul      : Admin web (apps/admin_web) TIDAK punya login page / auth flow.
+             Frontend api.ts tidak punya loginAdmin().
+Prioritas  : TINGGI
+Status     : OPEN (rencana: STEP 1F)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 22 item
-- KRITIS  : 2 item  (TD-001, TD-002)
-- TINGGI  : 9 item  (TD-003 s/d TD-010, TD-020)
-- SEDANG  : 5 item  (TD-011 s/d TD-015)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 27 item
+- KRITIS  : 3 item  (TD-001, TD-002, TD-023)
+- TINGGI  : 12 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027)
+- SEDANG  : 6 item  (TD-011 s/d TD-015, TD-026)
 - RENDAH  : 6 item  (TD-016 s/d TD-019, TD-021, TD-022)
 
-STATUS: 20 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 1 item OPEN (TD-022).
+STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 5 item OPEN (TD-022, TD-024 s/d TD-027).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -344,15 +382,17 @@ REKOMENDASI:
   kerugian finansial/data breach.
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 22 item.
-   - Sudah FIXED/CLOSED                : 20 item (TD-001 s/d TD-009, TD-011 s/d TD-021).
+   - Total hutang teridentifikasi      : 27 item.
+   - Sudah FIXED/CLOSED                : 21 item (TD-001 s/d TD-009, TD-011 s/d TD-021, TD-023).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 1 item (TD-022 - Language toggle UI).
+   - ❌ OPEN                           : 5 item (TD-022 - Language toggle UI; TD-024, TD-025,
+                                         TD-026, TD-027 - admin auth flow, STEP 1C-1F).
 
    CATATAN:
-   - ✅ SEMUA HUTANG TEKNIS TERIDENTIFIKASI TELAH DISELESAIKAN,
-     kecuali TD-010 (deferred) dan TD-022 (OPEN - language toggle UI).
-     STATUS: SIAP LIVE DEMO / PORTOFOLIO.
+   - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
+     TD-024 s/d TD-027 (OPEN - rencana STEP 1C-1F: admin seed, login+2FA endpoint,
+     lockout refactor, admin web login).
+   - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

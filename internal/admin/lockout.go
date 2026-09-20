@@ -16,6 +16,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,7 +34,8 @@ const (
 	admin2FASecretHeader = "X-Admin-2FA-Token"
 )
 
-// defaultAdmin2FASecret adalah token 2FA statis untuk MVP (simulasi).
+// defaultAdmin2FASecret adalah token 2FA statis untuk MVP (simulasi). Hanya
+// dipakai di luar environment production (dev/test).
 const defaultAdmin2FASecret = "admin-2fa-secret"
 
 // TwoFactorValidator memvalidasi token 2FA. Dipisahkan jadi interface agar
@@ -48,10 +50,20 @@ type StaticTwoFactorValidator struct {
 	secret string
 }
 
-// NewStaticTwoFactorValidator membuat validator 2FA statis. Jika secret kosong
-// maka memakai default admin-2fa-secret.
+// NewStaticTwoFactorValidator membuat validator 2FA statis. Prioritas secret
+// (TD-023, FIXED STEP 1B):
+//  1. parameter secret (bila tidak kosong);
+//  2. env ADMIN_2FA_SECRET;
+//  3. bila masih kosong: ENV == production → panic (fail-fast); selain itu
+//     pakai default admin-2fa-secret (khusus dev/test).
 func NewStaticTwoFactorValidator(secret string) *StaticTwoFactorValidator {
 	if secret == "" {
+		secret = os.Getenv("ADMIN_2FA_SECRET")
+	}
+	if secret == "" {
+		if os.Getenv("ENV") == "production" {
+			panic("admin: ADMIN_2FA_SECRET wajib di-set di environment production (fail-fast)")
+		}
 		secret = defaultAdmin2FASecret
 	}
 	return &StaticTwoFactorValidator{secret: secret}

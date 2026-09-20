@@ -123,9 +123,11 @@ func main() {
 	// Service memakai pool untuk transaksi reversal (clawback proporsional +
 	// shortfall -> SYSTEM_RECEIVABLE_OVERDRAFT), Redis untuk lockout 2FA (L1)
 	// dengan fallback PostgreSQL (L2/persisten), dan validator 2FA statis MVP.
+	// TD-023 (FIXED STEP 1B): secret 2FA dibaca dari env ADMIN_2FA_SECRET;
+	// fail-fast (panic) saat ENV=production dan secret kosong.
 	adminRepository := admin.NewRepository(pool)
 	adminService := admin.NewService(adminRepository, pool, slog.Default())
-	adminTwoFA := admin.NewStaticTwoFactorValidator("")
+	adminTwoFA := admin.NewStaticTwoFactorValidator(os.Getenv("ADMIN_2FA_SECRET"))
 	adminHandler := admin.NewHandler(adminService, pool, rdb, slog.Default(), adminTwoFA)
 
 	// Router. gin.New() + middleware eksplisit: Recovery (panic + stack trace)
