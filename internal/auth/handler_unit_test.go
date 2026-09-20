@@ -344,6 +344,21 @@ func TestHandler_Register_InvalidUserType(t *testing.T) {
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }
 
+// TestHandler_Register_AdminUserTypeRejected: user_type "admin" TIDAK boleh
+// mendaftar via public register -> 422 INVALID_USER_TYPE, dan DB TIDAK dipanggil
+// (tidak ada expectation, jadi ExpectationsWereMet membuktikan tidak ada query).
+func TestHandler_Register_AdminUserTypeRejected(t *testing.T) {
+	mockDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	w := runRegister(t, mockDB, `{"email":"admin@test.com","password":"Password123!","name":"Admin","user_type":"admin"}`)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, "INVALID_USER_TYPE", decodeErrorCode(t, w.Body.Bytes()))
+	require.NoError(t, mockDB.ExpectationsWereMet())
+}
+
 func TestHandler_Register_DriverMissingInfo(t *testing.T) {
 	mockDB, err := pgxmock.NewPool()
 	require.NoError(t, err)

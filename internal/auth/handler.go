@@ -31,7 +31,6 @@ var allowedUserTypes = map[string]bool{
 	"customer": true,
 	"driver":   true,
 	"merchant": true,
-	"admin":    true,
 }
 
 // Handler menerima request HTTP terkait autentikasi.
@@ -152,7 +151,7 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 	userType := strings.ToLower(strings.TrimSpace(body.UserType))
 	if !allowedUserTypes[userType] {
-		writeError(c, http.StatusUnprocessableEntity, "INVALID_USER_TYPE", "user_type harus customer, driver, merchant, atau admin")
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_USER_TYPE", "user_type harus customer, driver, atau merchant")
 		return
 	}
 	if userType == "driver" &&
