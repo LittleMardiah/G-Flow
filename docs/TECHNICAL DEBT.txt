@@ -392,17 +392,61 @@ Judul      : redis:7-alpine belum upgrade ke redis:7.4-alpine (latest).
 Prioritas  : RENDAH
 Status     : OPEN
 
+-------------------------------------------------------------------------------
+E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
+   golang-migrate): statement yang butuh auto-commit (di luar transaction block)
+-------------------------------------------------------------------------------
+
+ID                    : TD-035
+Kategori              : INFRA
+Judul                 : Migration 010 (`010_admin_lockouts.up.sql`) berisi
+                        `ALTER TYPE wallet_type_enum ADD VALUE` di file yang
+                        sama dengan CREATE TABLE yang pakai value tersebut.
+                        PostgreSQL limitation: value enum baru belum bisa
+                        dipakai di transaction yang sama → migrate gagal.
+Solusi sementara      : Apply manual via psql (auto-commit), force version 10.
+Solusi jangka panjang : Split jadi 2 file (010a_add_enum, 010b_create_tables)
+                        ATAU buat custom migration runner yang pakai `--no-tx`
+                        untuk file tertentu.
+Prioritas             : SEDANG
+Status                : OPEN
+
+ID                    : TD-036
+Kategori              : INFRA
+Judul                 : Migration 011 (`011_add_performance_indexes.up.sql`)
+                        pakai `CREATE INDEX CONCURRENTLY` yang ga bisa
+                        dijalankan di transaction block (migrate default).
+                        File sendiri udah kasih comment "jalankan via psql".
+Solusi sementara      : Apply manual via psql, force version 11.
+Solusi jangka panjang : Sama seperti TD-035 — custom migration runner.
+Prioritas             : SEDANG
+Status                : OPEN
+
+ID                    : TD-037
+Kategori              : INFRA
+Judul                 : `migrate` CLI (golang-migrate) ga support file yang
+                        butuh `--no-tx` (auto-commit per statement). Ini sumber
+                        masalah TD-035 & TD-036.
+Solusi jangka panjang : Bikin wrapper bash (scripts/migrate_with_psql.sh) yang
+                        deteksi file dengan `CONCURRENTLY` atau `ALTER TYPE ADD
+                        VALUE` dan apply via psql, atau migrate ke tool lain
+                        (goose, atlas).
+Prioritas             : SEDANG
+Status                : OPEN
+
+===============================================================================
+2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 32 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 35 item
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
 - TINGGI  : 13 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030)
-- SEDANG  : 7 item  (TD-011 s/d TD-015, TD-026, TD-031)
+- SEDANG  : 10 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037)
 - RENDAH  : 9 item  (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034)
 
-STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 10 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-034).
+STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 13 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -422,18 +466,24 @@ REKOMENDASI:
   implementasi deployment (TD-007).
 - Prioritaskan perbaikan security (TD-001, TD-002) karena berpotensi menyebabkan
   kerugian finansial/data breach.
+- Selesaikan masalah migration runner (TD-035 s/d TD-037): migration 010 & 011
+  (dan file semacamnya) harus di-apply via psql (auto-commit) + force version;
+  bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
+  lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 32 item.
+   - Total hutang teridentifikasi      : 35 item.
    - Sudah FIXED/CLOSED                : 21 item (TD-001 s/d TD-009, TD-011 s/d TD-021, TD-023).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 10 item (TD-022 - Language toggle UI; TD-024,
+   - ❌ OPEN                           : 13 item (TD-022 - Language toggle UI; TD-024,
                                           TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
                                           TD-030 - ganti password default admin; TD-031 -
                                           bcrypt hash hardcoded di migration 014; TD-032 -
                                           docker-compose paksa platform linux/amd64; TD-033 -
                                           POSTGRES_PASSWORD hardcoded; TD-034 - redis belum
-                                          upgrade ke 7.4).
+                                          upgrade ke 7.4; TD-035 - ALTER TYPE ADD VALUE di
+                                          migration 010; TD-036 - CREATE INDEX CONCURRENTLY di
+                                          migration 011; TD-037 - golang-migrate tanpa --no-tx).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -444,6 +494,11 @@ REKOMENDASI:
    - STEP 1D (2026-09-20) menambahkan TD-032 s/d TD-034 (infra/security
      docker-compose.yml: platform linux/amd64, POSTGRES_PASSWORD hardcoded,
      redis belum 7.4) seiring align versi Postgres docker-compose → 15.
+   - MIGRATION (2026-09-20) menambahkan TD-035 s/d TD-037 (INFRA/migration):
+     apply migration 010 (ALTER TYPE ADD VALUE) & 011 (CREATE INDEX CONCURRENTLY)
+     gagal di transaction block golang-migrate → harus manual via psql
+     (auto-commit) + force version. Sumber masalah: migrate CLI tanpa dukungan
+     --no-tx per file.
    - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================
