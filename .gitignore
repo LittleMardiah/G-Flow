@@ -57,3 +57,7 @@ profiler/
 # Playwright
 playwright-report/
 test-results/
+
+# Task logs & prompts (temporary)
+task_*.log
+prompt_*.txt
