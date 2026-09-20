@@ -392,6 +392,17 @@ Judul      : redis:7-alpine belum upgrade ke redis:7.4-alpine (latest).
 Prioritas  : RENDAH
 Status     : OPEN
 
+ID         : TD-041
+Kategori   : DOKUMENTASI
+Judul      : TEAM_CONTRACT.md v1.0 → v2.0: tambah Developer RULES
+             (Terminal Safety, Hallucination Detection, Konteks & Scope,
+             Escalation, Learning Checkpoint, Autonomy Boundaries) supaya
+             contract SELF-CONTAINED untuk OpenCode (prompt pendek).
+Solusi     : Rewrite docs/TEAM_CONTRACT.md v2.0 — 10 RULES, peran,
+             alur kerja, format prompt standar, escalation.
+Prioritas  : RENDAH
+Status     : FIXED
+
 -------------------------------------------------------------------------------
 E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
    golang-migrate): statement yang butuh auto-commit (di luar transaction block)
@@ -440,13 +451,13 @@ Status                : OPEN
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 35 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 36 item
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
 - TINGGI  : 13 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030)
 - SEDANG  : 10 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037)
-- RENDAH  : 9 item  (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034)
+- RENDAH  : 10 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041)
 
-STATUS: 21 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 13 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037).
+STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 13 item OPEN (TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -472,8 +483,8 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 35 item.
-   - Sudah FIXED/CLOSED                : 21 item (TD-001 s/d TD-009, TD-011 s/d TD-021, TD-023).
+   - Total hutang teridentifikasi      : 36 item.
+   - Sudah FIXED/CLOSED                : 22 item (TD-001 s/d TD-009, TD-011 s/d TD-021, TD-023, TD-041).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
    - ❌ OPEN                           : 13 item (TD-022 - Language toggle UI; TD-024,
                                           TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
@@ -493,12 +504,17 @@ REKOMENDASI:
      (014_seed_admin.up.sql) dibuat, belum dijalankan (menunggu user).
    - STEP 1D (2026-09-20) menambahkan TD-032 s/d TD-034 (infra/security
      docker-compose.yml: platform linux/amd64, POSTGRES_PASSWORD hardcoded,
-     redis belum 7.4) seiring align versi Postgres docker-compose → 15.
+redis belum 7.4) seiring align versi Postgres docker-compose → 15.
    - MIGRATION (2026-09-20) menambahkan TD-035 s/d TD-037 (INFRA/migration):
-     apply migration 010 (ALTER TYPE ADD VALUE) & 011 (CREATE INDEX CONCURRENTLY)
-     gagal di transaction block golang-migrate → harus manual via psql
-     (auto-commit) + force version. Sumber masalah: migrate CLI tanpa dukungan
-     --no-tx per file.
+      apply migration 010 (ALTER TYPE ADD VALUE) & 011 (CREATE INDEX CONCURRENTLY)
+      gagal di transaction block golang-migrate → harus manual via psql
+      (auto-commit) + force version. Sumber masalah: migrate CLI tanpa dukungan
+      --no-tx per file.
+   - TEAM CONTRACT (2026-09-20) menambahkan TD-041 (DOKUMENTASI, FIXED):
+      rewrite docs/TEAM_CONTRACT.md v2.0 — Developer RULES (Terminal Safety,
+      Hallucination Detection, Konteks & Scope, Escalation, Learning Checkpoint,
+      Autonomy Boundaries) + 10 RULES + peran/alur/formula. Contract jadi
+      SELF-CONTAINED untuk OpenCode.
    - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================
