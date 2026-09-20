@@ -562,9 +562,9 @@ SETTLEMENT RULES (FIXED — MATEMATIKA AKURAT):
 
   | Service | Breakdown Distribusi Ledger (AKURAT)                                                                 | Contoh Numerik (Rp)                                                    |
   |---------|-------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-  | G-Ride  | Customer pays Fare. Platform takes 10% fee. Driver gets 90% of Fare.                                  | Fare: 100K → Platform: 10K, Driver: 90K.                              |
-  | G-Food  | Customer pays (Items + Delivery Fee). Merchant gets (Items - 5% merchant fee). Driver gets (Delivery Fee - 10% platform fee). Platform gets (5% merchant fee + 10% delivery fee). | Items: 150K, Delivery Fee: 20K → Customer Bayar: 170K. Merchant: 142.5K (150K - 5%), Driver: 18K (20K - 10%), Platform: 9.5K (7.5K + 2K). |
-  | G-Send  | Customer pays Delivery Fee. Platform takes 8% fee. Driver gets 92% of Delivery Fee.                   | Delivery Fee: 50K → Platform: 4K, Driver: 46K.                         |
+  | G-Ride  | Customer pays Fare. Platform takes 20% fee. Driver gets 80% of Fare.                                  | Fare: 100K → Platform: 20K, Driver: 80K.                              |
+  | G-Food  | Customer pays (Items + Delivery Fee). Merchant gets (Items - 15% merchant fee). Driver gets (Delivery Fee - 10% platform fee). Platform gets (15% merchant fee + 10% delivery fee). | Items: 150K, Delivery Fee: 20K → Customer Bayar: 170K. Merchant: 127.5K (150K - 15%), Driver: 18K (20K - 10%), Platform: 24.5K (22.5K + 2K). |
+  | G-Send  | Customer pays Delivery Fee. Platform takes 10% fee. Driver gets 90% of Delivery Fee.                   | Delivery Fee: 50K → Platform: 5K, Driver: 45K.                         |
 
 AUTO-SETTLEMENT TRIGGER:
   Event: ride_order.status = 'COMPLETED' atau food_order.status = 'DELIVERED' atau send_order.status = 'DELIVERED'

@@ -290,17 +290,28 @@ Status : FIXED (commit ?, 2026-09-01, coverage 85.8%)
 Catatan : Task 4.2.4 selesai — backend & frontend reversal dengan 2FA, lockout,
           proportional clawback, auto-sweep journal.
 
+ID : TD-021
+Kategori : DOKUMENTASI
+Judul : Inkonsistensi split fee antara kode & dokumen (LOGIC FLOW 90/10, API 20%
+        G-Food, E2E 5%/92%).
+Dampak : E2E test bisa nge-assert angka yang salah, bikin false negative/positive.
+Solusi : Sync semua dokumen dengan kode aktual (ride 80/20, food 15% items + 10%
+        delivery, send 90/10, delivery fee Rp 20K, kapasitas max 3 order + 3 stop).
+Estimasi : 1 jam
+Prioritas : RENDAH
+Status : ✅ FIXED [2026-09-20]
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 20 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 21 item
 - KRITIS  : 2 item  (TD-001, TD-002)
 - TINGGI  : 9 item  (TD-003 s/d TD-010, TD-020)
 - SEDANG  : 5 item  (TD-011 s/d TD-015)
-- RENDAH  : 4 item  (TD-016 s/d TD-019)
+- RENDAH  : 5 item  (TD-016 s/d TD-019, TD-021)
 
-STATUS: 19 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 0 item OPEN.
+STATUS: 20 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 0 item OPEN.
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -321,9 +332,9 @@ REKOMENDASI:
 - Prioritaskan perbaikan security (TD-001, TD-002) karena berpotensi menyebabkan
   kerugian finansial/data breach.
 
-3. RINGKASAN STATUS TERKINI (2026-09-01):
-   - Total hutang teridentifikasi      : 20 item.
-   - Sudah FIXED/CLOSED                : 19 item (TD-001 s/d TD-009, TD-011 s/d TD-020).
+3. RINGKASAN STATUS TERKINI (2026-09-20):
+   - Total hutang teridentifikasi      : 21 item.
+   - Sudah FIXED/CLOSED                : 20 item (TD-001 s/d TD-009, TD-011 s/d TD-021).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
    - ❌ OPEN                           : 0 item.
 

@@ -979,9 +979,9 @@ PATCH /food-orders/{order_id}/status
   - After READY_FOR_PICKUP: Rp 10,000 fee to merchant
   
   Settlement (DELIVERED → SETTLED) — (LOGIC_FLOW 3.4, PRD G-Food)
-  - Merchant earning: 80% of (subtotal + delivery_fee) - commission
-  - Driver earning: Delivery fee (from G-Food delivery)
-  - Platform cut: 20% of subtotal
+  - Merchant earning: 85% of item_subtotal
+  - Driver earning: 90% of delivery_fee; Platform: 10% of delivery_fee
+  - Platform cut: 15% of item_subtotal
   - Ledger entries:
     * DEBIT: SYSTEM_ESCROW (escrow amount)
     * CREDIT: merchant wallet (merchant earning)

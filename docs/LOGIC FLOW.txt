@@ -454,8 +454,8 @@ TRIGGER: Ride order status changed to COMPLETED
 │ 3. CALCULATE SETTLEMENT AMOUNTS                                     │
 ├─────────────────────────────────────────────────────────────────────┤
 │   actual_fare = Rp 100,000                                         │
-│   platform_commission = actual_fare * 10% = Rp 10,000              │
-│   driver_earning = actual_fare - platform_commission = Rp 90,000   │
+│   platform_commission = actual_fare * 20% = Rp 20,000              │
+│   driver_earning = actual_fare - platform_commission = Rp 80,000   │
 │                                                                     │
 │   -- IF actual_fare < estimated_fare (Bug #49):                   │
 │   surplus = estimated_fare - actual_fare = Rp 10,000              │
@@ -470,8 +470,8 @@ TRIGGER: Ride order status changed to COMPLETED
 │   -- All amounts stored as DECIMAL(15,2) — NO FLOATING POINT      │
 │                                                                     │
 │   DEBIT escrow by 100000                                          │
-│   CREDIT driver by 90000                                          │
-│   CREDIT platform by 10000                                        │
+│   CREDIT driver by 80000                                          │
+│   CREDIT platform by 20000                                        │
 │                                                                     │
 │   Validation: SUM(DEBIT) = SUM(CREDIT) ✓                         │
 └─────────────────────────────────────────────────────────────────────┘
@@ -529,16 +529,16 @@ VOUCHER REFUND RULE — FIXED (Bug #45):
 ├─────────────────────────────────────────────────────────────────────┤
 │   Customer uses voucher discount: Rp 10,000                       │
 │   item_subtotal = 40000                                            │
-│   delivery_fee = 8000                                              │
+│   delivery_fee = 20000 (fixed)                                     │
 │   discount_amount = 10000                                          │
-│   total_payable = 40000 + 8000 - 10000 = 38000                    │
+│   total_payable = 40000 + 20000 - 10000 = 50000                    │
 │                                                                     │
 │   Ledger Entries:                                                  │
-│   DEBIT customer wallet by 38000                                   │
+│   DEBIT customer wallet by 50000                                   │
 │   DEBIT SYSTEM_PROMO_SUBSIDY by 10000 (voucher cost)              │
-│   CREDIT escrow by 48000 (full amount)                            │
+│   CREDIT escrow by 60000 (full amount)                            │
 │                                                                     │
-│   ✓ DEBIT = 38000 + 10000 = 48000 ✓                              │
+│   ✓ DEBIT = 50000 + 10000 = 60000 ✓                              │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -567,12 +567,12 @@ VOUCHER REFUND RULE — FIXED (Bug #45):
 │   FOR UPDATE;                                                      │
 │                                                                     │
 │   Ledger Entries:                                                  │
-│   DEBIT escrow by 48000                                           │
-│   CREDIT merchant by 38000                                        │
-│   CREDIT driver by 7200                                           │
-│   CREDIT platform by 2800                                         │
+│   DEBIT escrow by 60000                                           │
+│   CREDIT merchant by 34000                                        │
+│   CREDIT driver by 18000                                          │
+│   CREDIT platform by 8000                                         │
 │                                                                     │
-│   ✓ DEBIT = 48000 ✓                                               │
+│   ✓ DEBIT = 60000 ✓                                               │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -765,10 +765,11 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 │                                                                     │
 │   Amounts:                                                        │
 │   item_subtotal = 40000                                           │
-│   delivery_fee = 8000                                             │
-│   merchant_share = item_subtotal - merchant_commission           │
-│   food_platform_commission = 2000                                 │
-│   delivery_platform_commission = 800                              │
+│   delivery_fee = 20000 (fixed)                                    │
+│   merchant_share = item_subtotal * 85% (item_subtotal −           │
+│                    merchant_commission 15% dari items)            │
+│   food_platform_commission = 6000 (15% dari items)                │
+│   delivery_platform_commission = 2000 (10% dari delivery_fee)     │
 │   voucher_compensation = discount_amount (if voucher used)       │
 │                                                                     │
 │   Total driver debit = merchant_share + food_platform_commission │

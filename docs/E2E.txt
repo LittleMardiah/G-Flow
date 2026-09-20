@@ -1,0 +1,428 @@
+# E2E TEST SCOPE — G-Flow Super-App (v1.0-DRAFT)
+
+> Status: DRAFT — belum ada eksekusi. Semua test case di dokumen ini adalah RENCANA.
+> Sumber: docs/PRD.txt (v4.0), docs/HALAMAN.txt (v2.0), docs/LOGIC FLOW.txt (v6.1),
+>         docs/STP.txt (v3.0), docs/API CONTRACT.txt (v1.0), struktur repo (terverifikasi).
+> Notasi: [PERLU VERIFIKASI] = belum dikonfirmasi di repo/code; [USULAN] = belum ada, perlu dibuat.
+
+---
+
+## 1. Tujuan & Prinsip
+
+1.1. Single source of truth untuk End-to-End testing G-Flow. Dokumen ini menjawab:
+     test apa yang dijalankan, tools apa, data apa, dan bagaimana integrasinya ke CI.
+
+1.2. Prinsip yang dipegang:
+     - Quality > Speed: tiap journey harus SLA-valid (ledger balanced, no double spend,
+       refund akurat) — bukan sekadar smoke test.
+     - Zero Risk: tidak pernah menyentuh production; environment E2E terisolasi penuh
+       (DB + Redis khusus, data seed anonim).
+     - Free / OSS: hanya tool gratis (Playwright, Flutter integration_test, ffmpeg,
+       GitHub Actions) — tanpa cloud test farm berbayar.
+     - Visual evidence: tiap flow menghasilkan video + screenshot sebagai bukti.
+
+1.3. Ini level system/E2E di piramida testing. Detail unit/integration (TC-001 s/d
+     TC-012, TC-015 s/d TC-018 dari STP) BUKAN bagian dari scope ini — dipakai hanya
+     sebagai precondition invariant (lihat section 9.5).
+
+1.4. Level E2E di scope ini mengikuti 6 user journey Level-4 yang sudah didefinisikan STP:
+     Customer (book ride / order food), Driver (accept / complete), Merchant (accept /
+     prepare), Admin (view ledger / suspend user), + polling state sync (TC-013) &
+     background reconciliation (TC-014).
+
+---
+
+## 2. Tools & Arsitektur
+
+### 2.1. Per-App Tool Mapping
+
+| App | Stack (terverifikasi) | Tool E2E | Alasan pemilihan | Video / Screenshot |
+|-----|----------------------|----------|------------------|--------------------|
+| landing_page | Next.js 16, App Router, i18n | Playwright (TS) | Auto-wait berbasis action, tracing & video native, screenshot otomatis, parallel worker hemat CI time, bebas biaya; regression layout/link langsung terdeteksi. | Playwright native: trace.zip + video (webm) + screenshot on failure + HTML report |
+| admin_web | Next.js 14, App Router, TanStack Query | Playwright (TS) | Sama seperti di atas; satu repo test bersama landing_page (root-level `e2e/web`). | Playwright native (trace + video + HTML report) |
+| customer_app | Flutter 3.x, Riverpod, go_router, dio | Flutter `integration_test` (official SDK) | Deterministik (Dart asli, tidak lewat XML-tree seperti Appium), gratis, bisa test state antar-screen secara presisi, integrasi mulus dengan Riverpod. Belum ada dependency — harus ditambah (lihat 2.3). | `binding.takeScreenshot()` per step; video via `adb screenrecord` saat pakai Android emulator; fallback stitch screenshot + ffmpeg |
+| driver_app | Flutter 3.x, Riverpod, go_router | Flutter `integration_test` | Sama. Bonus: mengeksekusi race-condition accept (10 driver) di app-level pakai Dart Future, tidak perlu 10 device asli. | Sama seperti customer_app |
+| merchant_app | Flutter 3.x, Riverpod, go_router | Flutter `integration_test` | Sama. | Sama seperti customer_app |
+| backend (seat) | Go 1.26, Gin, pgx v5 | Service container (Postgres + Redis) + HTTP smoke helper di Playwright/Dart | Backend WAJIB hidup sebagai dependensi E2E, bukan di-test lagi di sini (sudah ada unit/integration per package). | Test log terstruktur di artifact |
+
+Alternatif yang DIKURANGI dan kenapa tidak dipilih:
+- Cypress untuk web: lebih berat, arsitektur runners lebih mahal di CI, ekosistem video
+  sudah bawaan tapi built -in test-ing mahal. Playwright lebih ringan satu job.
+- WDIO/WebdriverIO: overkill untuk 2 Next.js app.
+- Appium untuk mobile: perlu appium server + XML-tree (brutal untuk Flutter yang pakai
+  render sendiri), lambat, banyak flake. Tidak dipilih.
+- Maestro untuk mobile: ringan & mudah baca, tapi akses ke widget tree Flutter lebih
+  terbatas dan integrasi ke CI (emulator provisioning) tidak sematang integration_test.
+  Dipilih integration_test demi determinisme.
+
+### 2.2. Backend Strategy (GitHub Actions service containers)
+
+REKOMENDASI UTAMA — service containers native di workflow `e2e.yml`:
+```yaml
+services:
+  postgres:
+    image: postgres:15-alpine   # menyesuaikan versi prod; repo punya docker-compose postgres:14
+  redis:
+    image: redis:7-alpine
+```
+- Job backend menjalankan: `go run ./cmd/api` (atau build binary) + migrasi
+  `migrations/*.up.sql` + seed E2E.
+- Alasan: nol biaya, terisolasi per run, deterministik versi. Sesuai docker-compose.yml
+  yang sudah ada (postgres:14-alpine, redis:7-alpine) tapi di CI pakai PG image yang
+  selaras dengan prod ([PERLU VERIFIKASI] versi Postgres produksi: STP menyebut PG 15).
+- Trade-off vs alternatif:
+  - Alternatif A (testcontainers-go di dalam job Go): cocok untuk integration test,
+    tapi buat E2E malah menambah compile layer dan tidak reusable untuk Playwright.
+  - Alternatif B (docker-compose.yml dipanggil di CI): komposisi benar, tapi service
+    containers GH Actions lebih singkat dan tidak perlu daemon docker manual.
+
+### 2.3. Flutter setup yang HARUS dilakukan (belum ada di repo — terverifikasi)
+- Tambah `integration_test: {sdk: flutter}` + sudah ada `flutter_test` di 3 pubspec.
+- Folder `integration_test/` per app (belum ada).
+- Build/gate: `flutter test integration_test -d <device>` di CI (Android emulator
+  container; lokal: `adb` atau desktop Linux runner dengan embedder).
+
+### 2.4. Video + Screenshot Strategy
+- Web (Playwright): otomatis — `video: 'on-first-retry'` atau `'retain-on-failure'`,
+  `trace: 'retain-on-failure'`, `screenshot: 'only-on-failure'`, plus `page.screenshot()`
+  eksplisit tiap milestone journey untuk evidence.
+- Mobile (Flutter): `binding.takeScreenshot()` di tiap milestone; untuk video penuh pakai
+  `adb exec-out screenrecord` (Android emulator). Fallback offline: kumpulkan screenshots
+  per step → ffmpeg -framerate 1 stitch → mp4/webm, gratis.
+
+### 2.5. CI Integration (ringkasan — detail di section 8)
+- Workflow terpisah `e2e.yml`, `workflow_dispatch` + path filter, jalankan backend+
+  PG+Redis sebagai service, matrix per-app, upload artifact (video, screenshot, HTML
+  report), retry hanya untuk job mobile yang rawan flake.
+
+---
+
+## 3. Scope Test — Per App
+
+> Konvensi ID: `LP-*` Landing, `AD-*` Admin Web, `CU-*` Customer, `DR-*` Driver,
+> `ME-*` Merchant. Tiap ID = 1 test case. Total per-app test case = 39.
+
+### 3.1 Landing Page (Playwright)
+| ID | Test Name | Priority | Precondition | Steps | Expected |
+|----|-----------|----------|--------------|-------|----------|
+| LP-01 | Home page render & navigasi | P1 | Landing dilayani (dev/preview), tidak ada mocks | Buka `/` → cek `layout`/`Navbar` → klik tiap nav item yang ada → kembali | Halaman load < 3s; navbar & hero ter-render; tiap link ke section memindahkan viewport |
+| LP-02 | Section konten utama (Hero/Features/TechStack/Screenshots/Testimonials/CTA) | P2 | Sama | Scroll tiap section, validasi teks kunci & gambar/ikon dimuat | Semua section tampil; tidak ada broken image / layout overflow |
+| LP-03 | Responsive / mobile viewport smoke | P2 | Sama | Set viewport 360x800 (min-width per HALAMAN) → render + hamburger nav | Tidak overflow horizontal; menu tetap bisa dibuka |
+| LP-04 | Halaman Docs | P2 | Ada `app/docs/page.tsx` (terverifikasi) | Buka `/docs` → navigasi konten | Render sukses, link internal valid |
+| LP-05 | i18n switch EN/ID | P1 | Ada `app/i18n/config.tsx` (terverifikasi) | Ganti bahasa → cek label kunci berubah | Konten berubah sesuai lokalisasi tanpa reload crash |
+| LP-06 | Integritas link & CTA (404 check) | P1 | Static export / build valid | Crawl semua `a[href]` internal → status | Tidak ada 404/500 internal; external link punya target/tanda |
+
+### 3.2 Admin Web (Playwright)
+| ID | Test Name | Priority | Precondition | Steps | Expected |
+|----|-----------|----------|--------------|-------|----------|
+| AD-01 | Admin login sukses | P0 | Seed admin aktif (admin@test.com) | [PERLU VERIFIKASI] mekanisme login admin_web (mungkin via `POST /auth/admin-login`) → isi kredensial → submit | Masuk dashboard, token JWT tersimpan, URL ke `/` admin |
+| AD-02 | Dashboard KPI render | P0 | Login admin; seed transaksi | Buka dashboard → validasi kartu KPI (Total Revenue, Active Orders, Daily Transactions, Active Users) & alert | Angka ter-render (≥ 0), tidak breakout / skeleton-mati |
+| AD-03 | Ledger Audit + BALANCED indicator | P0 | Login admin; ≥ 1 transaksi selesai | Buka `/ledger` → cek tabel ledger & status `balance_check: "BALANCED"` | Tabel berisi entri double-entry; indikator BALANCED; SUM(debit)=SUM(credit) di UI |
+| AD-04 | Export ledger CSV | P2 | AD-03 terpenuhi | Klik tombol Export CSV | File `.csv` terunduh berisi entri yang sama dengan halaman |
+| AD-05 | Filter user by role + cari | P1 | Login; seed 4 role | `/users` → filter role / search name | List berubah sesuai filter; tidak error |
+| AD-06 | Freeze/suspend user | P0 | Login admin; ada user aktif | Pilih user → trigger status SUSPENDED/FREEZED | Status user berubah; user tsb tidak bisa login/bertransaksi (cek via API 403/422 `WALLET_INACTIVE`) |
+| AD-07 | Approve withdrawal | P0 | Ada withdrawal PENDING_APPROVAL (dari driver/merchant) | `/` admin → approve withdrawal | Status jadi COMPLETED; wallet driver/merchant dikredit (cek ledger) |
+| AD-08 | Ledger reversal (chargeback) | P1 | Login admin; entri ledger ter-reverse | `POST /admin/ledger/{id}/reverse` via UI [PERLU VERIFIKASI] 2FA | Entri dibalik (DEBIT↔CREDIT) + `is_reversed=TRUE`; ledger tetap balanced |
+| AD-09 | Detail transaksi | P1 | Ada order selesai | Buka `/transactions/[id]` (ada route — terverifikasi) | Detail order + timeline status + jumlah uang konsisten |
+
+### 3.3 Customer App (Flutter integration_test)
+| ID | Test Name | Priority | Precondition | Steps | Expected |
+|----|-----------|----------|--------------|-------|----------|
+| CU-01 | Register → OTP → profile completion | P1 | Backend hidup; OTP simulated | Isi form SIGN UP (role customer) → terima OTP → VERIFY → lengkapi profil | Akun ter-create; masuk home; token ter-validasi |
+| CU-02 | Login happy path | P0 | Seed customer (user-customer-1 / Budi) | Home LOGIN → isi kredensial → submit | Masuk home; balance & quick actions tampil |
+| CU-03 | Top-up SIMULATED (idempotent) | P0 | Wallet ACTIVE, KYC verified | Home → TOP-UP → pilih nominal → TOP-UP NOW (X-Idempotency-Key) → tunggu webhook | Balance naik sesuai nominal; 2 entri ledger (DEBIT SYSTEM_BANK_GATEWAY → CREDIT wallet); re-tap sama → tidak ganda |
+| CU-04 | Ride journey UI (Book→Track→Complete→Rate) | P0 | Driver online & saldo cukup | BOOK A RIDE → set rute → CONFIRM & BOOK → lihat state → rating | State SEARCHING_DRIVER → DRIVER_ASSIGNED → ... → rating screen → SETTLED; harga mengikuti base + km |
+| CU-05 | Cancel ride sebelum driver assigned | P0 | Order baru SEARCHING_DRIVER | CANCEL RIDE saat belum assigned | Refund penuh escrow; status CANCELLED; balance pulih (≤ 5 detik) |
+| CU-06 | Food order flow (browse→cart→variant→checkout) | P1 | Merchant ACTIVE + menu variant (Level Pedas) | VIEW MENU → pilih varian & topping → ADD TO CART → CHECKOUT (PayPulse) | Subtotal + delivery fee sesuai formula; order CONFIRMED |
+| CU-07 | Menu version warning modal | P2 | Menu berubah versi sebelum checkout | Set `version_id` lama → CHECKOUT | Muncul modal "Accept New Price / Remove Item"; memilih salah satu → transaksi lanjut/lepas tanpa beda harga |
+| CU-08 | Send multi-stop order + fare breakdown | P1 | Posisi terjangkau driver | CREATE SEND → [+ ADD DELIVERY STOP] → CONFIRM & SEND | FARE BREAKDOWN per stop tampil; total = formula G-Send; order SEARCHING_DRIVER |
+| CU-09 | Send tracking + return-to-sender | P1 | Order send dengan 1 stop gagal diantar | Pantau status stop (DELIVERED / RETURN_REQUIRED) | Status stop akurat; saat RETURNED_TO_SENDER → refund porsi gagal ke wallet customer |
+| CU-10 | Wallet overview & transaction history | P1 | Ada ≥ 3 transaksi | WALLET → VIEW ALL TRANSACTIONS | List lengkap, saldo & limit (KYC) konsisten dengan backend (`/ledger/audit`) |
+
+### 3.4 Driver App (Flutter integration_test)
+| ID | Test Name | Priority | Precondition | Steps | Expected |
+|----|-----------|----------|--------------|-------|----------|
+| DR-01 | Login + online toggle | P0 | Seed driver KYC ACTIVE | Login → Dashboard → toggle ONLINE | Status online ter-reflect di backend (heartbeat Redis); earnings summary tampil |
+| DR-02 | Accept ride order (single-winner) | P0 | 1 order SEARCHING_DRIVER; driver online | Muncul kartu Ride → ACCEPT | Status DRIVER_ASSIGNED; driver kedua klik → 409 (UI menunjuk "already taken") |
+| DR-03 | Status progression ride | P0 | Order DRIVER_ASSIGNED | UPDATE status ARRIVED→TRIP_STARTED→COMPLETED | State machine valid; auto settlement setelah COMPLETED |
+| DR-04 | Earnings screen + min balance indicator | P1 | ≥ 1 order selesai | Buka EARNINGS → cek summary & threshold Rp 50k | Angka earnings sesuai (driver 80% ride / 90% send); indikator balance tampil |
+| DR-05 | Withdrawal request | P0 | Driver balance ≥ Rp 10.000 | EARNINGS → Withdrawal (nominal valid) | Status PENDING_APPROVAL; tidak lebih dari max Rp 10jt |
+| DR-06 | Accept food & send order dari dashboard | P1 | Order food/send tersedia | Dashboard → ACCEPT pada kartu Food / Send | Order ter-assign benar; kapasitas total tidak terlampaui |
+| DR-07 | Profile / KYC status display | P1 | Seed driver KYC | PROFILE → cek badge Identity/SIM/Vehicle | Status ter-render sesuai kondisi backend |
+
+### 3.5 Merchant App (Flutter integration_test)
+| ID | Test Name | Priority | Precondition | Steps | Expected |
+|----|-----------|----------|--------------|-------|----------|
+| ME-01 | Login + dashboard + verification indicator | P0 | Seed merchant ACTIVE | Login → Dashboard | Summary (Total Orders/Revenue) muncul; indicator ACTIVE |
+| ME-02 | Confirm new food order | P0 | Ada order CREATED/CONFIRMED | Kartu order → [CONFIRM] | Status jadi CONFIRMED; backend tercatat |
+| ME-03 | Status progression food | P0 | Order CONFIRMED | PREPARING → READY_FOR_PICKUP → PICKED_UP | Transisi valid; customer tracking sinkron |
+| ME-04 | Reject order | P1 | Order masuk | [REJECT] sebelum prepared | Order CANCELLED/menuju refund sesuai aturan; tidak ganda |
+| ME-05 | Catalog: add/edit item + variant group | P1 | Merchant ACTIVE | [+ ADD NEW ITEM] → EDIT ITEM → ADD VARIANTS (Level Pedas/Topping) | Item & variant tersimpan; harga varian disimpan (Rp adjustment) |
+| ME-06 | Earnings & revenue report | P1 | ≥ 1 order selesai | EARNINGS tab | Revenue per hari konsisten dengan settlement ledger |
+| ME-07 | Menu version bump (driver untuk customer warning) | P2 | Item pernah di-order | Update harga item | `version_id` menu berubah; sisi customer CU-07 bisa memicu modal |
+
+---
+
+## 4. Cross-App Journey Test (INTI E2E)
+
+> Memakai 2-3 app sekaligus; backend + ledger sebagai orakel kebenaran.
+> Setiap journey DIVALIDASI dengan invariant: SUM(debit)=SUM(credit), tidak ada
+> double-spend, refund akurat, status tidak ghost-state.
+
+| ID | Journey | Mini Steps | Oracle (yang divalidasi) | Priority |
+|----|---------|------------|--------------------------|----------|
+| J1: | Ride Journey | Customer top-up → book ride → driver ONLINE accept → driver PATCH ARRIVED/STARTED/COMPLETED → customer rate → settlement auto | Escrow = 0 setelah SETTLED; driver +80%, platform +20%; refund surplus/shortfall benar; 2 ledger entri per leg | P0 |
+| J2: | Food Journey | Customer order (PayPulse) → merchant CONFIRM→PREPARING→READY_FOR_PICKUP → driver PICKED_UP→IN_TRANSIT→DELIVERED → 4-way settlement | customer −(items+delivery−voucher), merchant +(85% items), driver +(delivery−10%), platform +(15% items + 10% delivery); escrow balanced; porsi voucher → SYSTEM_PROMO_SUBSIDY | P0 |
+| J3: | Send Journey (multi-stop + RTS) | Customer create 3-stop send → driver accept → 1 stop delivered, 1 skipped → RETURN_REQUIRED → RETURNED_TO_SENDER → 3-way settlement | Driver dapat allocated_fare untuk stop delivered + RTS fee; refund porsi skipped ke customer (cash case: DEBIT driver / CREDIT customer); ledger balanced | P1 |
+| J4: | Wallet Flow | Register customer → top-up → transfer P2P (idempotent) → driver/merchant withdraw → admin approve → cek balans akhir | P2P 1 ledger DEBIT/CREDIT; topup idempotent (retry tak dobel); withdraw COMPLETED setelah approve; kirim ke wallet non-ACTIVE gagal | P0 |
+| J5: | Admin Reversal | Pilih transaksi settle → [PERLU VERIFIKASI] mekanisme 2FA admin → reverse via `POST /admin/ledger/{id}/reverse` → cek ledger | DEBIT↔CREDIT dibalik; `is_reversed=TRUE`; SUM tetap balanced; saldo user kembali | P1 |
+| J6: | Ledger Reconciliation pasca-semua-journey | Jalankan J1-J5 lalu `GET /ledger/audit` | `balance_check: "BALANCED"`; selisih Rp 0; skenario double-spend tidak pernah terjadi (0 occurrences) | P1 |
+
+---
+
+## 5. Negative / Error Flow Test
+
+> Sumber nilai error persis: docs/API CONTRACT.txt section 3 (Standar + Business).
+
+| ID | Test Name | Error yang dicek | Steps ringkas | Expected | Priority |
+|----|-----------|------------------|---------------|----------|----------|
+| N-01 | Login gagal (password salah / user frozen) | 401 UNAUTHORIZED | Login dgn password salah; login dgn user SUSPENDED | Ditolak; tidak ada kelengkapan PII di response; pesan error aman (tanpa bocor detail) | P0 |
+| N-02 | Top-up melebihi limit KYC unverified | 422 KYC_LIMIT_EXCEEDED | Unverified wallet, balance Rp 1.8jt → topup Rp 300rb | Ditolak sebelum ledger; balance & ledger tidak berubah | P0 |
+| N-03 | Self-transfer | 400 SELF_TRANSFER_NOT_ALLOWED | Transfer dari wallet ke wallet sendiri (id sama) | Error jelas; tidak ada mutasi | P0 |
+| N-04 | Transfer / order dengan saldo kurang | 422 INSUFFICIENT_BALANCE | Wallet balance < amount; juga cek saat book ride escrow | Ditolak atomic; escrow tidak di-create | P0 |
+| N-05 | Double-accept 10 driver (race) | 409 CONFLICT pada 9 | 10 permintaan accept ->1 order (seperti TC-002) | Persis 1 driver sukses (HTTP 200), 9 x409 "Order already taken"; tidak double-assign | P0 |
+| N-06 | Idempotency: key sama | 409 IDEMPOTENCY_CONFLICT (payload beda) / dedupe (payload sama) | Kirim request untuk dengan key yang sama 2x, lalu ganti payload dengan key yang sama | Payload sama → respon identik & 1 ledger entry set; payload beda → 409 | P0 |
+| N-07 | Cancel ride setelah DRIVER_ASSIGNED | Fee Rp 5.000 (Refund = fare−5000) | Accept dulu, lalu cancel | Customer direfund potongan, driver dikredit 5k; escrow sisa pulang | P1 |
+| N-08 | Invalid state transition | 409/ditolak state machine | PATCH status tidak valid (mis. COMPLETED → PICKED_UP food) | Ditolak (CAS guard); order tidak ghost-state | P1 |
+| N-09 | RBAC cross-role (BOLA/IDOR) | 403 FORBIDDEN | Customer akses endpoint admin; driver akses order orang lain; tamper ID (seperti TC-015) | Semua unauthorized → 403; tidak ada data bocor | P1 |
+| N-10 | Rate limiting beat-up | 429 RATE_LIMIT_EXCEEDED | Burst request (> 10/min wallet ops, > 30/min accept) | 429 dengan header X-RateLimit-Remaining; service tetap sehat | P2 |
+| N-11 | Ride matching expired | EXPIRED + escrow release | Order SEARCHING_DRIVER didiamkan > 3 menit | Status EXPIRED; escrow release; notification "No drivers available" | P1 |
+| N-12 | Send capacity exceeded | 400 DRIVER_CAPACITY_EXCEEDED | Driver sudah penuh (max 3 order aktif + max 3 stop per order) → accept send baru | Ditolak; tidak ada order "berlebihan" | P1 |
+| N-13 | Transfer ke penerima over KYC limit | 422 RECIPIENT_LIMIT_EXCEEDED | Transfer besar ke wallet unverified yang menembus limit | Ditolak; pengirim & penerima tidak berubah | P2 |
+| N-14 | Food cancel setelah READY_FOR_PICKUP | Merchant 100% / refund rules | Cancel di tiap fase (CREATED, PREPARING, READY_FOR_PICKUP) | Refund merchant sesuai stage; voucher kembali ke SYSTEM_PROMO_SUBSIDY; tidak ada cash gain ilegal | P2 |
+
+> Catatan: N-05 & N-06 bersifat API-level tapi dijalankan dari UI apps untuk membuktikan
+> tidak ada race di level aplikasi (thread / tombol dobel-tap). Umur idempotency 24 jam.
+
+---
+
+## 6. Prioritization (Tier)
+
+### TIER 1 (P0 — WAJIB): 25 test
+AD-01, AD-02, AD-03, AD-06, AD-07 | CU-02, CU-03, CU-04, CU-05 | DR-01, DR-02, DR-03, DR-05 |
+ME-01, ME-02, ME-03 | J1, J2, J4 | N-01, N-02, N-03, N-04, N-05, N-06
+
+### TIER 2 (P1 — PENTING): 26 test
+LP-01, LP-05, LP-06 | AD-05, AD-08, AD-09 | CU-01, CU-06, CU-08, CU-09, CU-10 |
+DR-04, DR-06, DR-07 | ME-04, ME-05, ME-06 | J3, J5, J6 | N-07, N-08, N-09, N-11, N-12, N-14
+
+### TIER 3 (P2 — BONUS): 8 test
+LP-02, LP-03, LP-04 | AD-04 | CU-07 | ME-07 | N-10, N-13
+
+### Justifikasi
+- TIER 1 = core revenue flow + invariants keuangan (ledger, double-spend, idempotency,
+  refund). Ini yang menentukan "G-Flow bisa rilis atau tidak" per acceptance criteria PRD
+  (double spending 0, ledger discrepancy Rp 0, idempotency 100%).
+- TIER 2 = supporting UX & level-2 flows (multi-stop, RTS, review, documents) — penting
+  untuk kepuasan dan kepatuhan (KYC, dokumen) tapi tidak memblokir rilis inti.
+- TIER 3 = polish & edge (responsive, export, menu version modal, rate-limit).
+  Dimasukkan hanya jika kuota CI/repo waktu tersedia.
+- Tidak semua UI di-cover: E2E level di atas cukup untuk 1-2 critical journey per fitur,
+  sesuai rekomendasi STP (10-15% usaha di level E2E).
+
+---
+
+## 7. Test Data & Fixtures
+
+### 7.1. Seed data (dari STP `seed.sql` — wajib direplikasi di E2E)
+- Users: `user-customer-1` (customer1@test.com, Budi, +6281234567890), `user-driver-1`
+  (driver1@test.com, Ahmad Dedi), `user-merchant-1` (merchant1@test.com, Warung Mak
+  Surti), `user-admin-1` (admin@test.com). Semua ACTIVE.
+- Wallets:  `wallet-customer-1` Rp 5.000.000, `wallet-driver-1` Rp 1.000.000,
+  `wallet-merchant-1` Rp 500.000.
+- Merchant: `merchant-1` Warung Mak Surti (restaurant),  -6.2088/106.8456, open.
+- Menu/item: `menu-1` Nasi & Mie; `item-1` Nasi Kuning $15rb (stock 50), `item-2` Ayam
+  Goreng $25rb (stock 30) + varian Level Pedas/Extra Topping/Ukuran.
+- [USULAN] script `scripts/e2e_seed.sh` mengeksekusi migrations + seed di DB dedicated;
+  repo sudah punya `migrations/seed_merchants.sql` — timbang reuse-track.
+
+### 7.2. Envir & credentials
+- Kredensial login tiap role (login/OTP simulated) di-hold sebagai fixture; OTP =
+  kode fixture dev, bukan SMS-nyata ([PERLU VERIFIKASI] cara OTP saat ini).
+
+### 7.3. Cleanup strategy per run
+- Setiap run: DB E2E baru (service container ephemeral), `TRUNCATE` + re-seed sebelum
+  jalur journey; setelah run selesai container dibuang otomatis.
+- `topup_transactions`, `idempotency_cache`, `fare_quotes` ikut ter-reset per run agar
+  idempotency & webhook deterministik.
+- Menjaga `sequence` & ENUM konsisten (jalankan ulang semua `.up.sql`).
+
+### 7.4. Isolasi dari production
+- Nama DB `g_flow_e2e` (bukan `g_flow_dev`), Redis DB index terpisah (contoh `15`),
+  env `ENV=test` + `JWT_SECRET` fixture. Never pakai `.env` produksi.
+- Semua request kirim header wajib `User-Agent: G-Flow/<platform>/<version>` +
+  `X-Request-ID`/`X-Correlation-ID` (kontrak API).
+
+---
+
+## 8. CI Integration Plan
+
+### 8.1. Workflow baru: `e2e.yml`
+```yaml
+name: e2e
+on:
+  workflow_dispatch:            # manual trigger tetap mungkin
+  push:
+    paths: ['backend/**','apps/**','migrations/**','docs/E2E.txt']
+  pull_request:
+    paths: ['backend/**','apps/**','migrations/**']
+```
+- Path filter hemat minutes: journey & negative hanya berjalan saat ada perubahan yang
+  memaksa E2E, bukan di tiap commit acak.
+- Note: admin_web sampai saat ini TIDAK punya job di `ci.yml` (terverifikasi) — E2E web
+  harus inline-cover `apps/admin_web/**` agar ada pengawal kualitas.
+
+### 8.2. Job structure
+| Job | Matrix | Service container | Isi |
+|-----|--------|-------------------|-----|
+| `e2e-setup` | - | postgres:15 + redis:7 | Migrate + seed + start backend (`go run ./cmd/api` / build), expose health port, keluarkan base URL (env var `BASE_URL`) |
+| `e2e-web` | landing_page / admin_web | - (pakai base URL dari setup) | `npx playwright test` per project; upload hasil |
+| `e2e-mobile-customer` / `-driver` / `-merchant` | per-app | - | Android emulator container + `flutter test integration_test`; pakai backend yang sama |
+| `e2e-server-journeys` | - | - | Jalankan J1-J6 sebagai kode uji (Playwright web API helpers + Flutter) |
+| `e2e-gate` | - | - | Fail jika salah satu job E2E gagal (pakai rule: TIDAK `continue-on-error` di sini, tidak seperti `flutter` di ci.yml) |
+
+### 8.3. Artifact upload
+- `actions/upload-artifact` per job:
+  - web: `playwright-report/`, `test-results/*.mp4`, `*.trace.zip`
+  - mobile: `integration_test/screenshots/**`, video `screenrecord`/ffmpeg output
+  - server: `test-output.log` + coverage jika ada
+- Retention 14 hari; naming `e2e-${{github.run_id}}-<app>`.
+
+### 8.4. Retry strategy
+- `e2e-mobile-*`: `max-attempts: 2` (mobile emulator rawan flake cold-start).
+- Playwright: `retries: 1` di config, `video: 'on-first-retry'`.
+- Flutter test: jalankan ulang test yang `flaky` maks 1x sebelum ditandai fail
+  (pakai tag `@flaky` eksplisit di nama test).
+
+### 8.5. Konvensi non-negosiable di E2E CI
+- Never `continue-on-error: true` untuk job E2E.
+- Semua job butuh `e2e-setup` selesai & health `/ready` 200.
+- Durasi target per job: web < 15 mnt, mobile < 40 mnt, journeys < 20 mnt.
+
+---
+
+## 9. Open Questions & Kritik
+
+### 9.1. Open Questions (belum terjawab)
+1. Split G-Ride saat settlement: Kode & PRD = 80/20 (G-Ride).
+   [RESOLVED: API CONTRACT section 7 menyebut driver 80%/platform 20% — konsisten
+   dengan kode; bloker TIER 1 J1 dicabut]
+2. Batas kapasitas driver G-Send: [RESOLVED: max 3 order aktif per driver + max 3
+   stop per order — bloker N-12 dicabut]
+3. Admin 2FA pada reversal: apakah `POST /admin/ledger/{id}/reverse` punya langkah 2FA
+   di UI admin_web? [PERLU VERIFIKASI]
+4. Login admin_web: mekanisme autentikasi real (Supabase? JWT import ke Next?)
+   belum tervalidasi — memengaruhi AD-01.
+5. OTP: simulated code fixture atau memakai provider asli? Mempengaruhi CU-01 & J4.
+6. Landing page tidak punya wireframe kategori Halaman di HALAMAN.txt — apakah e2e
+   landing cukup sebatas smoke (tanpa journey bisnis)? Asumsi: ya.
+7. Versi Postgres produksi (STP 15 vs docker-compose 14) — service container CI harus
+   mengikuti versi prod.
+8. Video mobile: `adb screenrecord` hanya jalan untuk Android; rencana Android emulator
+   dulu, iOS out-of-scope untuk MVP E2E?
+9. Apakah `admin_web` perlu dijadikan job tersendiri di `ci.yml` (sekarang belum ada)?
+   Saran: diangkat dalam roadmap terpisah.
+
+### 9.2. Kritik terhadap SCOPE INI (apa yang berlebihan)
+- AD-04 (export CSV) & LP-02/03/04 (responsiveness/dokumen) rendah nilai vs biaya saat
+  E2E baru berdiri — masuk TIER 3 sudah tepat, jangan dinaikkan.
+- Ada overlap antara N-05/N-06 (api-level concurrency) dengan scope: ini sebenarnya
+  sudah dicover integration test TC-002/TC-001. Di E2E cukup 1 kali lintasan melalui UI
+  sebagai "bukti", bukan pengulangan penuh.
+- 59 test case untuk 1 developer part-time itu berat. Realistis: kerjakan PENUH 51
+  test (TIER 1+2) dan anggap TIER 3 opsional.
+- J6 (reconciliation) sebenarnya bisa digabung ke dalam footer tiap journey (assert
+  `balance_check` sesudah tiap cross-app flow) — hemat 1 test case.
+
+### 9.3. Kritik arsitektur/keselarasan project
+- Inkonsistensi base path: `/ledger/audit` & `GET /rides/{id}` di API CONTRACT tidak
+  memakai prefix `/api/v1` yang dipakai `openapi.yaml` — pastikan base path konsisten
+  (dampak pada helper HTTP E2E).
+- Split fee & kapasitas sudah dikonsolidasikan ke kode (Kode = 80/20 G-Ride, 85%/15%
+  G-Food, 90/10 G-Send, max 3 order + 3 stop). Dokumen sudah disinkronkan per 2026-09-20.
+- Uji E2E web perlu backend hidup; tanpa service container Postgres/Redis CI tidak bisa.
+  Ini butuh menambah service di workflow baru (ci.yml saat ini pakai pgxmock/miniredis —
+  disini itu keputusan benar untuk unit/integration, tapi E2E wajib real).
+
+### 9.4. Tool & process Saran
+- Playwright tetap rekomendasi #1; kalau butuh parallel ringan bisa `npx playwright
+  test --workers=2`. Jangan pindah ke Cypress.
+- Untuk mobile, alternative layak: `patrol` (tool E2E Flutter; tambah app-side dep) —
+  tapi pilih integration_test dulu karena sudah SDK resmi & tanpa biaya.
+- Tambahkan "fixture helper HTTP" yang memakai API backend (Gin) untuk setup data
+  (topup, order) sebelum test UI — jadi test tidak menunggu waktu webhook natural. [USULAN]
+- Pertimbangkan memakai k6 di job `e2e-server-journeys` jika ingin verify beban — tapi
+  k6 lebih cocok untuk load test (sudah standar repo), bukan E2E fungsional.
+
+### 9.5. Risiko yang perlu dimitigasi
+- Flake mobile cold-start → retry 1x sudah aman, tapi pastikan artifact video tersimpan
+  di failure untuk diagnosa.
+- Rate limit (wallet/order ops 10/min; driver accept 30/min) bisa menjebol test yang
+  banyak call API — desain test roomy (≤ 8 call ops wallet per test).
+- Menjalankan `flutter test integration_test` butuh device; pastikan job matrix tidak
+  menghabiskan konteks (Android emulator berbagi memory) — jalankan driver & merchant
+  urutan sesudah customer bila memory dibatasi.
+- Test yang menunggu webhook (topup) harus punya timeout path late-settlement 60s,
+  jangan hardcode sleep (mirror `is_late_settlement`).
+- Karena admin_web belum terjaga lint/build di CI, jangan taruh asistensi ganda:
+  E2E web admin BISA gagal di hal semantik runtime yang seharusnya ketahuan di build —
+  saran: naikkan CI coverage admin_web di fase selanjutnya.
+
+### 9.6. Kritik & Saran dari OpenCode
+- (a) Yang mungkin terlewat: tidak ada test untuk "Voucher + cancel (+refund)" interplay
+  yang mem-bypass cash gain ilegal — buat pasangan untuk J2/N-14.
+- (b) Yang mungkin terlewat: driver cash-payment (COD) settlement
+  (`process_cash_settlement`, change_amount) — tambahkan di J3 bila sumber daya tersedia.
+- (c) Yang overkill: 14 negative test — potong 2-3 terendah (N-10 rate limit & N-13)
+  ke TIER 3 sudah dilakukan; pertimbangkan hilangkan N-07/N-12 dari P1 bila deadline.
+- (d) Coverage "Ghost order" CAS hanya muncul implicit (N-08) — jelas terverifikasi
+  di LOGIC FLOW, tapi di UI FOOD tidak ada test "double tap CONFIRM" — tambahkan
+  di ME-02 via rapid double-tap (DRIVER race analog; bukti anti ghost-state).
+- (e) Tool alternatif: Playwright sudah cukup; kalau Flutter E2E jadi banyak maintenance,
+  lihat `patrol` untuk grouping—tapi JANGAN untuk MVP.
+- (f) Split fee & kapasitas sudah dikonsolidasikan ke kode (Kode = 80/20 G-Ride, 85%/15%
+  G-Food, 90/10 G-Send, max 3 order + 3 stop). Dokumen sudah disinkronkan per 2026-09-20.
+
+---
+
+## 10. Roadmap Eksekusi
+
+> Estimasi: karena tooling belum ada (integration_test & Playwright masih 0),
+> road-map diawali setup. Asumsi 1 developer part-time (QA = dev).
+
+| Phase | Isi | Deliverables | Estimasi jam |
+|-------|-----|--------------|--------------|
+| **Phase 1: Web E2E** | Setup Playwright root (`e2e/web`) + config path/artifact; Landing (LP-01..06) & Admin (AD-01..09) | Base framework + CI job `e2e-web`; 15 test green | 24-32 jam |
+| **Phase 2: Mobile E2E** | Tambah `integration_test` dependency di 3 pubspec; environment emulator; customer (CU), driver (DR), merchant (ME) = 24 test | Harness per app; 24 test green + screen-record | 46-62 jam |
+| **Phase 3: Cross-App Journey** | Fixture helper HTTP + seed; J1-J6 | Journey cross-app first-class; backend sebagai orakel | 22-32 jam |
+| **Phase 4: Negative Flow + Polish** | N-01..N-14 (setup data negative), dashboard tiering, video/trace CI, fix flake runner | Negative suite green; stack artifact lengkap; dokumentasi ke-98% DRAFT → FINAL | 16-26 jam |
+
+Total estimasi: **±108-152 jam** (±5-7 minggu part-time) untuk semua 59 test berjalan
+di CI. TIER 3 bisa dipangkas jika konteks terbatas (hemat ±8-10 jam).
+
+Gate keluar (output): sesuai prasyarat "Pre-Release Checklist" STP —
+- Semua TIER 1 green di `e2e.yml`.
+- `balance_check: BALANCED` di akhir tiap run (ledger invariant).
+- Artifact video/screenshot tersimpan untuk tiap journey.
+
+---
+
+## INVARIANT CHECKLIST (dipakai di tiap journey)
+- [ ] SUM(debit) = SUM(credit) pada ledger (Rp 0 discrepancy).
+- [ ] Tidak ada double-spend (1 order hanya 1 driver; 1 topup hanya 1x credit).
+- [ ] Status order valid & tidak ghost (state machine rules).
+- [ ] Refund akurat & ≤ 5 detik (cancel ride, food refund rules).
+- [ ] Idempotency: retry request tidak menghitung ulang.
+- [ ] Ledger `is_settled`/`is_reversed` flag konsisten.
+
+<!-- END OF E2E TEST SCOPE — v1.0-DRAFT -->
