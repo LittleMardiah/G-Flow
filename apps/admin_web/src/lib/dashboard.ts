@@ -11,7 +11,7 @@ export function useDashboardKPIs() {
   return useQuery({
     queryKey: ["dashboard", "kpis"],
     queryFn: async (): Promise<DashboardKPIs> => {
-      const { data } = await api.get<DashboardKPIs>("/admin/dashboard/kpis");
+      const { data } = await api.get<DashboardKPIs>("/api/v1/admin/dashboard/kpis");
       return data;
     },
   });
@@ -22,7 +22,7 @@ export function useLatestTransactions(limit = 10) {
     queryKey: ["dashboard", "transactions", limit],
     queryFn: async (): Promise<TransactionListResponse> => {
       const { data } = await api.get<TransactionListResponse>(
-        "/admin/dashboard/transactions",
+        "/api/v1/admin/dashboard/transactions",
         { params: { limit } },
       );
       return data;

@@ -10,7 +10,7 @@ export function useTransactionDetail(id: string | null) {
     enabled: !!id && id.trim().length > 0,
     queryFn: async (): Promise<TransactionDetail> => {
       const { data } = await api.get<{ success: boolean; data: TransactionDetail }>(
-        `/admin/transactions/${encodeURIComponent(id!)}`,
+        `/api/v1/admin/transactions/${encodeURIComponent(id!)}`,
       );
       return data.data;
     },
@@ -31,7 +31,7 @@ export function useReverseTransaction() {
       const { data } = await api.post<{
         success: boolean;
         data: ReverseTransactionResponse;
-      }>(`/admin/transactions/${encodeURIComponent(id)}/reverse`, {
+      }>(`/api/v1/admin/transactions/${encodeURIComponent(id)}/reverse`, {
         reason,
         notes,
       });
