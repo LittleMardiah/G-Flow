@@ -136,6 +136,14 @@ func main() {
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
 
+	// CORS (E2E Admin Web): izinkan Admin Web (localhost:3000) & app lain
+	// memanggil API lintas-asal. Whitelist via env CORS_ORIGINS (koma-separated);
+	// default mencakup origin bootstrap 3000/3100/8080. Dipasang sebagai global
+	// middleware SEBELUM AuthMiddleware agar preflight OPTIONS dijawab 204
+	// tanpa kena auth.
+	origins := middleware.ParseOrigins(os.Getenv("CORS_ORIGINS"))
+	r.Use(middleware.CORS(origins))
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
