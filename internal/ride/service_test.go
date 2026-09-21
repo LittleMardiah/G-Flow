@@ -83,6 +83,14 @@ func (m *mockRepo) GetDriverBalance(ctx context.Context, driverID uuid.UUID) (de
 	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
+func (m *mockRepo) LockDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) (*Driver, error) {
+	args := m.Called(ctx, q, driverID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Driver), args.Error(1)
+}
+
 func (m *mockRepo) LockOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) error {
 	args := m.Called(ctx, q, orderID)
 	return args.Error(0)
@@ -521,8 +529,10 @@ func TestAcceptOrder_Success(t *testing.T) {
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 
-	mDB.ExpectBegin()
+mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
+		Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 	repo.On("AssignDriver", mock.Anything, mock.Anything, svcOrderID, svcDriverID).Return(true, nil)
 	repo.On("MarkDriverBusy", mock.Anything, mock.Anything, svcDriverID).Return(nil)
@@ -606,9 +616,11 @@ func TestAcceptOrder_RaceCondition(t *testing.T) {
 
 	driver2 := uuid.MustParse("77777777-7777-7777-7777-777777777777")
 
-	// Driver pertama sukses.
+// Driver pertama sukses.
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
+		Return(svcDriver(workingStatusIdle, decimal.Zero), nil).Once()
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).Return(nil).Once()
 	repo.On("AssignDriver", mock.Anything, mock.Anything, svcOrderID, svcDriverID).Return(true, nil)
 	repo.On("MarkDriverBusy", mock.Anything, mock.Anything, svcDriverID).Return(nil)
@@ -618,6 +630,8 @@ func TestAcceptOrder_RaceCondition(t *testing.T) {
 	repo.On("GetDriver", mock.Anything, driver2).Return(
 		&Driver{ID: driver2, UserType: userTypeDriver, Status: "ACTIVE", WorkingStatus: workingStatusIdle, MinBalanceThreshold: decimal.Zero}, nil)
 	repo.On("GetDriverBalance", mock.Anything, driver2).Return(decimal.NewFromInt(100000), nil)
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, driver2).
+		Return(svcDriver(workingStatusIdle, decimal.Zero), nil).Once()
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).
 		Return(&pgconn.PgError{Code: "55P03"}).Once()
 
@@ -654,6 +668,8 @@ func TestAcceptOrder_OrderNotSearching(t *testing.T) {
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
+		Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).Return(ErrOrderNotFound)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID), nil)
 
@@ -669,16 +685,40 @@ func TestAcceptOrder_AssignFailed(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
-	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
+repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
+		Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 	repo.On("AssignDriver", mock.Anything, mock.Anything, svcOrderID, svcDriverID).Return(false, nil)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err = svc.AcceptOrder(context.Background(), svcOrderID, svcDriverID)
 	assert.ErrorIs(t, err, ErrOrderNotSearching)
+	repo.AssertExpectations(t)
+}
+
+func TestAcceptOrder_LockRevalidatesBusy(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	// Pre-check membaca IDLE, tapi di antara pre-check dan lock user, driver
+	// berubah BUSY (di-assign order lain). Re-validasi DI BAWAH LOCK harus
+	// menolak (409) — ini mencegah double assign (TD-071).
+	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
+	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
+		Return(svcDriver(workingStatusBusy, decimal.Zero), nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err = svc.AcceptOrder(context.Background(), svcOrderID, svcDriverID)
+	assert.ErrorIs(t, err, ErrDriverBusy)
 	repo.AssertExpectations(t)
 }
 
@@ -1269,6 +1309,8 @@ func TestAcceptOrder_LockOrderGetError(t *testing.T) {
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
+		Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).Return(ErrOrderNotFound)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(nil, ErrOrderNotFound)
 

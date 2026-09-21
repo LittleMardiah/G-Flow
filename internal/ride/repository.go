@@ -419,24 +419,43 @@ func (r *Repository) GetDriverBalance(ctx context.Context, driverID uuid.UUID) (
 	return balance, nil
 }
 
+// LockDriverUserForAccept mengunci baris users driver dengan SELECT FOR UPDATE
+// NOWAIT (ROADMAP 02 §2.3 Locking Order Standard: users → ride_orders),
+// sekaligus membaca working_status & min_balance_threshold di bawah lock.
+// Guard user_type='driver' AND status='ACTIVE' menolak non-driver atau driver
+// yang tidak aktif. Mengembalikan ErrDriverNotFound jika baris tidak ada, atau
+// pgconn.PgError (SQLSTATE 55P03) jika lock tidak tersedia.
+func (r *Repository) LockDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) (*Driver, error) {
+	var d Driver
+	err := q.QueryRow(ctx, `
+		SELECT id, user_type, status, working_status, COALESCE(min_balance_threshold, 0)
+		FROM users
+		WHERE id = $1 AND user_type = 'driver' AND status = 'ACTIVE'
+		FOR UPDATE NOWAIT
+	`, driverID).Scan(&d.ID, &d.UserType, &d.Status, &d.WorkingStatus, &d.MinBalanceThreshold)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrDriverNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // LockOrderForAccept mengunci baris ride_orders dengan SELECT FOR UPDATE
 // NOWAIT selama driver accept order. Memastikan status masih SEARCHING_DRIVER.
 // Mengembalikan pgconn.PgError (SQLSTATE 55P03) jika lock tidak tersedia, dan
 // ErrOrderNotFound jika order/status tidak cocok.
 func (r *Repository) LockOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) error {
-	var status string
 	err := q.QueryRow(ctx, `
-		SELECT status FROM ride_orders
+		SELECT 1 FROM ride_orders
 		WHERE id = $1 AND status = 'SEARCHING_DRIVER'
 		FOR UPDATE NOWAIT
-	`, orderID).Scan(&status)
+	`, orderID).Scan(new(int))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrOrderNotFound
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // AssignDriver menetapkan driver ke order: status → DRIVER_ASSIGNED,

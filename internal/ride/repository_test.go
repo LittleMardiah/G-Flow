@@ -400,9 +400,9 @@ func TestRepository_GetDriverBalance_NotFound(t *testing.T) {
 func TestRepository_LockOrderForAccept_Success(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
-	mDB.ExpectQuery("SELECT status FROM ride_orders").
+	mDB.ExpectQuery("SELECT 1 FROM ride_orders").
 		WithArgs(repoOrderID).
-		WillReturnRows(pgxmock.NewRows([]string{"status"}).AddRow(statusSearchingDriver))
+		WillReturnRows(pgxmock.NewRows([]string{"1"}).AddRow(1))
 
 	repo := NewRepository(mDB)
 	err = repo.LockOrderForAccept(context.Background(), mDB, repoOrderID)
@@ -413,13 +413,60 @@ func TestRepository_LockOrderForAccept_Success(t *testing.T) {
 func TestRepository_LockOrderForAccept_NotFound(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
-	mDB.ExpectQuery("SELECT status FROM ride_orders").
+	mDB.ExpectQuery("SELECT 1 FROM ride_orders").
 		WithArgs(repoOrderID).
 		WillReturnError(pgx.ErrNoRows)
 
 	repo := NewRepository(mDB)
 	err = repo.LockOrderForAccept(context.Background(), mDB, repoOrderID)
 	assert.ErrorIs(t, err, ErrOrderNotFound)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// LockDriverUserForAccept — guard atomik user_type='driver' AND status='ACTIVE'
+// dengan SELECT FOR UPDATE NOWAIT (ROADMAP 02 §2.3: users → ride_orders).
+func TestRepository_LockDriverUserForAccept_Success(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	mDB.ExpectQuery("FOR UPDATE NOWAIT").
+		WithArgs(repoDriverID).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "user_type", "status", "working_status", "min_balance_threshold",
+		}).AddRow(repoDriverID, "driver", "ACTIVE", "IDLE", decimal.Zero))
+
+	repo := NewRepository(mDB)
+	d, err := repo.LockDriverUserForAccept(context.Background(), mDB, repoDriverID)
+	assert.NoError(t, err)
+	assert.Equal(t, repoDriverID, d.ID)
+	assert.Equal(t, workingStatusIdle, d.WorkingStatus)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepository_LockDriverUserForAccept_NotFound(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	mDB.ExpectQuery("FOR UPDATE NOWAIT").
+		WithArgs(repoDriverID).
+		WillReturnError(pgx.ErrNoRows)
+
+	repo := NewRepository(mDB)
+	_, err = repo.LockDriverUserForAccept(context.Background(), mDB, repoDriverID)
+	assert.ErrorIs(t, err, ErrDriverNotFound)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepository_LockDriverUserForAccept_LockTimeout(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	mDB.ExpectQuery("FOR UPDATE NOWAIT").
+		WithArgs(repoDriverID).
+		WillReturnError(&pgconn.PgError{Code: "55P03"})
+
+	repo := NewRepository(mDB)
+	_, err = repo.LockDriverUserForAccept(context.Background(), mDB, repoDriverID)
+	var pgErr *pgconn.PgError
+	assert.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "55P03", pgErr.Code)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 

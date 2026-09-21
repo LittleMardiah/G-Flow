@@ -483,7 +483,114 @@ func TestIntegrationRide_ConcurrentAccept(t *testing.T) {
 	require.Equal(t, "BUSY", ws, "driver pemenang harus BUSY")
 }
 
-// TC-INT-RD-003 — Customer cancel sebelum assign → refund penuh tanpa penalti.
+// TC-INT-RD-002.B — TD-071: Driver yang SAMA accept 2 order BERBEDA secara
+// paralel. Fix v2.3 (lock users FOR UPDATE NOWAIT dulu) harus mencegah double
+// assign: tepat satu 200, satu 409, driver BUSY, dan hanya satu order ter-assign.
+func TestIntegrationRide_SameDriverDoubleAccept(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	order1, _ := bookRide(t, e, custToken, "WALLET")
+	order2, _ := bookRide(t, e, custToken, "WALLET")
+
+	dToken, _, _ := newDriver(t, e, decimal.NewFromInt(100000))
+
+	type result struct{ code int }
+	results := make(chan result, 2)
+
+	var wg sync.WaitGroup
+	for _, oid := range []uuid.UUID{order1, order2} {
+		wg.Add(1)
+		go func(orderID uuid.UUID) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v1/rides/"+orderID.String()+"/accept", nil)
+			req.Header.Set("Authorization", "Bearer "+dToken)
+			rec := httptest.NewRecorder()
+			e.r.ServeHTTP(rec, req)
+			results <- result{code: rec.Code}
+		}(oid)
+	}
+	wg.Wait()
+	close(results)
+
+	success, conflict := 0, 0
+	for r := range results {
+		switch r.code {
+		case http.StatusOK:
+			success++
+		case http.StatusConflict:
+			conflict++
+		}
+	}
+	require.Equal(t, 1, success, "tepat satu order harus di-accept")
+	require.Equal(t, 1, conflict, "yang kedua harus 409 (busy/lock)")
+	require.Equal(t, 2, success+conflict, "semua request harus selesai")
+
+	// Driver hanya ter-assign ke SATU order; order lain tetap SEARCHING_DRIVER.
+	var assigned int
+	require.NoError(t, e.pool.QueryRow(ctx, `
+		SELECT count(*) FROM ride_orders
+		WHERE id IN ($1, $2)
+		  AND driver_id IS NOT NULL
+		  AND status IN ('DRIVER_ASSIGNED', 'DRIVER_ARRIVED', 'TRIP_STARTED')
+	`, order1, order2).Scan(&assigned))
+	require.Equal(t, 1, assigned, "driver double-assign TIDAK boleh terjadi")
+
+	for _, oid := range []uuid.UUID{order1, order2} {
+		var status string
+		require.NoError(t, e.pool.QueryRow(ctx,
+			`SELECT status FROM ride_orders WHERE id = $1`, oid).Scan(&status))
+		if status == "SEARCHING_DRIVER" {
+			assertEmptyDriver(t, e, ctx, oid)
+		} else {
+			require.Equal(t, "DRIVER_ASSIGNED", status)
+		}
+	}
+
+	var ws string
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT working_status FROM users WHERE id = $1`, getOnlyDriverID(t, e, ctx, order1, order2)).Scan(&ws))
+	require.Equal(t, "BUSY", ws, "driver pemenang harus BUSY")
+
+	var events int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ride_order_events
+		 WHERE to_status = 'DRIVER_ASSIGNED' AND order_id IN ($1, $2)`,
+		order1, order2).Scan(&events))
+	require.Equal(t, 1, events, "tepat satu event assign")
+}
+
+// assertEmptyDriver memastikan order tidak memiliki driver.
+func assertEmptyDriver(t *testing.T, e *testEnv, ctx context.Context, orderID uuid.UUID) {
+	t.Helper()
+	var driverID *uuid.UUID
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT driver_id FROM ride_orders WHERE id = $1`, orderID).Scan(&driverID))
+	require.Nil(t, driverID)
+}
+
+// getOnlyDriverID mengambil driver_id dari order yang ter-assign.
+func getOnlyDriverID(t *testing.T, e *testEnv, ctx context.Context, ids ...uuid.UUID) uuid.UUID {
+	t.Helper()
+	for _, id := range ids {
+		var driverID *uuid.UUID
+		require.NoError(t, e.pool.QueryRow(ctx,
+			`SELECT driver_id FROM ride_orders WHERE id = $1`, id).Scan(&driverID))
+		if driverID != nil {
+			return *driverID
+		}
+	}
+	t.Fatal("tidak ada order yang ter-assign ke driver")
+	return uuid.Nil
+}
 func TestIntegrationRide_CustomerCancelFullRefund(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

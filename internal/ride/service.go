@@ -186,6 +186,7 @@ type Repo interface {
 
 	GetDriver(ctx context.Context, driverID uuid.UUID) (*Driver, error)
 	GetDriverBalance(ctx context.Context, driverID uuid.UUID) (decimal.Decimal, error)
+	LockDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) (*Driver, error)
 	LockOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) error
 	AssignDriver(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error)
 	MarkDriverBusy(ctx context.Context, q Querier, driverID uuid.UUID) error
@@ -401,7 +402,9 @@ func (s *Service) GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, 
 //     working_status='IDLE'.
 //  2. Validasi saldo wallet driver (wallet_type='DRIVER') >=
 //     min_balance_threshold.
-//  3. Lock order: SELECT FOR UPDATE NOWAIT + status='SEARCHING_DRIVER'.
+//  3. Transaksi: lock users driver FOR UPDATE NOWAIT (guard ACTIVE+IDLE,
+//     ROADMAP 02 §2.3 lock hierarchy: users → ride_orders), lalu lock
+//     ride_orders FOR UPDATE NOWAIT + status='SEARCHING_DRIVER'.
 //  4. Update order: status='DRIVER_ASSIGNED', driver_id, assigned_at=NOW().
 //  5. Update users: working_status='BUSY'.
 //  6. Insert audit event ride_order_events (SEARCHING_DRIVER → DRIVER_ASSIGNED).
@@ -443,6 +446,22 @@ func (s *Service) AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID u
 
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
 		return nil, err
+	}
+
+	// Lock user driver DULU dengan FOR UPDATE NOWAIT (ROADMAP 02 §2.3 lock
+	// hierarchy: users → ride_orders). Guard atomik ACTIVE+driver; hasil
+	// re-validasi working_status DI BAWAH LOCK agar driver yang sama tidak
+	// bisa di-assign 2 order secara paralel (double assign).
+	lockedDriver, err := s.repo.LockDriverUserForAccept(ctx, tx, driverID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return nil, ErrLockTimeout
+		}
+		return nil, err
+	}
+	if lockedDriver.WorkingStatus != workingStatusIdle {
+		return nil, ErrDriverBusy
 	}
 
 	// Lock order tunggal dengan FOR UPDATE NOWAIT + guard status.
