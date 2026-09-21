@@ -248,6 +248,8 @@ func main() {
 		auth.RBACMiddleware("admin"),
 	)
 	{
+		adminGroup.GET("/dashboard/kpis", adminHandler.GetDashboardKPIs)
+		adminGroup.GET("/dashboard/transactions", adminHandler.GetDashboardTransactions)
 		adminGroup.GET("/transactions/:id", adminHandler.GetTransaction)
 		adminGroup.POST("/transactions/:id/reverse", adminHandler.ReverseTransaction)
 	}

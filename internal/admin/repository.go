@@ -23,6 +23,7 @@ import (
 type DB interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
@@ -293,4 +294,165 @@ func (r *Repository) SystemWalletID(ctx context.Context, tx pgx.Tx, walletType s
 		return uuid.Nil, ErrWalletNotFound
 	}
 	return id, err
+}
+
+// OrderStatusCount adalah pasangan status order (teks enum) dengan jumlah
+// order pada status tersebut (agregasi ride/food/send).
+type OrderStatusCount struct {
+	Status string `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+// RecentTransaction adalah satu baris ledger terbaru untuk halaman dashboard
+// admin (subset kolom ledger_entries + status turunan is_reversed).
+type RecentTransaction struct {
+	ID        uuid.UUID
+	WalletID  uuid.UUID
+	EntryType string
+	Amount    decimal.Decimal
+	Reference string
+	CreatedAt time.Time
+	Status    string
+	Note      string
+}
+
+// CountActiveOrders menghitung jumlah order yang sedang berjalan di semua
+// layanan (ride/food/send). Order "aktif" = status bukan terminal, yaitu
+// bukan CANCELLED dan bukan SETTLED (SETTLED = settlement final).
+func (r *Repository) CountActiveOrders(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM ride_orders WHERE status::text NOT IN ('CANCELLED', 'SETTLED')
+			UNION ALL
+			SELECT 1 FROM food_orders WHERE status::text NOT IN ('CANCELLED', 'SETTLED')
+			UNION ALL
+			SELECT 1 FROM send_orders WHERE status::text NOT IN ('CANCELLED', 'SETTLED')
+		) t
+	`).Scan(&count)
+	return count, err
+}
+
+// SumTransactionVolume24h menjumlahkan nilai transaksi (sisi DEBIT perganda)
+// yang masuk dalam 24 jam terakhir, tidak termasuk entry reversal.
+func (r *Repository) SumTransactionVolume24h(ctx context.Context) (decimal.Decimal, error) {
+	var total decimal.Decimal
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount), 0)
+		FROM ledger_entries
+		WHERE is_reversed = FALSE AND entry_type = 'DEBIT'
+		  AND created_at >= NOW() - INTERVAL '24 hours'
+	`).Scan(&total)
+	return total, err
+}
+
+// AvgFare24h menghitung rata-rata ongkos order (ride actual/estimated fare,
+// food total_amount, send total_fare) yang dibuat 24 jam terakhir, tidak
+// termasuk order yang dibatalkan (CANCELLED).
+func (r *Repository) AvgFare24h(ctx context.Context) (decimal.Decimal, error) {
+	var avg decimal.Decimal
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(AVG(x.fare), 0) FROM (
+			SELECT COALESCE(actual_fare, estimated_fare) AS fare
+			FROM ride_orders
+			WHERE created_at >= NOW() - INTERVAL '24 hours' AND status::text NOT IN ('CANCELLED')
+			UNION ALL
+			SELECT total_amount FROM food_orders
+			WHERE created_at >= NOW() - INTERVAL '24 hours' AND status::text NOT IN ('CANCELLED')
+			UNION ALL
+			SELECT total_fare FROM send_orders
+			WHERE created_at >= NOW() - INTERVAL '24 hours' AND status::text NOT IN ('CANCELLED')
+		) x
+	`).Scan(&avg)
+	return avg, err
+}
+
+// RevenueToday menjumlahkan komisi platform (platform_commission) dari order
+// yang di-settle hari ini di semua layanan.
+func (r *Repository) RevenueToday(ctx context.Context) (decimal.Decimal, error) {
+	var revenue decimal.Decimal
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(x.commission), 0) FROM (
+			SELECT COALESCE(platform_commission, 0) AS commission
+			FROM ride_orders WHERE is_settled = TRUE AND settled_at::date = CURRENT_DATE
+			UNION ALL
+			SELECT COALESCE(platform_commission, 0) FROM food_orders
+			WHERE is_settled = TRUE AND settled_at::date = CURRENT_DATE
+			UNION ALL
+			SELECT COALESCE(platform_commission, 0) FROM send_orders
+			WHERE is_settled = TRUE AND settled_at::date = CURRENT_DATE
+		) x
+	`).Scan(&revenue)
+	return revenue, err
+}
+
+// CountOrdersByStatus menghitung jumlah order per status (label enum di-cast
+// ke teks lalu digabung antar layanan; label yang sama dijumlahkan).
+func (r *Repository) CountOrdersByStatus(ctx context.Context) ([]OrderStatusCount, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT status::text, COUNT(*) FROM (
+			SELECT status::text AS status FROM ride_orders
+			UNION ALL
+			SELECT status::text AS status FROM food_orders
+			UNION ALL
+			SELECT status::text AS status FROM send_orders
+		) t
+		GROUP BY status::text ORDER BY status::text
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OrderStatusCount
+	for rows.Next() {
+		var s OrderStatusCount
+		if err := rows.Scan(&s.Status, &s.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListRecentTransactions mengambil daftar transaksi ledger terbaru (pagination)
+// beserta total seluruh baris. Status diturunkan dari is_reversed:
+// "REVERSED" kalau sudah di-reverse, selain itu "ACTIVE". Field reference
+// dibentuk dari reference_type + "/" + reference_id (mengikuti pola LedgerItem).
+func (r *Repository) ListRecentTransactions(ctx context.Context, limit, offset int) ([]RecentTransaction, int64, error) {
+	var total int64
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM ledger_entries`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, wallet_id, entry_type, amount,
+		       COALESCE(reference_type, '') || '/' || COALESCE(reference_id::text, '') AS reference,
+		       created_at,
+		       CASE WHEN is_reversed THEN 'REVERSED' ELSE 'ACTIVE' END AS status,
+		       COALESCE(description, '') AS note
+		FROM ledger_entries
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []RecentTransaction
+	for rows.Next() {
+		var t RecentTransaction
+		if err := rows.Scan(&t.ID, &t.WalletID, &t.EntryType, &t.Amount, &t.Reference, &t.CreatedAt, &t.Status, &t.Note); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
 }

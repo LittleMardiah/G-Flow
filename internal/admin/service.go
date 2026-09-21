@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -444,6 +445,104 @@ func (s *Service) GetTransactionDetail(ctx context.Context, transactionID uuid.U
 	detail.TotalAmount = total
 	detail.Reversed = reversed
 	return detail, nil
+}
+
+// jsonDecimal membungkus decimal.Decimal agar di-marshal sebagai JSON number
+// (bukan string). shopspring v1.4.0 default MarshalJSON menghasilkan string;
+// frontend types.ts mengetikkan field moneter sebagai number.
+type jsonDecimal decimal.Decimal
+
+// MarshalJSON menulis nilai desimal tanpa tanda kutip (JSON number asli).
+func (d jsonDecimal) MarshalJSON() ([]byte, error) {
+	return []byte(decimal.Decimal(d).String()), nil
+}
+
+// DashboardKPIs adalah payload GET /admin/dashboard/kpis (snake_case, mengikuti
+// apps/admin_web/src/lib/types.ts -> DashboardKPIs).
+type DashboardKPIs struct {
+	ActiveOrders           int64              `json:"active_orders"`
+	TotalTransactionVolume jsonDecimal        `json:"total_transaction_volume"`
+	AvgFare                jsonDecimal        `json:"avg_fare"`
+	RevenueToday           jsonDecimal        `json:"revenue_today"`
+	ErrorRate              float64            `json:"error_rate"`
+	OrderStatusBreakdown   []OrderStatusCount `json:"order_status_breakdown"`
+}
+
+// TransactionItem adalah satu baris transaksi untuk dashboard admin
+// (apps/admin_web/src/lib/types.ts -> Transaction).
+type TransactionItem struct {
+	ID        uuid.UUID   `json:"id"`
+	WalletID  uuid.UUID   `json:"wallet_id"`
+	EntryType string      `json:"entry_type"`
+	Amount    jsonDecimal `json:"amount"`
+	Reference string      `json:"reference"`
+	CreatedAt time.Time   `json:"created_at"`
+	Status    string      `json:"status"`
+	Note      string      `json:"note"`
+}
+
+// TransactionList adalah payload GET /admin/dashboard/transactions
+// (apps/admin_web/src/lib/types.ts -> TransactionListResponse).
+type TransactionList struct {
+	TotalCount   int64             `json:"total_count"`
+	Transactions []TransactionItem `json:"transactions"`
+}
+
+// GetDashboardKPIs merangkum KPI halaman dashboard admin. Error rate masih
+// stub 0.0 karena tracking error belum ada (TD-046).
+func (s *Service) GetDashboardKPIs(ctx context.Context) (*DashboardKPIs, error) {
+	activeOrders, err := s.repo.CountActiveOrders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	volume, err := s.repo.SumTransactionVolume24h(ctx)
+	if err != nil {
+		return nil, err
+	}
+	avgFare, err := s.repo.AvgFare24h(ctx)
+	if err != nil {
+		return nil, err
+	}
+	revenue, err := s.repo.RevenueToday(ctx)
+	if err != nil {
+		return nil, err
+	}
+	breakdown, err := s.repo.CountOrdersByStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DashboardKPIs{
+		ActiveOrders:           activeOrders,
+		TotalTransactionVolume: jsonDecimal(volume),
+		AvgFare:                jsonDecimal(avgFare),
+		RevenueToday:           jsonDecimal(revenue),
+		ErrorRate:              0.0,
+		OrderStatusBreakdown:   breakdown,
+	}, nil
+}
+
+// GetDashboardTransactions mengambil daftar transaksi ledger terbaru dengan
+// pagination (limit/offset) plus total seluruh baris.
+func (s *Service) GetDashboardTransactions(ctx context.Context, limit, offset int) (*TransactionList, error) {
+	rows, total, err := s.repo.ListRecentTransactions(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TransactionItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, TransactionItem{
+			ID:        r.ID,
+			WalletID:  r.WalletID,
+			EntryType: r.EntryType,
+			Amount:    jsonDecimal(r.Amount),
+			Reference: r.Reference,
+			CreatedAt: r.CreatedAt,
+			Status:    r.Status,
+			Note:      r.Note,
+		})
+	}
+	return &TransactionList{TotalCount: total, Transactions: items}, nil
 }
 
 func refundWalletOf(entries []LedgerEntry) uuid.UUID {

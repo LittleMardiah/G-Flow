@@ -17,13 +17,14 @@ package admin
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"log/slog"
 
 	"github.com/g-flow/g-flow/internal/auth"
 )
@@ -168,6 +169,50 @@ func (h *Handler) GetTransaction(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
+}
+
+// GetDashboardKPIs GET /admin/dashboard/kpis
+// Mengembalikan ringkasan KPI dashboard admin (envelope {success, data}).
+// Error internal dipetakan ke 500 INTERNAL_SERVER_ERROR.
+func (h *Handler) GetDashboardKPIs(c *gin.Context) {
+	kpis, err := h.svc.GetDashboardKPIs(c.Request.Context())
+	if err != nil {
+		h.logger.Error("get dashboard kpis failed", "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal mengambil KPI dashboard")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": kpis})
+}
+
+// GetDashboardTransactions GET /admin/dashboard/transactions?limit=&offset=
+// Mengembalikan daftar transaksi ledger terbaru (pagination, default limit=10
+// offset=0, limit dibatasi maksimal 100).
+func (h *Handler) GetDashboardTransactions(c *gin.Context) {
+	limit, offset := 10, 0
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "limit harus bilangan bulat positif")
+			return
+		}
+		limit = min(n, 100)
+	}
+	if v := c.Query("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "offset harus bilangan bulat non-negatif")
+			return
+		}
+		offset = n
+	}
+
+	list, err := h.svc.GetDashboardTransactions(c.Request.Context(), limit, offset)
+	if err != nil {
+		h.logger.Error("get dashboard transactions failed", "limit", limit, "offset", offset, "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal mengambil daftar transaksi")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
 }
 
 // AdminLogin POST /admin/login (publik, tanpa auth middleware)
