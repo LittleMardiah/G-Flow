@@ -28,6 +28,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       landing: ${{ steps.filter.outputs.landing }}
+      admin_web: ${{ steps.filter.outputs.admin_web }}
       flutter: ${{ steps.filter.outputs.flutter }}
       customer_app: ${{ steps.filter.outputs.customer_app }}
     steps:
@@ -44,6 +45,8 @@ jobs:
               - 'go.sum'
             landing:
               - 'apps/landing_page/**'
+            admin_web:
+              - 'apps/admin_web/**'
             flutter:
               - 'apps/customer_app/**'
               - 'apps/driver_app/**'
@@ -187,6 +190,100 @@ jobs:
           path: apps/landing_page/playwright-report/
           retention-days: 7
 
+  e2e-admin:
+    needs: changes
+    if: ${{ needs.changes.outputs.admin_web == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: g_flow_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/g_flow_e2e
+      REDIS_URL: redis://localhost:6379/15
+      PORT: '8080'
+      ENV: test
+      JWT_SECRET: gflow-e2e-admin-jwt-secret-2026-change-before-prod
+      ADMIN_2FA_SECRET: gflow-e2e-admin-2fa-secret-min-32-chars-2026
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+      E2E_ADMIN_EMAIL: admin@g-flow.local
+      E2E_ADMIN_PASSWORD: AdminP@ssw0rd!2026
+    defaults:
+      run:
+        working-directory: apps/admin_web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/admin_web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install postgres client
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Apply migrations + seed admin
+        working-directory: .
+        run: |
+          for f in migrations/*.up.sql; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          echo "Applied migrations: $(ls migrations/*.up.sql | wc -l)"
+      - name: Start backend
+        working-directory: .
+        run: |
+          go build -o /tmp/gflow-api ./cmd/api
+          /tmp/gflow-api > /tmp/gflow-api.log 2>&1 &
+          echo "gflow_api_pid=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:8080/ready >/dev/null 2>&1; then
+              echo "Backend ready after ${i}0s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "=== backend log ==="
+          cat /tmp/gflow-api.log
+          exit 1
+      - name: Install deps
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        run: npm run build
+      - name: Run E2E tests
+        run: npm run test:e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-admin-web
+          path: apps/admin_web/playwright-report/
+          retention-days: 7
+
   flutter:
     needs: changes
     if: ${{ needs.changes.outputs.flutter == 'true' || github.event_name == 'pull_request' || github.event.inputs.force_all == 'true' }}
@@ -234,7 +331,7 @@ jobs:
 
   ci-gate:
     if: always()
-    needs: [go-backend, go-security, landing-page, e2e-landing, flutter, flutter-build]
+    needs: [go-backend, go-security, landing-page, e2e-landing, e2e-admin, flutter, flutter-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -244,11 +341,13 @@ jobs:
           echo "go-security: ${{ needs.go-security.result }}"
           echo "landing-page: ${{ needs.landing-page.result }}"
           echo "e2e-landing: ${{ needs.e2e-landing.result }}"
+          echo "e2e-admin: ${{ needs.e2e-admin.result }}"
           echo "flutter: ${{ needs.flutter.result }}"
           echo "flutter-build: ${{ needs.flutter-build.result }}"
           if [[ "${{ needs.go-backend.result }}" == "failure" ]] || \
              [[ "${{ needs.landing-page.result }}" == "failure" ]] || \
-             [[ "${{ needs.e2e-landing.result }}" == "failure" ]]; then
+             [[ "${{ needs.e2e-landing.result }}" == "failure" ]] || \
+             [[ "${{ needs.e2e-admin.result }}" == "failure" ]]; then
             echo "CI failed"
             exit 1
           fi
