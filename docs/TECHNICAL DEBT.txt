@@ -594,19 +594,573 @@ Solusi jangka panjang : Bikin wrapper bash (scripts/migrate_with_psql.sh) yang
 Prioritas             : SEDANG
 Status                : OPEN
 
+------------------------------------------------------------------------------
+F. AUDIT 2026-09-21 — GAP DARI 4 ROADMAP AUDIT (R01 WALLET AUTH, R02 RIDE
+   HAILING, R03 FOOD LOGISTICS, R04 HARDENING DEPLOY)
+------------------------------------------------------------------------------
+Sumber                : audit_r01.log, audit_r02.log, audit_r03.log, audit_r04.log
+Catatan dedup         : k6/Postman & concurrency-test yang diusulkan >1 audit
+                        dicatat sekali; GAP milik TD-008 (status dokumen vs kode)
+                        dan TD-056/TD-057 (sudah di register) TIDAK di-hit-ganda.
+Flag                  : [PERLU VERIFIKASI] = perlu cek langsung/jadi keputusan User.
+
+ID         : TD-058
+Kategori   : BACKEND / FITUR
+Judul      : Endpoint & layanan transaction history wallet (GET /wallets/{id}/history)
+            belum ada — blocker layar history mobile & klaim "login→saldo→topup→history"
+Dampak     : Milestone Phase-1 "history" tidak bisa jalan; layar history mobile tidak
+            punya sumber data; komentar main.go:241 "ditunda ke Task 3.6".
+Solusi     : Implement repository/filter (status, page) + handler GET /wallets/{id}/history
+            (ownership via JWT) + route + integration TC.
+Estimasi   : 2-4 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #2; usulan TD-058)
+
+ID         : TD-059
+Kategori   : BACKEND / FITUR
+Judul      : Wallet lifecycle service (Suspend/Freeze/soft-delete) belum ada; GetBalance
+            tidak Redis-cache (spek F001)
+Dampak     : Wallet tidak bisa di-freeze/suspend di level service (hanya user-level via
+            admin); GetBalance memukul DB tiap request — performa & deviasi spek F001.
+Solusi     : Tambah SuspendWallet/FreezeWallet/DeactivateWallet + handler/route + test;
+            cache GetBalance di Redis dengan TTL & invalidasi saat mutasi balance.
+Estimasi   : 3-5 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #4, #9; usulan TD-059)
+
+ID         : TD-060
+Kategori   : MOBILE
+Judul      : Mobile wallet screens 0% — balance/topup/transfer/history screen + provider
+            belum ada (gap ROADMAP 01 2.3-2.4)
+Dampak     : Customer tidak bisa melihat saldo/topup/transfer/history wallet di app.
+Solusi     : Bangun screens (balance, topup, transfer, history) + wallet_provider di
+            customer_app dan wire ke backend (TD-058/TD-059).
+Estimasi   : 8-12 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #1; usulan TD-060)
+
+ID         : TD-061
+Kategori   : BACKEND / AUTH
+Judul      : OTP flow (screen + POST /auth/verify-otp) belum ada; token refresh endpoint
+            & suspend-blacklist-all-tokens belum ada
+Dampak     : Verifikasi akun via OTP tidak jalan; refresh token tidak bisa dirotasi dan
+            semua token user tidak bisa di-blacklist saat suspend.
+Solusi     : Endpoint verify-otp/resend-otp + refresh token + blacklist-all-tokens user;
+            layar OTP di apps.
+Estimasi   : 4-6 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #3, #5; usulan TD-061)
+
+ID         : TD-062
+Kategori   : TESTING
+Judul      : Concurrency/deadlock test (TC-W010 A↔B, TC-INT-005/009 5-simultan
+            idempotency) tidak ada — klaim "deadlock-free verified" tanpa test
+Dampak     : Race/deadlock wallet (transfer balik arah, idempotency simultan) tidak teruji.
+Solusi     : Unit/integration test A↔B transfer simultan + 5-simultan idempotency key.
+Estimasi   : 2-3 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #6; usulan TD-062)
+
+ID         : TD-063
+Kategori   : TESTING
+Judul      : API test k6 + Postman belum ada (kriteria Go/No-Go k6, p95, err-rate belum
+            terukur) — tumpang tindih scope dgn TD-092/TD-101 (R04 hardening)
+Dampak     : Performa/p95/error-rate tidak terukur; Go/No-Go tidak bisa dinilai.
+Solusi     : scripts/k6 + Postman collection di CI (koordinasi TD-092 & TD-101 agar
+            tidak duplikat).
+Estimasi   : 3-4 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #10; usulan TD-063)
+
+ID         : TD-064
+Kategori   : HYGIENE
+Judul      : Seeding fixtures Phase 1 (test customer/driver user, 10 ledger entries,
+            fixtures.go) belum ada — test user cuma ada di mock
+Dampak     : Testing/dev manual sulit; data awal tidak konsisten antar environment.
+Solusi     : scripts/seed + fixtures.go (mirip migration seed_merchants.sql).
+Estimasi   : 1-2 jam
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #11; usulan TD-064)
+
+ID         : TD-065
+Kategori   : HYGIENE / DOKUMENTASI
+Judul      : X-Idempotency-Key di BODY bukan HEADER — inkonsisten dgn spek LOCKED
+            (openapi mengikuti kode, bukan ROADMAP) [PERLU VERIFIKASI]
+Dampak     : Kontrak idempotency ambigu antara spek vs implementasi; keputusan wajib
+            dari User karena ROADMAP LOCKED.
+Solusi     : Putuskan satu standar (header X-Idempotency-Key) + sinkron openapi/API
+            CONTRACT/mobile.
+Estimasi   : 1-2 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #7; usulan TD-065)
+
+ID         : TD-066
+Kategori   : INFRA / SECURITY
+Judul      : RLS policies Phase 1 di-comment/disabled (migration 002 disable RLS di
+            idempotency_cache & topup_transactions) — salah satu syarat Supabase
+Dampak     : Data lintas tenant berisiko bila langsung dipakai produksi; syarat RLS
+            Supabase tidak terpenuhi.
+Solusi     : Implementasi RLS policy saat deploy ke Supabase (users/wallets/ledger/
+            idempotency/topups) + test.
+Estimasi   : 4-6 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r01.log (GAP list #8; usulan TD-066)
+
+ID         : TD-067
+Kategori   : BACKEND / RELIABILITAS
+Judul      : Ride auto-cancel TIDAK di-wire sebagai worker berjalan — service
+            AutoCancelExpiredOrders (service.go:856) ada + di-test, tapi main.go tidak
+            menjalankan worker ride
+Dampak     : Order ride di produksi tidak pernah auto-cancel/refund walau expires;
+            escrow tidak kembali; order menggantung selamanya (hanya food/send yang
+            punya worker).
+Solusi     : Wire ticker worker auto-cancel ride di main.go (pola worker food/send)
+            + test worker.
+Estimasi   : 2-3 jam
+Prioritas  : KRITIS
+Status     : OPEN
+Referensi  : audit_r02.log (GAP: "Ride auto-cancel tidak di-wire")
+
+ID         : TD-068
+Kategori   : BACKEND / FITUR
+Judul      : Cancel/penalty fees TIDAK diimplementasi — CancellationFee field tidak pernah
+            dipakai; cancel = FULL REFUND tanpa penalti (ROADMAP 2.4)
+Dampak     : Biaya batal (Rp 5k H-arrived, Rp 10k setelah arrived, no-show Rp 10k,
+            emergency cancel) tidak dipungut; penyalahgunaan cancel; deviasi claim
+            T2.4 (integration test CustomerCancelFullRefund full-refund tanpa biaya).
+Solusi     : Implementasi cancellation fee + no-show + emergency path + audit
+            admin_actions + test.
+Estimasi   : 4-6 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r02.log (deviasi cancel/penalti)
+
+ID         : TD-069
+Kategori   : BACKEND / FITUR
+Judul      : Delta fare TIDAK ada — completeOrderTx selalu pakai EstimatedFare; tidak
+            ada kolom/path actual_fare vs estimated_fare (ROADMAP 2.5)
+Dampak     : Distribusi pendapatan salah saat jarak/tarif aktual beda estimasi; deviasi
+            claim T2.5 "delta-fare debit customer".
+Solusi     : Tambah actual_fare/delta_fare (schema+model), input driver saat COMPLETED,
+            debit/credit path settlement + test.
+Estimasi   : 3-5 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r02.log (deviasi settlement delta fare)
+
+ID         : TD-070
+Kategori   : BACKEND / FITUR
+Judul      : Voucher discount TIDAK ada di kode (ROADMAP 2.1 booking ride)
+Dampak     : Fitur promo/voucher booking tidak jalan; deviasi roadmap.
+Solusi     : Implementasi voucher (validasi, diskon, anti penyalahgunaan) di booking &
+            settlement + test.
+Estimasi   : 3-4 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r02.log (deviasi booking: voucher)
+
+ID         : TD-071
+Kategori   : BACKEND / CONCURRENCY
+Judul      : AcceptOrder race: working_status driver dibaca TANPA lock di luar transaksi,
+            LockOrderForAccept NOWAIT di dalam tx — melanggar fix v2.3 (lock users FOR
+            UPDATE NOWAIT dulu) [PERLU VERIFIKASI]
+Dampak     : Driver sama bisa ter-assign ke 2 order (double assign); race condition.
+Solusi     : Ikuti lock hierarchy v2.3 (lock driver user FOR UPDATE NOWAIT dulu) + test
+            race (TestRaceCondition_10DriversConcurrentAccept perlu diverifikasi ulang).
+Estimasi   : 2-3 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r02.log (deviasi AcceptOrder + [PERLU VERIFIKASI])
+
+ID         : TD-072
+Kategori   : MOBILE
+Judul      : Customer ride screens: history & detail TIDAK ADA — hanya booking + tracking
+            (screens/ride/); config/router.dart tanpa route ride-history/ride-detail
+Dampak     : Customer tidak bisa melihat riwayat & detail trip mereka.
+Solusi     : Bangun ride_history_screen, ride_detail_screen + route + service call
+            GET /rides/{id} (koordinasi TD-077 untuk endpoint detail).
+Estimasi   : 4-6 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r02.log (customer app ride screens)
+
+ID         : TD-073
+Kategori   : MOBILE / UX
+Judul      : Ride booking screen: koordinat HARDCODED (TODO geolocator), tanpa fare
+            preview, tanpa overdue-debt warning, tanpa favorites, tanpa promo
+Dampak     : UX booking tidak akurat (titik asal/tujuan nyata tidak dipakai); tidak ada
+            informasi tarif/peringatan saldo negatif.
+Solusi     : Pakai geolocator untuk koordinat real; tambah fare preview, debt warning,
+            favorites, promo.
+Estimasi   : 3-4 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r02.log (booking screen deviasi)
+
+ID         : TD-074
+Kategori   : MOBILE
+Judul      : Driver app: profile_screen TIDAK ADA (ROADMAP 3.3); dashboard tidak
+            menampilkan saldo wallet
+Dampak     : Driver tidak bisa kelola profil; tidak melihat saldo earning.
+Solusi     : Bangun profile_screen + tampilkan saldo wallet di dashboard.
+Estimasi   : 3-4 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r02.log (driver app: tidak ada profile_screen, dashboard tanpa saldo)
+
+ID         : TD-075
+Kategori   : MOBILE / ARSITEKTUR
+Judul      : Struktur mobile deviasi: TIDAK ada melos.yaml / packages/core (shared core)
+            — model/order disimpan lokal per-app — deliverable 3.4 ditunda ⏸️
+Dampak     : Duplikasi kode antar 3 app; logika bersama tidak dikelola terpusat;
+            deviasi arsitektur monorepo ROADMAP.
+Solusi     : Set up Melos monorepo + packages/core & migrasi model/providers bersama.
+Estimasi   : 6-10 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r02.log (mobile no melos/packages/core)
+
+ID         : TD-076
+Kategori   : KODE / LOCATION
+Judul      : Location: freshWindow=60s vs ROADMAP minta 30s; pola ZSET+ZREMRANGEBYSCORE
+            v2.3 tidak dipakai (Redis hash + TTL 60s + flush 5s ke Postgres)
+Dampak     : Driver stale bisa terlihat lebih lama dari spek; deviasi implementasi vs
+            roadmap v2.3.
+Solusi     : Samakan freshWindow ke 30s (atau keputusan User) + sync dokumen; pertimbang-
+            kan ZSET bila filter radius perlu lebih presisi.
+Estimasi   : 1-2 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r02.log (location deviasi)
+
+ID         : TD-077
+Kategori   : BACKEND / FITUR
+Judul      : Driver available-orders MISMATCH: app panggil /rides/available,
+            /food-orders/available, /send-orders/available, /drivers/{id}/available-orders
+            & GET /rides/{id} yang TIDAK ADA — backend cuma GET /drivers/available-orders
+Dampak     : Driver app (kUseMockAvailableOrders=false) gagal list/accept order; GET
+            /rides/{id} juga dipakai customer ride detail (TD-072) — integrasi real break.
+Solusi     : Register alias /drivers/{id}/available-orders ATAU ubah app ke endpoint
+            unified; tambah GET /rides/{id}; hapus panggilan unavailable dari app.
+Estimasi   : 4-6 jam
+Prioritas  : KRITIS
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-3), audit_r02.log (GAP driver app)
+
+ID         : TD-078
+Kategori   : BACKEND / FITUR
+Judul      : Food driver dispatch/accept TIDAK ada — POST /food-orders/{id}/accept
+            (integration test assign driver_id via SQL langsung; settleFoodOrderTx butuh
+            DriverID != nil)
+Dampak     : Alur food driver tidak end-to-end (accept → assignment → settlement);
+            tracking food driver non-fungsional.
+Solusi     : Endpoint POST /food-orders/{id}/accept + capacity check + idempotency +
+            FOR UPDATE NOWAIT + settlement + TC.
+Estimasi   : 3-5 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-4; usulan TD-061)
+
+ID         : TD-079
+Kategori   : BACKEND / FITUR
+Judul      : GET /send-orders (history) TIDAK ada — route+handler "ditunda ke Task 3.6";
+            send_order_service.dart:67-69 panggil GET /send-orders?page → 404
+Dampak     : Send Package History (ROADMAP 3.8) error; layar history send kosong/broken.
+Solusi     : Route + handler GET /send-orders (pagination) + TC.
+Estimasi   : 2-3 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-1, 3.5b; usulan TD-058)
+
+ID         : TD-080
+Kategori   : BACKEND / FITUR
+Judul      : GET /merchants/{id}/orders TIDAK ada — Merchant Incoming Orders +
+            Dashboard + Analytics (3.9) empty/error
+Dampak     : Fungsionalitas core merchant app tidak berfungsi (orders list error).
+Solusi     : Route owner GET /merchants/{id}/orders (+ filter status) + TC.
+Estimasi   : 3-4 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-2, 3.9; usulan TD-059)
+
+ID         : TD-081
+Kategori   : BACKEND / FITUR
+Judul      : Option group & option endpoints TIDAK diimplementasi (checklist 3.2b tidak
+            centang; item_options dipakai sebagai JSONB free-form, tabel
+            item_option_groups/item_options idle)
+Dampak     : Menu dengan opsi kompleks tidak bisa dikelola lewat API; deviasi roadmap.
+Solusi     : Endpoint CRUD item_option_groups/item_options + seed sample + migrasi
+            data + TC.
+Estimasi   : 4-6 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-5, 3.2b; usulan TD-063)
+
+ID         : TD-082
+Kategori   : BACKEND / FITUR
+Judul      : GET /merchants/{id}/items/{item_id} (detail item) TIDAK ada route —
+            main.go:203-204 cuma GET /merchants + /merchants/:id/items
+Dampak     : Detail menu item tidak bisa diakses (customer/web).
+Solusi     : Route detail item + handler + TC.
+Estimasi   : 1-2 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-6, 3.2c; usulan TD-064)
+
+ID         : TD-083
+Kategori   : SECURITY / INFRA
+Judul      : Rate limiter 20 req/min (per user, order submit) TIDAK ada (grep RateLimit/
+            limiter kosong)
+Dampak     : Spam/abuse POST /food-orders & /send-orders; risiko DoS/cek abuse.
+Solusi     : Rate limiting per user (Redis) di endpoint order food & send.
+Estimasi   : 2-3 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-7, 3.3c; usulan TD-062)
+
+ID         : TD-084
+Kategori   : HYGIENE
+Judul      : Seed dummy send order TIDAK ada (checklist roadmap tidak centang)
+Dampak     : Data awal untuk dev/test send order tidak tersedia.
+Solusi     : Seed send order (scripts/seed, pola seed_merchants.sql).
+Estimasi   : 1-2 jam
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-8, 3.1c; usulan TD-065)
+
+ID         : TD-085
+Kategori   : TESTING
+Judul      : Integration TC food+send hanya 10 (TC-FOOD-001..005 + TC-SEND-001..005)
+            vs target 15+ (GO/NO-GO)
+Dampak     : Kriteria GO/NO-GO (15+ integration TC) tidak terpenuhi; cakupan alur
+            settlement food/send kurang.
+Solusi     : Tambah integration TC food & send ke ≥15 + real-device/cold-start test.
+Estimasi   : 4-6 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-9, 4.xb; usulan TD-066)
+
+ID         : TD-086
+Kategori   : DOKUMENTASI
+Judul      : TD-008 status "RESOLVED" TAPI driver app masih path lama +
+            kUseMockAvailableOrders=false → dokumen vs kode inkonsisten
+Dampak     : Dua sumber kebenaran bertabrakan; integrasi real app break meski TD-008
+            dianggap selesai (koordinasi TD-077).
+Solusi     : Sync status TD-008 dengan kondisi aktual; selesaikan/rolling item TD-077.
+Estimasi   : 1-2 jam
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : audit_r03.log (GAP-10)
+
+ID         : TD-087
+Kategori   : DEPLOYMENT / RELIABILITAS
+Judul      : Graceful shutdown TIDAK ada — signal.Notify(SIGINT/SIGTERM) +
+            http.Server.Shutdown 25s tidak diimplementasi (cmd/api/main.go)
+Dampak     : Saat deploy/restart request in-flight terpotong; data bisa hilang; klaim
+            README "graceful shutdown" keliru.
+Solusi     : signal.Notify + http.Server.Shutdown (timeout 25s) + drain worker.
+Estimasi   : 1-2 jam
+Prioritas  : KRITIS
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-2, GAP-25; usulan TD-066)
+
+ID         : TD-088
+Kategori   : DEPLOYMENT / INFRA
+Judul      : Health check path MISMATCH: kode /health & /ready vs spek
+            /healthz/liveness & /healthz/readiness (DB 2s + Redis 1s) + sinkron openapi
+            + Render healthCheckPath
+Dampak     : Load balancer/Render/monitoring salah deteksi hidup mati service.
+Solusi     : Split endpoint liveness & readiness (probe DB/Redis) + update openapi + Render.
+Estimasi   : 2-3 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-17; usulan TD-067)
+
+ID         : TD-089
+Kategori   : DEPLOYMENT / INFRA
+Judul      : Render deployment config (render.yaml + Dockerfile/start command) TIDAK ada
+            — 4.3.1 & TD-007 belum deploy
+Dampak     : Backend tidak bisa di-hosting di Render; production readiness tercapai.
+Solusi     : render.yaml (2 instance standard, GOMAXPROCS=2, maxShutdownDelay=30) +
+            build artifact + healthCheckPath (TD-088).
+Estimasi   : 4-6 jam
+Prioritas  : KRITIS
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-1; usulan TD-068)
+
+ID         : TD-090
+Kategori   : DEPLOYMENT / INFRA
+Judul      : PgBouncer prod config TIDAK sesuai — MaxConns=15/MinConns=2 (spek 25/10),
+            tanpa SimpleProtocol, tanpa validasi port 6543, pool<80 (4.3.2)
+Dampak     : Pool koneksi & mode query tidak sesuai spek produksi; potensi bottleneck/
+            error di beban tinggi.
+Solusi     : Set pool options (25/10), DefaultQueryExecMode=SimpleProtocol, verifikasi
+            port 6543 & default_pool_size≥80.
+Estimasi   : 2-3 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-4; usulan TD-069)
+
+ID         : TD-091
+Kategori   : KODE / RELIABILITAS
+Judul      : Transient retry guard processWithRetry/isIdempotent TIDAK ada (4.3.2/ADR-006)
+Dampak     : Gagal transient (network/DB) di settlement/webhook tidak di-retry aman;
+            risiko double-proses tanpa idempotency guard.
+Solusi     : Implementasi processWithRetry + isIdempotent guard (koordinasi TD-065).
+Estimasi   : 3-4 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-5; usulan TD-070)
+
+ID         : TD-092
+Kategori   : TESTING / PERFORMANCE
+Judul      : k6 performance suite TIDAK ada (4.1.6): HTTP constant-arrival 500 RPS 30m +
+            WS 500 VUs backoff sleep(); threshold p95<200ms — tumpang tindih TD-063
+Dampak     : Performa produksi tidak terukur; kriteria Go/No-Go tidak bisa diverifikasi.
+Solusi     : scripts/k6 (HTTP + WS) + CI gate + threshold.
+Estimasi   : 6-8 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-8; usulan TD-071)
+
+ID         : TD-093
+Kategori   : TESTING / CONCURRENCY
+Judul      : TestPessimisticLock_Timeout & TestLockStarvation tidak ada/terkonfirmasi
+            (4.1.5) + WS broadcast p95
+Dampak     : Klaim deadlock-free/pessimistic lock tanpa test langsung; regression lock
+            tidak terdeteksi.
+Solusi     : Tulis kedua test (timeout lock & starvation) + bench WS broadcast.
+Estimasi   : 3-4 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-9; usulan TD-072)
+
+ID         : TD-094
+Kategori   : TESTING / CI
+Judul      : Integration test TIDAK dijalankan di CI — ci.yml:79 `go test -short -race`
+            tanpa `-tags integration`
+Dampak     : Regresi alur DB (settlement, idempotency, lock) lolos di CI; cakupan
+            berjalan hanya lokal.
+Solusi     : Job `go test -tags integration -p 1` dengan service postgres+redis.
+Estimasi   : 2-3 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-18; usulan TD-073)
+
+ID         : TD-095
+Kategori   : SECURITY / TESTING
+Judul      : Functional security test OWASP/BOLA/IDOR/PII masking/UU-PDP TIDAK ada;
+            gosec `-no-fail` (non-blocking); belum ada trivy/govulncheck/nancy
+Dampak     : Celah authorization (BOLA/IDOR) & kebocoran PII tidak teruji; scan
+            keamanan tidak membuat CI gagal.
+Solusi     : Functional security suite + jadikan gosec blocking + tambah trivy/
+            govulncheck/nancy di CI.
+Estimasi   : 6-10 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-13, GAP-20; usulan TD-074)
+
+ID         : TD-096
+Kategori   : SECURITY
+Judul      : Security headers HSTS/X-CTO/XFO/CSP TIDAK ada (4.3.4)
+Dampak     : Risiko clickjacking, MIME sniffing, downgrade HTTPS di API/web.
+Solusi     : Middleware security headers di semua response.
+Estimasi   : 1-2 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-3)
+
+ID         : TD-097
+Kategori   : BACKEND / FITUR
+Judul      : WebSocket handler TIDAK ada sama sekali (4.1.5/4.1.6) — tracking live pakai
+            polling; belum ada 500-conn test
+Dampak     : Live update (lokasi driver, status order) tidak real-time; tidak ada path
+            WS sama sekali.
+Solusi     : Implementasi WS endpoint + auth + broadcast + 500-connection test.
+Estimasi   : 6-8 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-10; usulan TD-072 bagian WS)
+
+ID         : TD-098
+Kategori   : DEPLOYMENT / INFRA
+Judul      : Zero-downtime Expand-Contract + rollback TIDAK ada (4.3.3) — migrations
+            up-only tanpa .down.sql (runner TD-035..037)
+Dampak     : Deploy database tidak zero-downtime; rollback tidak mungkin; terkait problem
+            TD-035/TD-036/TD-037.
+Solusi     : Dokumen+script expand-contract, tambah .down.sql, rollback drill.
+Estimasi   : 4-6 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-7; usulan TD-075)
+
+ID         : TD-099
+Kategori   : DOKUMENTASI
+Judul      : ADR files 0/7 (4.4.3) — docs/adr/ belum ada
+Dampak     : Keputusan arsitektur (lock hierarchy, enum, RLS, PgBouncer, dll) tidak
+            terdokumentasi formal.
+Solusi     : Buat ADR-001..007 di docs/adr/.
+Estimasi   : 3-4 jam
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-14; usulan TD-076)
+
+ID         : TD-100
+Kategori   : DEPLOYMENT / DOKUMENTASI
+Judul      : Production deployment runbook (Render+Supabase) TIDAK ada (4.4.3):
+            staging→prod, health, rollback, DR metrics RTO≤15m/RPO≤1m, backup/restore
+Dampak     : Operasional/manual run pindah produksi tidak jelas; DR tidak terukur.
+Solusi     : Tulis runbook produksi + konfigurasi backup/restore + ukur RTO/RPO.
+Estimasi   : 4-6 jam
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-6, GAP-15; usulan TD-077)
+
+ID         : TD-101
+Kategori   : DOKUMENTASI
+Judul      : openapi.yaml stale vs kode + tanpa Swagger UI (4.4.2); Postman/API test
+            collection (4.1.3) belum ada — tumpang tindih TD-063
+Dampak     : Dokumentasi API menyesatkan; integrasi manual & API test kurang praktis.
+Solusi     : Sync openapi dengan route aktual + serve Swagger UI + Postman collection.
+Estimasi   : 3-4 jam
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-11, GAP-19; usulan TD-078)
+
+ID         : TD-102
+Kategori   : TESTING / MOBILE
+Judul      : Flutter integration_test/ (real-device journeys) TIDAK ada (4.1.4) untuk
+            customer/driver/merchant
+Dampak     : Regression UI end-to-end di device nyata tidak terdeteksi (berkaitan TD-010
+            DEFERRED).
+Solusi     : integration_test package per app + CI (real device emulator).
+Estimasi   : 6-10 jam
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : audit_r04.log (GAP-12; usulan TD-079)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 51 item (TD-051 di-reserve/skip)
-- KRITIS  : 3 item  (TD-001, TD-002, TD-023)
-- TINGGI  : 15 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050)
-- SEDANG  : 16 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054)
-- RENDAH  : 17 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 96 item (TD-051 di-reserve/skip)
+- KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
+- TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100)
+- SEDANG  : 32 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101)
+- RENDAH  : 22 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102)
 
-STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 28 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045 s/d TD-050, TD-052 s/d TD-055, TD-056, TD-057).
+STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 73 item OPEN (28 item lama + 45 item baru dari SECTION F, TD-058 s/d TD-102).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -631,34 +1185,26 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 51 item (TD-051 di-reserve/skip).
+3. RINGKASAN STATUS TERKINI (2026-09-21):
+   - Total hutang teridentifikasi      : 96 item (TD-051 di-reserve/skip; +45 dari SECTION F).
    - Sudah FIXED/CLOSED                : 22 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 28 item (TD-007 - deployment backend endpoint belum
-                                          dilakukan; TD-022 - Language toggle UI; TD-024,
-                                          TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
-                                          TD-030 - ganti password default admin; TD-031 -
-                                          bcrypt hash hardcoded di migration 014; TD-032 -
-                                          docker-compose paksa platform linux/amd64; TD-033 -
-                                          POSTGRES_PASSWORD hardcoded; TD-034 - redis belum
-                                          upgrade ke 7.4; TD-035 - ALTER TYPE ADD VALUE di
-                                          migration 010; TD-036 - CREATE INDEX CONCURRENTLY di
-                                          migration 011; TD-037 - golang-migrate tanpa --no-tx;
-                                          TD-042 - AuthGuard redirect ke /; TD-043 - DESIGN
-                                          ADMIN WEB.md:995 stale; TD-045 - API CONTRACT §10
-                                          outdated; TD-046 - dashboard error_rate stub 0.0;
-                                          TD-047 - wallet-type filter mismatch; TD-048 -
-                                          entry_type filter mismatch; TD-049 - UpdateWalletBalance
-                                          tidak lewat ledger_entries; TD-050 - envelope/path
-                                          prefix admin_web belum unify; TD-052 - enum BANNED vs
-                                          CHECK status_valid; TD-053 - aksi ban tanpa soft-delete
-                                          (deleted_at); TD-054 - aksi user tanpa validasi 2FA;
-                                           TD-055 - UserActionResult dideklarasi inline di
-                                           users.ts, sebaiknya pindah ke types.ts; TD-056 -
-                                           migration 015 seed E2E menaruh test data di folder
-                                           migrations; TD-057 - reverse page crash No QueryClient
-                                           set sudah difix, perlu unit test regression).
+- ❌ OPEN                           : 73 item (28 item lama + 45 item baru,
+                                          TD-058 s/d TD-102).
+   RINCIAN 28 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
+                                          TD-022 (language toggle UI), TD-024 s/d TD-027
+                                          (admin auth flow STEP 1C-1F), TD-030 (password
+                                          default admin), TD-031 (bcrypt hash di migration
+                                          014), TD-032 s/d TD-034 (docker-compose infra),
+                                          TD-035 s/d TD-037 (migration runner), TD-042
+                                          (AuthGuard redirect), TD-043 (DESIGN ADMIN WEB
+                                          stale), TD-045 (API CONTRACT §10 outdated),
+                                          TD-046 (error_rate stub), TD-047 s/d TD-049
+                                          (ledger filter & UpdateWalletBalance), TD-050
+                                          (admin_web envelope/path), TD-052 s/d TD-054
+                                          (BANNED enum, soft-delete, 2FA), TD-055
+                                          (UserActionResult inline), TD-056 (seed E2E di
+                                          migrations), TD-057 (reverse crash regression).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -718,6 +1264,18 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       useQuery dipanggil sebelum <Providers>; fix: Providers dinaikkan di atas
       inner component — apps/admin_web/src/app/transactions/[id]/reverse/
       page.tsx); perlu unit test regression untuk mencegah rekurensi.
+    - AUDIT 4 ROADMAP (2026-09-21) menambahkan SECTION F (TD-058 s/d TD-102, 45 item,
+      semuanya OPEN): gap dari audit R01 (TD-058..066 - wallet history/lifecycle/mobile,
+      OTP, concurrency test, k6/Postman, fixtures, idempotency header, RLS),
+      R02 (TD-067..076 - auto-cancel, cancel fee, delta fare, voucher, AcceptOrder race,
+      ride history/detail, booking screen, driver profile, melos, location),
+      R03 (TD-077..086 - driver available mismatch, food accept, send history, merchant
+      orders, option endpoints, item detail, rate limit, seed send, integration TC, TD-008
+      doc inconsistency), R04 (TD-087..102 - graceful shutdown, health split, Render,
+      PgBouncer, retry guard, k6, concurrency test, CI integration, security tests/headers,
+      WS, expand-contract, ADR, runbook, openapi sync, Flutter integration_test).
+      Total register naik dari 51 → 96 item (KRITIS 7 / TINGGI 35 / SEDANG 32 / RENDAH 22;
+      OPEN 73, FIXED 22, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
