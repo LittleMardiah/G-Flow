@@ -400,6 +400,126 @@ func (h *Handler) ExportLedger(c *gin.Context) {
 	c.Data(http.StatusOK, "text/csv", data)
 }
 
+// userStatusRequestBody adalah body request PATCH /admin/users/:id/:action.
+// reason bersifat opsional (frontend tidak mengirim body saat ini).
+type userStatusRequestBody struct {
+	Reason string `json:"reason"`
+}
+
+// GetUsers GET /admin/users
+// Mengembalikan daftar user dengan filter opsional (offset, limit, role,
+// status, search) + total_count. Envelope {success, data: {users, total_count}}
+// sesuai apps/admin_web/src/lib/types.ts -> UserListResponse.
+func (h *Handler) GetUsers(c *gin.Context) {
+	f := UserFilter{Limit: 50, Offset: 0}
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "limit harus bilangan bulat positif")
+			return
+		}
+		f.Limit = min(n, 100)
+	}
+	if v := c.Query("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "offset harus bilangan bulat non-negatif")
+			return
+		}
+		f.Offset = n
+	}
+	if role := strings.ToUpper(strings.TrimSpace(c.Query("role"))); role != "" {
+		switch role {
+		case "CUSTOMER", "DRIVER", "MERCHANT", "ADMIN", "SYSTEM":
+			f.Role = role
+		default:
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "role tidak valid")
+			return
+		}
+	}
+	f.Status = strings.ToUpper(strings.TrimSpace(c.Query("status")))
+	f.Search = strings.TrimSpace(c.Query("search"))
+
+	list, err := h.svc.GetUsers(c.Request.Context(), f)
+	if err != nil {
+		h.logger.Error("get users failed", "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal mengambil daftar user")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
+}
+
+// GetUserDetail GET /admin/users/:id
+// Mengembalikan detail satu user (AdminUser). Envelope {success, data: {..}}.
+func (h *Handler) GetUserDetail(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_USER_ID", "id user tidak valid")
+		return
+	}
+
+	user, err := h.svc.GetUserDetail(c.Request.Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrUserNotFound):
+			writeError(c, http.StatusNotFound, "USER_NOT_FOUND", "user tidak ditemukan")
+		default:
+			h.logger.Error("get user detail failed", "user_id", id, "error", err)
+			writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal mengambil detail user")
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": user})
+}
+
+// UpdateUserStatus PATCH /admin/users/:id/:action (freeze|suspend|ban|unfreeze)
+// Memetakan aksi ke status users: freeze->FROZEN, suspend->SUSPENDED,
+// ban->DELETED (enum DB tidak punya BANNED — TD-052), unfreeze->ACTIVE.
+// Menulis audit log admin_action_logs di dalam transaksi yang sama.
+func (h *Handler) UpdateUserStatus(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_USER_ID", "id user tidak valid")
+		return
+	}
+
+	adminIDStr := c.GetString("user_id")
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil || adminIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "tidak dapat mengidentifikasi admin")
+		return
+	}
+
+	action := c.Param("action")
+	var body userStatusRequestBody
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "format body tidak valid")
+			return
+		}
+	}
+
+	result, err := h.svc.UpdateUserStatus(c.Request.Context(), UserStatusRequest{
+		UserID:  id,
+		AdminID: adminID,
+		Action:  action,
+		Reason:  body.Reason,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidAction):
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "aksi tidak valid (freeze|suspend|ban|unfreeze)")
+		case errors.Is(err, ErrUserNotFound):
+			writeError(c, http.StatusNotFound, "USER_NOT_FOUND", "user tidak ditemukan")
+		default:
+			h.logger.Error("update user status failed", "user_id", id, "action", action, "admin_id", adminID, "error", err)
+			writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal memperbarui status user")
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
 // parseLedgerDate mem-parse tanggal filter ledger (RFC3339 atau YYYY-MM-DD
 // dari <input type="date"> frontend admin_web).
 func parseLedgerDate(s string) (time.Time, error) {

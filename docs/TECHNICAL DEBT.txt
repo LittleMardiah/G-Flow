@@ -473,6 +473,57 @@ Solusi     : audit & enforce semua perubahan balance lewat ledger_entries.
 Prioritas  : TINGGI
 Status     : OPEN
 
+ID         : TD-050
+Kategori   : KODE
+Judul      : Envelope & path prefix belum konsisten di admin_web. ledger.ts &
+             users.ts call /admin/ledger, /admin/ledger/..., /admin/users
+             (TANPA prefix /api/v1); dashboard.ts, ledger.ts & users.ts return
+             `data` envelope TANPA unwrap (.data.data). Backend daftarkan route
+             di group /api/v1/admin (cmd/api/main.go:246) dengan envelope
+             {success, data}.
+             [DEVIAȘI minor vs prompt: dashboard.ts SUDAH pakai /api/v1
+             (lib/dashboard.ts:14,24), tapi tetap tanpa unwrap. Ledger & users
+             tanpa prefix + tanpa unwrap.]
+Dampak     : dashboard/ledger/users UI bakal 404 (ledger/users: path tanpa
+             /api/v1) atau broken runtime (dashboard: envelope diterima sebagai
+             data typed DashboardKPIs) sampai frontend di-unify ke pola
+             reversal.ts (lib/reversal.ts:13,34 — .data.data + prefix /api/v1).
+Solusi     : unify frontend pakai pola reversal.ts (.data.data + prefix /api/v1)
+             di dashboard.ts, ledger.ts, users.ts.
+Prioritas  : TINGGI
+Status     : OPEN
+
+ID         : TD-052
+Kategori   : KODE
+Judul      : DB CHECK status_valid cuma izinkan ACTIVE/SUSPENDED/FROZEN/DELETED
+             (migration 001_initial_schema.up.sql:95). Frontend types.ts:58
+             expect BANNED. Backend map ban→DELETED (kompromi:
+             internal/admin/service.go:717-729, handler.go:477).
+Solusi     : tambah BANNED ke CHECK migration, atau ubah types.ts/users-client
+             ke DELETED.
+Prioritas  : SEDANG
+Status     : OPEN
+
+ID         : TD-053
+Kategori   : KODE
+Judul      : Aksi `ban` tidak set kolom deleted_at (soft-delete).
+             repository.go:705 UPDATE users SET status=$1, updated_at=NOW()
+             tanpa deleted_at. Anonimisasi email/guard active_orders
+             (ROADMAP 4.1) belum jalan.
+Solusi     : implement soft-delete lengkap saat hardening.
+Prioritas  : SEDANG
+Status     : OPEN
+
+ID         : TD-054
+Kategori   : SECURITY
+Judul      : Aksi user (freeze/suspend/ban) TIDAK divalidasi 2FA —
+             handler.go:479 UpdateUserStatus hanya baca claim JWT, tanpa check
+             X-Admin-2FA-Token (beda dengan handler.go:89-100 ReverseTransaction
+             yang enforce 2FA + lockout).
+Solusi     : tambah validasi 2FA + lockout untuk aksi destruktif user.
+Prioritas  : SEDANG
+Status     : OPEN
+
 -------------------------------------------------------------------------------
 E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
    golang-migrate): statement yang butuh auto-commit (di luar transaction block)
@@ -521,13 +572,13 @@ Status                : OPEN
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 44 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 48 item (TD-051 di-reserve/skip)
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
-- TINGGI  : 14 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049)
-- SEDANG  : 13 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048)
+- TINGGI  : 15 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050)
+- SEDANG  : 16 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054)
 - RENDAH  : 14 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046)
 
-STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 21 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045 s/d TD-049).
+STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 25 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045 s/d TD-050, TD-052 s/d TD-054).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -553,10 +604,10 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 44 item.
+   - Total hutang teridentifikasi      : 48 item (TD-051 di-reserve/skip).
    - Sudah FIXED/CLOSED                : 22 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 21 item (TD-007 - deployment backend endpoint belum
+   - ❌ OPEN                           : 25 item (TD-007 - deployment backend endpoint belum
                                           dilakukan; TD-022 - Language toggle UI; TD-024,
                                           TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
                                           TD-030 - ganti password default admin; TD-031 -
@@ -571,7 +622,10 @@ REKOMENDASI:
                                           outdated; TD-046 - dashboard error_rate stub 0.0;
                                           TD-047 - wallet-type filter mismatch; TD-048 -
                                           entry_type filter mismatch; TD-049 - UpdateWalletBalance
-                                          tidak lewat ledger_entries).
+                                          tidak lewat ledger_entries; TD-050 - envelope/path
+                                          prefix admin_web belum unify; TD-052 - enum BANNED vs
+                                          CHECK status_valid; TD-053 - aksi ban tanpa soft-delete
+                                          (deleted_at); TD-054 - aksi user tanpa validasi 2FA).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -611,6 +665,14 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       saldo langsung tanpa ledger_entries → sumber discrepancy di verify
       endpoint; harus audit & enforce lewat ledger_entries.
     - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
+    - USERS ENDPOINTS FOLLOW-UP (2026-09-21) menambahkan TD-050 (KODE, TINGGI,
+      OPEN): envelope & path prefix admin_web belum konsisten (dashboard.ts,
+      ledger.ts, users.ts) vs pola reversal.ts; TD-051 di-reserve (skip, total
+      +4 bukan +5). Menambahkan TD-052 (KODE, SEDANG, OPEN): types.ts:58
+      BANNED vs DB CHECK status_valid (ACTIVE/SUSPENDED/FROZEN/DELETED) —
+      backend kompromi ban→DELETED. TD-053 (KODE, SEDANG, OPEN): aksi ban tidak
+      set deleted_at (soft-delete belum jalan). TD-054 (SECURITY, SEDANG, OPEN):
+      freeze/suspend/ban/ unfreeze tanpa validasi 2FA, beda dengan reversal.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

@@ -586,6 +586,128 @@ type LedgerTotals struct {
 	TotalCredit   decimal.Decimal
 }
 
+// UserFilter adalah filter daftar user admin (STEP A4, E1). Role/Status
+// diterima dalam huruf besar; Search mencocokkan email (ILIKE). Offset/Limit
+// dipakai untuk pagination.
+type UserFilter struct {
+	Offset int
+	Limit  int
+	Role   string
+	Status string
+	Search string
+}
+
+// UserRow adalah baris hasil query users (subset kolom sesuai AdminUser pada
+// apps/admin_web/src/lib/types.ts). Role memakai huruf besar (UPPER).
+// Balance = saldo wallet utama user (join wallets), 0 bila tidak punya.
+type UserRow struct {
+	ID        uuid.UUID
+	Email     string
+	Phone     string
+	Role      string
+	Status    string
+	Balance   decimal.Decimal
+	CreatedAt time.Time
+}
+
+// userSelect membaca kolom user + saldo wallet utama (wallet_type = UPPER dari
+// user_type). System user (admin/system) tidak punya wallet ber-type sama -> 0.
+const userSelect = `
+	SELECT u.id, u.email, COALESCE(u.phone, ''), UPPER(u.user_type::text), u.status,
+	       COALESCE(w.balance, 0), u.created_at
+	FROM users u
+	LEFT JOIN wallets w ON w.user_id = u.id AND w.wallet_type::text = UPPER(u.user_type::text)`
+
+// userFilterWhere membangun fragment WHERE untuk query users sesuai filter yang
+// terisi (placeholder dinamis). Mengembalikan kondisi WHERE + args.
+func userFilterWhere(f UserFilter) (string, []any) {
+	conds := []string{"TRUE"}
+	args := make([]any, 0, 3)
+	idx := 1
+	if f.Role != "" {
+		conds = append(conds, fmt.Sprintf("UPPER(u.user_type::text) = $%d", idx))
+		args = append(args, f.Role)
+		idx++
+	}
+	if f.Status != "" {
+		conds = append(conds, fmt.Sprintf("u.status = $%d", idx))
+		args = append(args, f.Status)
+		idx++
+	}
+	if f.Search != "" {
+		conds = append(conds, fmt.Sprintf("u.email ILIKE '%%' || $%d || '%%'", idx))
+		args = append(args, f.Search)
+		idx++
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+// scanUserRows membaca baris UserRow dari pgx.Rows (sesuai userSelect).
+func scanUserRows(rows pgx.Rows) ([]UserRow, error) {
+	var out []UserRow
+	for rows.Next() {
+		var u UserRow
+		if err := rows.Scan(&u.ID, &u.Email, &u.Phone, &u.Role, &u.Status, &u.Balance, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListUsers mengambil daftar user sesuai filter (pagination LIMIT/OFFSET).
+func (r *Repository) ListUsers(ctx context.Context, f UserFilter) ([]UserRow, error) {
+	where, args := userFilterWhere(f)
+	args = append(args, f.Limit, f.Offset)
+	rows, err := r.db.Query(ctx,
+		userSelect+" WHERE "+where+fmt.Sprintf(" ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args)),
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserRows(rows)
+}
+
+// CountUsers menghitung total user sesuai filter (untuk total_count).
+func (r *Repository) CountUsers(ctx context.Context, f UserFilter) (int64, error) {
+	where, args := userFilterWhere(f)
+	var total int64
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM users u WHERE "+where, args...).Scan(&total)
+	return total, err
+}
+
+// GetUserByID mengambil satu user lengkap berdasarkan id.
+// Mengembalikan ErrUserNotFound bila user tidak ada.
+func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*UserRow, error) {
+	row := r.db.QueryRow(ctx, userSelect+" WHERE u.id = $1", id)
+	var u UserRow
+	err := row.Scan(&u.ID, &u.Email, &u.Phone, &u.Role, &u.Status, &u.Balance, &u.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// UpdateUserStatus memperbarui status user (freeze/suspend/ban/unfreeze).
+// Mengembalikan updated_at dari baris yang di-update; pgx.ErrNoRows bila user
+// tidak ditemukan (UPDATE tanpa baris). Pemanggil memakai transaksi agar bisa
+// digabung dengan penulisan log aksi admin (audit trail).
+func (r *Repository) UpdateUserStatus(ctx context.Context, tx pgx.Tx, userID uuid.UUID, status string) (time.Time, error) {
+	var updatedAt time.Time
+	err := tx.QueryRow(ctx, `
+		UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2
+		RETURNING updated_at
+	`, status, userID).Scan(&updatedAt)
+	return updatedAt, err
+}
+
 // VerifyWalletLedger membaca saldo wallet + total DEBIT/CREDIT ledger-nya.
 // Wallet tidak ada -> ErrWalletNotFound.
 func (r *Repository) VerifyWalletLedger(ctx context.Context, walletID uuid.UUID) (*LedgerTotals, error) {

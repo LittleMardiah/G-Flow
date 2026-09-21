@@ -66,6 +66,8 @@ var (
 	ErrAdminForbidden      = errors.New("admin: akses ditolak, role bukan admin")
 	ErrNotBalanced         = errors.New("admin: ledger tidak seimbang untuk reversal")
 	ErrWalletNotFound      = errors.New("admin: wallet tidak ditemukan")
+	ErrUserNotFound        = errors.New("admin: user tidak ditemukan")
+	ErrInvalidAction       = errors.New("admin: aksi user tidak valid")
 	ErrReversalFailed      = errors.New("admin: reversal gagal")
 	Err2FAInvalid          = errors.New("admin: 2FA token tidak valid")
 	ErrLockoutActive       = errors.New("admin: akun terkunci karena terlalu banyak percobaan 2FA")
@@ -643,6 +645,142 @@ func (s *Service) ExportLedger(ctx context.Context, f LedgerFilter) ([]byte, err
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// UserView adalah payload GET /admin/users & /admin/users/:id (STEP A4, E1/E2).
+// Field mengikuti apps/admin_web/src/lib/types.ts -> AdminUser (snake_case).
+// Balance memakai jsonDecimal agar menjadi JSON number (bukan string).
+type UserView struct {
+	ID        uuid.UUID   `json:"id"`
+	Email     string      `json:"email"`
+	Phone     string      `json:"phone,omitempty"`
+	Role      string      `json:"role"`
+	Status    string      `json:"status"`
+	Balance   jsonDecimal `json:"balance"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+// UserList adalah payload GET /admin/users (apps/admin_web/src/lib/types.ts ->
+// UserListResponse): users[] + total_count.
+type UserList struct {
+	Users      []UserView `json:"users"`
+	TotalCount int64      `json:"total_count"`
+}
+
+// toUserView memetakan baris repository ke view JSON (balance dibungkus jsonDecimal).
+func toUserView(u *UserRow) *UserView {
+	return &UserView{
+		ID:        u.ID,
+		Email:     u.Email,
+		Phone:     u.Phone,
+		Role:      u.Role,
+		Status:    u.Status,
+		Balance:   jsonDecimal(u.Balance),
+		CreatedAt: u.CreatedAt,
+	}
+}
+
+func toUserViews(rows []UserRow) []UserView {
+	out := make([]UserView, 0, len(rows))
+	for i := range rows {
+		out = append(out, *toUserView(&rows[i]))
+	}
+	return out
+}
+
+// GetUsers mengambil daftar user + total_count sesuai filter E1.
+func (s *Service) GetUsers(ctx context.Context, f UserFilter) (*UserList, error) {
+	rows, err := s.repo.ListUsers(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.repo.CountUsers(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	return &UserList{Users: toUserViews(rows), TotalCount: total}, nil
+}
+
+// GetUserDetail mengambil detail satu user (E2). UI (useUserDetail) hanya
+// menampilkan field AdminUser — tanpa recent_transactions tambahan.
+func (s *Service) GetUserDetail(ctx context.Context, id uuid.UUID) (*UserView, error) {
+	u, err := s.repo.GetUserByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return toUserView(u), nil
+}
+
+// userActionToStatus memetakan aksi HTTP ke status users (sesuai DB CHECK
+// status_valid: ACTIVE/SUSPENDED/FROZEN/DELETED). ban -> DELETED karena enum DB
+// tidak punya BANNED (frontend memakai label BANNED — TD-052).
+func userActionToStatus(action string) (string, bool) {
+	switch action {
+	case "freeze":
+		return "FROZEN", true
+	case "suspend":
+		return "SUSPENDED", true
+	case "ban":
+		return "DELETED", true
+	case "unfreeze":
+		return "ACTIVE", true
+	}
+	return "", false
+}
+
+// UserStatusRequest adalah input operasi update status user.
+type UserStatusRequest struct {
+	UserID  uuid.UUID
+	AdminID uuid.UUID
+	Action  string // freeze | suspend | ban | unfreeze
+	Reason  string // opsional
+}
+
+// UserStatusResult adalah output operasi update status user (E3).
+type UserStatusResult struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UpdateUserStatus menjalankan aksi admin ke status user dalam satu transaksi:
+// validasi aksi, update status (mengembalikan updated_at), tulis audit log
+// (admin_action_logs), lalu commit. User tidak ada -> ErrUserNotFound; aksi
+// tidak dikenal -> ErrInvalidAction.
+func (s *Service) UpdateUserStatus(ctx context.Context, req UserStatusRequest) (*UserStatusResult, error) {
+	newStatus, ok := userActionToStatus(req.Action)
+	if !ok {
+		return nil, ErrInvalidAction
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	updatedAt, err := s.repo.UpdateUserStatus(ctx, tx, req.UserID, newStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Audit trail aksi admin, mengikuti pola CreateAdminActionLog (reversal).
+	details := map[string]any{"status": newStatus}
+	if req.Reason != "" {
+		details["reason"] = req.Reason
+	}
+	if err := s.repo.CreateAdminActionLog(ctx, tx, req.AdminID, "user_"+req.Action, "user", &req.UserID, nil, details); err != nil {
+		s.logger.Warn("failed to write admin action log", "admin_id", req.AdminID, "action", req.Action, "error", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return &UserStatusResult{UserID: req.UserID, Status: newStatus, UpdatedAt: updatedAt}, nil
 }
 
 func refundWalletOf(entries []LedgerEntry) uuid.UUID {

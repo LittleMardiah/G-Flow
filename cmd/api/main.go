@@ -255,6 +255,9 @@ func main() {
 		adminGroup.GET("/ledger", adminHandler.GetLedgerList)
 		adminGroup.GET("/ledger/verify/:wallet_id", adminHandler.VerifyLedger)
 		adminGroup.POST("/ledger/export", adminHandler.ExportLedger)
+		adminGroup.GET("/users", adminHandler.GetUsers)
+		adminGroup.GET("/users/:id", adminHandler.GetUserDetail)
+		adminGroup.PATCH("/users/:id/:action", adminHandler.UpdateUserStatus)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.
