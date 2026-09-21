@@ -524,6 +524,14 @@ Solusi     : tambah validasi 2FA + lockout untuk aksi destruktif user.
 Prioritas  : SEDANG
 Status     : OPEN
 
+ID         : TD-055
+Kategori   : KODE
+Judul      : Interface `UserActionResult` di apps/admin_web/src/lib/users.ts
+             dideklarasi inline, sebaiknya dipindah ke types.ts (konsisten
+             dengan tipe lain).
+Prioritas  : RENDAH
+Status     : OPEN
+
 -------------------------------------------------------------------------------
 E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
    golang-migrate): statement yang butuh auto-commit (di luar transaction block)
@@ -572,13 +580,13 @@ Status                : OPEN
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 48 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 49 item (TD-051 di-reserve/skip)
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
 - TINGGI  : 15 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050)
 - SEDANG  : 16 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054)
-- RENDAH  : 14 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046)
+- RENDAH  : 15 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055)
 
-STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 25 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045 s/d TD-050, TD-052 s/d TD-054).
+STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 26 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045 s/d TD-050, TD-052 s/d TD-055).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -604,10 +612,10 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 48 item (TD-051 di-reserve/skip).
+   - Total hutang teridentifikasi      : 49 item (TD-051 di-reserve/skip).
    - Sudah FIXED/CLOSED                : 22 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 25 item (TD-007 - deployment backend endpoint belum
+   - ❌ OPEN                           : 26 item (TD-007 - deployment backend endpoint belum
                                           dilakukan; TD-022 - Language toggle UI; TD-024,
                                           TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
                                           TD-030 - ganti password default admin; TD-031 -
@@ -625,7 +633,9 @@ REKOMENDASI:
                                           tidak lewat ledger_entries; TD-050 - envelope/path
                                           prefix admin_web belum unify; TD-052 - enum BANNED vs
                                           CHECK status_valid; TD-053 - aksi ban tanpa soft-delete
-                                          (deleted_at); TD-054 - aksi user tanpa validasi 2FA).
+                                          (deleted_at); TD-054 - aksi user tanpa validasi 2FA;
+                                           TD-055 - UserActionResult dideklarasi inline di
+                                           users.ts, sebaiknya pindah ke types.ts).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -673,6 +683,10 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       backend kompromi ban→DELETED. TD-053 (KODE, SEDANG, OPEN): aksi ban tidak
       set deleted_at (soft-delete belum jalan). TD-054 (SECURITY, SEDANG, OPEN):
       freeze/suspend/ban/ unfreeze tanpa validasi 2FA, beda dengan reversal.
+    - TD-055 (2026-09-21) menambahkan TD-055 (KODE, RENDAH, OPEN): interface
+      `UserActionResult` di apps/admin_web/src/lib/users.ts:40 dideklarasi
+      inline; sebaiknya dipindah ke lib/types.ts agar konsisten dengan tipe
+      lain (AdminUser, UserListResponse, dll).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
