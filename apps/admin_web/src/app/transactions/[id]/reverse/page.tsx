@@ -21,6 +21,14 @@ import { useTransactionDetail, useReverseTransaction } from "@/lib/reversal";
 import type { TransactionDetail } from "@/lib/types";
 
 export default function ReverseTransactionPage() {
+  return (
+    <Providers>
+      <ReverseTransactionPageInner />
+    </Providers>
+  );
+}
+
+function ReverseTransactionPageInner() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const router = useRouter();
@@ -66,7 +74,6 @@ export default function ReverseTransactionPage() {
   };
 
   return (
-    <Providers>
       <div className="flex min-h-screen">
         <Sidebar />
         <main className="flex-1 p-6">
@@ -140,8 +147,7 @@ export default function ReverseTransactionPage() {
           )}
         </main>
       </div>
-    </Providers>
-  );
+    );
 }
 
 function TransactionDetailsCard({ detail }: { detail: TransactionDetail }) {
