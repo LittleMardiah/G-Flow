@@ -426,6 +426,24 @@ Judul      : TEAM_CONTRACT.md v2.0 → v2.1: tambah section AUTONOMY
 Prioritas  : RENDAH
 Status     : FIXED
 
+ID         : TD-045
+Kategori   : DOKUMENTASI
+Judul      : API CONTRACT.txt §10 (Admin Endpoints) outdated vs
+             implementasi ROADMAP 04. §10 pakai `/auth/admin-login`,
+             `/users/{id}/status`, `/ledger/{id}/reverse` — implementasi
+             pakai `/api/v1/admin/login`, `/api/v1/admin/users/{id}/{action}`,
+             `/api/v1/admin/transactions/{id}/reverse`.
+Prioritas  : SEDANG
+Status     : OPEN
+
+ID         : TD-046
+Kategori   : KODE
+Judul      : Dashboard KPI `error_rate` masih STUB 0.0 — belum ada
+             error tracking (failed request / 5xx rate) di layer
+             service untuk admin dashboard (STEP A1 v2).
+Prioritas  : RENDAH
+Status     : OPEN
+
 -------------------------------------------------------------------------------
 E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
    golang-migrate): statement yang butuh auto-commit (di luar transaction block)
@@ -474,13 +492,13 @@ Status                : OPEN
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 39 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 41 item
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
 - TINGGI  : 13 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030)
-- SEDANG  : 10 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037)
-- RENDAH  : 13 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044)
+- SEDANG  : 11 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045)
+- RENDAH  : 14 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046)
 
-STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 16 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043).
+STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 18 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045, TD-046).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -506,10 +524,10 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 39 item.
+   - Total hutang teridentifikasi      : 41 item.
    - Sudah FIXED/CLOSED                : 22 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 16 item (TD-007 - deployment backend endpoint belum
+   - ❌ OPEN                           : 18 item (TD-007 - deployment backend endpoint belum
                                           dilakukan; TD-022 - Language toggle UI; TD-024,
                                           TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
                                           TD-030 - ganti password default admin; TD-031 -
@@ -520,7 +538,8 @@ REKOMENDASI:
                                           migration 010; TD-036 - CREATE INDEX CONCURRENTLY di
                                           migration 011; TD-037 - golang-migrate tanpa --no-tx;
                                           TD-042 - AuthGuard redirect ke /; TD-043 - DESIGN
-                                          ADMIN WEB.md:995 stale).
+                                          ADMIN WEB.md:995 stale; TD-045 - API CONTRACT §10
+                                          outdated; TD-046 - dashboard error_rate stub 0.0).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -541,11 +560,16 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       Hallucination Detection, Konteks & Scope, Escalation, Learning Checkpoint,
       Autonomy Boundaries) + 10 RULES + peran/alur/formula. Contract jadi
       SELF-CONTAINED untuk OpenCode.
-   - ADMIN WEB 2FA (2026-09-20) menambahkan TD-042 (KODE, OPEN): AuthGuard belum
-      redirect balik ke / kalau user sudah login buka /login (UX improvement),
-      dan TD-043 (DOKUMENTASI, OPEN): docs/UI UX/DESIGN ADMIN WEB.md:995 stale
-      (menyebut /admin/login + deskripsi klinik, kemungkinan DentFlow).
-   - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
+- ADMIN WEB 2FA (2026-09-20) menambahkan TD-042 (KODE, OPEN): AuthGuard belum
+       redirect balik ke / kalau user sudah login buka /login (UX improvement),
+       dan TD-043 (DOKUMENTASI, OPEN): docs/UI UX/DESIGN ADMIN WEB.md:995 stale
+       (menyebut /admin/login + deskripsi klinik, kemungkinan DentFlow).
+    - STEP A1 v2 (2026-09-21) menambahkan TD-046 (KODE, OPEN): dashboard KPI
+      error_rate masih stub 0.0 karena error tracking belum ada.
+    - TD-045 (2026-09-21) menambahkan TD-045 (DOKUMENTASI, OPEN): API
+      CONTRACT.txt §10 (Admin Endpoints) outdated vs implementasi ROADMAP 04
+      (rute /api/v1/admin/*).
+    - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
