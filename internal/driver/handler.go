@@ -19,6 +19,7 @@ import (
 // *Service; dijadikan interface agar mudah di-mock pada test.
 type DriverService interface {
 	GetAvailableOrders(ctx context.Context, driverID uuid.UUID) (*AvailableOrdersResult, error)
+	GetActiveOrders(ctx context.Context, driverID uuid.UUID) (*ActiveOrdersResult, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -66,6 +67,42 @@ func (h *Handler) GetAvailableOrders(c *gin.Context) {
 			"active_orders":      res.ActiveOrders,
 			"max_active_orders":  res.MaxActiveOrders,
 			"radius_km":          availableOrdersRadiusKm,
+		},
+	})
+}
+
+// GetDriverOrders GET /api/v1/drivers/orders
+// Auth: driver (JWT + RBAC). Mengambil driver_id dari JWT claim `user_id`,
+// lalu mengembalikan daftar order aktif milik driver (ride + food + send)
+// yang sedang dikerjakan — TD-077 A2. Response flat list, tanpa meta (sama
+// dgn GetAvailableOrders).
+func (h *Handler) GetDriverOrders(c *gin.Context) {
+	driverIDStr := c.GetString("user_id")
+	if driverIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+	driverID, err := uuid.Parse(driverIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	res, err := h.svc.GetActiveOrders(c.Request.Context(), driverID)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	orders := make([]DriverActiveOrder, 0, len(res.Orders))
+	for _, o := range res.Orders {
+		orders = append(orders, o)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"orders": orders,
 		},
 	})
 }

@@ -57,6 +57,9 @@ type Repo interface {
 	GetAvailableRideOrders(ctx context.Context, lat, lng, radiusKm float64) ([]RideAvailableOrder, error)
 	GetAvailableFoodOrders(ctx context.Context, lat, lng, radiusKm float64) ([]FoodAvailableOrder, error)
 	GetAvailableSendOrders(ctx context.Context, lat, lng, radiusKm float64) ([]SendAvailableOrder, error)
+	GetActiveRideOrders(ctx context.Context, driverID uuid.UUID) ([]ActiveRideOrder, error)
+	GetActiveFoodOrders(ctx context.Context, driverID uuid.UUID) ([]ActiveFoodOrder, error)
+	GetActiveSendOrders(ctx context.Context, driverID uuid.UUID) ([]ActiveSendOrder, error)
 }
 
 // RedisClient adalah subset operasi Redis yang dipakai Service untuk membaca
@@ -94,6 +97,49 @@ type AvailableOrdersResult struct {
 	ActiveOrders      int
 	MaxActiveOrders   int
 	Orders            []AvailableOrder
+}
+
+// DriverActiveOrder adalah satu order aktif milik driver (TD-077 A2 GET
+// /drivers/orders). `type` memisahkan ride/food/send; field spesifik per-tipe
+// (pickup/dropoff/fare) hanya terisi untuk tipe terkait (omitempty). Naming
+// mengikuti konvensi response existing: ride = estimated_fare, food =
+// total_amount/delivery_fee, send = total_fare (API CONTRACT / DTO detail).
+type DriverActiveOrder struct {
+	Type      string    `json:"type"`
+	OrderID   uuid.UUID `json:"order_id"`
+	Status    string    `json:"status"`
+	DriverID  uuid.UUID `json:"driver_id,omitempty"`
+	// Ride.
+	PickupAddress string          `json:"pickup_address,omitempty"`
+	PickupLat     float64         `json:"pickup_lat,omitempty"`
+	PickupLng     float64         `json:"pickup_lng,omitempty"`
+	DropoffAddress string         `json:"dropoff_address,omitempty"`
+	DropoffLat    float64         `json:"dropoff_lat,omitempty"`
+	DropoffLng    float64         `json:"dropoff_lng,omitempty"`
+	DistanceKm    float64         `json:"distance_km,omitempty"`
+	EstimatedFare decimal.Decimal `json:"estimated_fare,omitempty"`
+	// Food.
+	MerchantName    string          `json:"merchant_name,omitempty"`
+	MerchantAddress string          `json:"merchant_address,omitempty"`
+	MerchantLat     float64         `json:"merchant_lat,omitempty"`
+	MerchantLng     float64         `json:"merchant_lng,omitempty"`
+	DeliveryAddress string          `json:"delivery_address,omitempty"`
+	DeliveryLat     float64         `json:"delivery_lat,omitempty"`
+	DeliveryLng     float64         `json:"delivery_lng,omitempty"`
+	DeliveryFee     decimal.Decimal `json:"delivery_fee,omitempty"`
+	TotalAmount     decimal.Decimal `json:"total_amount,omitempty"`
+	// Send.
+	TotalFare        decimal.Decimal `json:"total_fare,omitempty"`
+	FirstStopAddress string          `json:"first_stop_address,omitempty"`
+	// Common.
+	PaymentMethod string `json:"payment_method"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// ActiveOrdersResult adalah hasil panggilan GetActiveOrders: daftar order
+// aktif milik driver (ride + food + send) yang harus dikerjakan.
+type ActiveOrdersResult struct {
+	Orders []DriverActiveOrder
 }
 
 // Service adalah business logic modul driver (available orders).
@@ -157,6 +203,37 @@ func (s *Service) GetAvailableOrders(ctx context.Context, driverID uuid.UUID) (*
 		res.Orders = append(res.Orders, fromSend(o))
 	}
 
+	return res, nil
+}
+
+// GetActiveOrders mengembalikan daftar order aktif milik driver (TD-077 A2):
+// union ride + food + send pada status aktif yang sama dengan kapasitas
+// CountActiveOrders (maks 3). Urutan hasil ride → food → send (konsisten
+// dgn GetAvailableOrders). Tidak butuh lokasi — langsung query by driver_id.
+func (s *Service) GetActiveOrders(ctx context.Context, driverID uuid.UUID) (*ActiveOrdersResult, error) {
+	rides, err := s.repo.GetActiveRideOrders(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	foods, err := s.repo.GetActiveFoodOrders(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	sends, err := s.repo.GetActiveSendOrders(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &ActiveOrdersResult{Orders: []DriverActiveOrder{}}
+	for _, o := range rides {
+		res.Orders = append(res.Orders, fromActiveRide(o))
+	}
+	for _, o := range foods {
+		res.Orders = append(res.Orders, fromActiveFood(o))
+	}
+	for _, o := range sends {
+		res.Orders = append(res.Orders, fromActiveSend(o))
+	}
 	return res, nil
 }
 
@@ -254,6 +331,68 @@ func fromSend(o SendAvailableOrder) AvailableOrder {
 		CreatedAt:     o.CreatedAt,
 		StopAddress:   o.FirstStopAddress,
 	}
+}
+
+// fromActiveRide memetakan ActiveRideOrder ke DTO order aktif (TD-077 A2).
+func fromActiveRide(o ActiveRideOrder) DriverActiveOrder {
+	return DriverActiveOrder{
+		Type:           OrderTypeRide,
+		OrderID:        o.ID,
+		Status:         o.Status,
+		DriverID:       o.DriverID,
+		PickupAddress:  o.PickupAddress,
+		PickupLat:      o.PickupLat,
+		PickupLng:      o.PickupLng,
+		DropoffAddress: o.DropoffAddress,
+		DropoffLat:     o.DropoffLat,
+		DropoffLng:     o.DropoffLng,
+		DistanceKm:     o.DistanceKm,
+		EstimatedFare:  o.EstimatedFare,
+		PaymentMethod:  o.PaymentMethod,
+		CreatedAt:      o.CreatedAt,
+	}
+}
+
+// fromActiveFood memetakan ActiveFoodOrder ke DTO order aktif (TD-077 A2).
+func fromActiveFood(o ActiveFoodOrder) DriverActiveOrder {
+	return DriverActiveOrder{
+		Type:            OrderTypeFood,
+		OrderID:         o.ID,
+		Status:          o.Status,
+		DriverID:        o.DriverID,
+		MerchantName:    o.MerchantName,
+		MerchantAddress: o.MerchantAddress,
+		MerchantLat:     o.MerchantLat,
+		MerchantLng:     o.MerchantLng,
+		DeliveryAddress: o.DeliveryAddress,
+		DeliveryLat:     o.DeliveryLat,
+		DeliveryLng:     o.DeliveryLng,
+		DeliveryFee:     o.DeliveryFee,
+		TotalAmount:     o.TotalAmount,
+		PaymentMethod:   o.PaymentMethod,
+		CreatedAt:       o.CreatedAt,
+	}
+}
+
+// fromActiveSend memetakan ActiveSendOrder ke DTO order aktif (TD-077 A2).
+func fromActiveSend(o ActiveSendOrder) DriverActiveOrder {
+	order := DriverActiveOrder{
+		Type:           OrderTypeSend,
+		OrderID:        o.ID,
+		Status:         o.Status,
+		DriverID:       o.DriverID,
+		PickupAddress:  o.PickupAddress,
+		PickupLat:      o.PickupLat,
+		PickupLng:      o.PickupLng,
+		DistanceKm:     o.DistanceKm,
+		TotalFare:      o.TotalFare,
+		PaymentMethod:  o.PaymentMethod,
+		CreatedAt:      o.CreatedAt,
+	}
+	if o.FirstStopAddress != nil {
+		order.FirstStopAddress = *o.FirstStopAddress
+	}
+	return order
 }
 
 // validLatLng memastikan koordinat berada pada rentang geografis valid.

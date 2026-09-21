@@ -29,6 +29,13 @@ type mockRepo struct {
 	rideCalled     bool
 	foodCalled     bool
 	sendCalled     bool
+	activeRides    []ActiveRideOrder
+	activeFoods    []ActiveFoodOrder
+	activeSends    []ActiveSendOrder
+	activeOrderErr error
+	activeRideCall bool
+	activeFoodCall bool
+	activeSendCall bool
 }
 
 func (m *mockRepo) GetDriverLocation(_ context.Context, _ uuid.UUID) (float64, float64, error) {
@@ -54,6 +61,21 @@ func (m *mockRepo) GetAvailableFoodOrders(_ context.Context, _, _, _ float64) ([
 func (m *mockRepo) GetAvailableSendOrders(_ context.Context, _, _, _ float64) ([]SendAvailableOrder, error) {
 	m.sendCalled = true
 	return m.sends, m.sendsErr
+}
+
+func (m *mockRepo) GetActiveRideOrders(_ context.Context, _ uuid.UUID) ([]ActiveRideOrder, error) {
+	m.activeRideCall = true
+	return m.activeRides, m.activeOrderErr
+}
+
+func (m *mockRepo) GetActiveFoodOrders(_ context.Context, _ uuid.UUID) ([]ActiveFoodOrder, error) {
+	m.activeFoodCall = true
+	return m.activeFoods, m.activeOrderErr
+}
+
+func (m *mockRepo) GetActiveSendOrders(_ context.Context, _ uuid.UUID) ([]ActiveSendOrder, error) {
+	m.activeSendCall = true
+	return m.activeSends, m.activeOrderErr
 }
 
 // mockRedis adalah stub RedisClient untuk unit test service.
@@ -203,3 +225,106 @@ func TestService_GetAvailableOrders_Empty(t *testing.T) {
 	assert.NotNil(t, res.Orders)
 	assert.Len(t, res.Orders, 0) // slice kosong (bukan nil) agar JSON []
 }
+
+// ---- TD-077 A2: GetActiveOrders (service) ----
+
+// TestService_GetActiveOrders_Empty: tanpa order aktif → [] (slice kosong,
+// bukan nil) tanpa error; ketiga repo di-query.
+func TestService_GetActiveOrders_Empty(t *testing.T) {
+	repo := &mockRepo{}
+	svc := NewService(repo, nil)
+
+	res, err := svc.GetActiveOrders(context.Background(), driverID)
+	require.NoError(t, err)
+	require.True(t, repo.activeRideCall)
+	require.True(t, repo.activeFoodCall)
+	require.True(t, repo.activeSendCall)
+	assert.NotNil(t, res.Orders)
+	assert.Len(t, res.Orders, 0)
+}
+
+// TestService_GetActiveOrders_Mixed: union 1 ride + 1 food + 1 send → 3 item,
+// urutan ride→food→send, tiap item memetakan field ke struktur DTO benar.
+func TestService_GetActiveOrders_Mixed(t *testing.T) {
+	foodID := uuid.MustParse("66666666-6666-6666-6666-666666666666")
+	sendID := uuid.MustParse("77777777-7777-7777-7777-777777777777")
+	repo := &mockRepo{
+		activeRides: []ActiveRideOrder{{
+			ID: orderID, DriverID: driverID, PickupAddress: "Jl. Pickup",
+			PickupLat: -6.2, PickupLng: 106.8, DropoffAddress: "Jl. Drop",
+			DropoffLat: -6.3, DropoffLng: 106.9, DistanceKm: 3.5,
+			EstimatedFare: decimal.NewFromInt(24000), PaymentMethod: "WALLET",
+			Status: "TRIP_STARTED", CreatedAt: "2026-08-31 10:00:00",
+		}},
+		activeFoods: []ActiveFoodOrder{{
+			ID: foodID, DriverID: driverID, MerchantName: "Warung",
+			MerchantAddress: "Jl. Warung", DeliveryAddress: "Jl. Tujuan",
+			DeliveryFee: decimal.NewFromInt(20000), TotalAmount: decimal.NewFromInt(45000),
+			PaymentMethod: "CASH", Status: "PICKED_UP", CreatedAt: "2026-08-31 10:00:00",
+		}},
+		activeSends: []ActiveSendOrder{{
+			ID: sendID, DriverID: driverID, PickupAddress: "Jl. Kirim",
+			DistanceKm: 2.0, TotalFare: decimal.NewFromInt(30000),
+			PaymentMethod: "WALLET", Status: "IN_TRANSIT", CreatedAt: "2026-08-31 10:00:00",
+			FirstStopAddress: ptrString("Jl. Stop 1"),
+		}},
+	}
+	svc := NewService(repo, nil)
+
+	res, err := svc.GetActiveOrders(context.Background(), driverID)
+	require.NoError(t, err)
+	require.Len(t, res.Orders, 3)
+
+	ride := res.Orders[0]
+	assert.Equal(t, OrderTypeRide, ride.Type)
+	assert.Equal(t, orderID, ride.OrderID)
+	assert.Equal(t, "TRIP_STARTED", ride.Status)
+	assert.Equal(t, "Jl. Drop", ride.DropoffAddress)
+	assert.Equal(t, decimal.NewFromInt(24000), ride.EstimatedFare)
+	// Field milik tipe lain tidak terisi.
+	assert.Empty(t, ride.MerchantName)
+
+	food := res.Orders[1]
+	assert.Equal(t, OrderTypeFood, food.Type)
+	assert.Equal(t, foodID, food.OrderID)
+	assert.Equal(t, "Warung", food.MerchantName)
+	assert.Equal(t, decimal.NewFromInt(45000), food.TotalAmount)
+	assert.Empty(t, food.EstimatedFare)
+	assert.Empty(t, food.TotalFare)
+
+	send := res.Orders[2]
+	assert.Equal(t, OrderTypeSend, send.Type)
+	assert.Equal(t, sendID, send.OrderID)
+	assert.Equal(t, "Jl. Stop 1", send.FirstStopAddress)
+	assert.Equal(t, decimal.NewFromInt(30000), send.TotalFare)
+	assert.Empty(t, send.EstimatedFare)
+}
+
+// TestService_GetActiveOrders_SendNoStop: send tanpa stop tersimpan → alamat
+// stop pertama string kosong (bukan crash / mengisi field lain).
+func TestService_GetActiveOrders_SendNoStop(t *testing.T) {
+	repo := &mockRepo{
+		activeSends: []ActiveSendOrder{{
+			ID: orderID, DriverID: driverID, PickupAddress: "Jl. Kirim",
+			TotalFare: decimal.NewFromInt(30000), PaymentMethod: "WALLET",
+			Status: "DRIVER_ASSIGNED", CreatedAt: "2026-08-31 10:00:00",
+		}},
+	}
+	svc := NewService(repo, nil)
+
+	res, err := svc.GetActiveOrders(context.Background(), driverID)
+	require.NoError(t, err)
+	require.Len(t, res.Orders, 1)
+	assert.Equal(t, "", res.Orders[0].FirstStopAddress)
+}
+
+// TestService_GetActiveOrders_Error: error salah satu repo → di-propagate.
+func TestService_GetActiveOrders_Error(t *testing.T) {
+	repo := &mockRepo{activeOrderErr: errors.New("db down")}
+	svc := NewService(repo, nil)
+
+	_, err := svc.GetActiveOrders(context.Background(), driverID)
+	require.Error(t, err)
+}
+
+func ptrString(s string) *string { return &s }
