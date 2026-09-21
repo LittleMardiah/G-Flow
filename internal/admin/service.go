@@ -25,7 +25,9 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -543,6 +545,104 @@ func (s *Service) GetDashboardTransactions(ctx context.Context, limit, offset in
 		})
 	}
 	return &TransactionList{TotalCount: total, Transactions: items}, nil
+}
+
+// LedgerList adalah payload GET /admin/ledger
+// (apps/admin_web/src/lib/types.ts -> LedgerPage).
+type LedgerList struct {
+	Ledger     []TransactionItem `json:"ledger"`
+	TotalCount int64             `json:"total_count"`
+}
+
+// GetLedger mengambil daftar ledger entries + total_count sesuai filter E1.
+func (s *Service) GetLedger(ctx context.Context, f LedgerFilter) (*LedgerList, error) {
+	rows, err := s.repo.ListLedger(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.repo.CountLedger(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TransactionItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, TransactionItem{
+			ID:        r.ID,
+			WalletID:  r.WalletID,
+			EntryType: r.EntryType,
+			Amount:    jsonDecimal(r.Amount),
+			Reference: r.Reference,
+			CreatedAt: r.CreatedAt,
+			Status:    r.Status,
+			Note:      r.Note,
+		})
+	}
+	return &LedgerList{Ledger: items, TotalCount: total}, nil
+}
+
+// BalanceVerification adalah payload GET /admin/ledger/verify/:wallet_id
+// (apps/admin_web/src/lib/types.ts -> BalanceVerification). status bernilai
+// "BALANCED" saat discrepancy == 0, selain itu "MISMATCH".
+type BalanceVerification struct {
+	WalletID    uuid.UUID   `json:"wallet_id"`
+	TotalDebit  jsonDecimal `json:"total_debit"`
+	TotalCredit jsonDecimal `json:"total_credit"`
+	Discrepancy jsonDecimal `json:"discrepancy"`
+	Status      string      `json:"status"`
+}
+
+// VerifyLedger memverifikasi saldo wallet vs agregat ledger entries:
+// discrepancy = wallets.balance - (SUM(CREDIT) - SUM(DEBIT)).
+func (s *Service) VerifyLedger(ctx context.Context, walletID uuid.UUID) (*BalanceVerification, error) {
+	totals, err := s.repo.VerifyWalletLedger(ctx, walletID)
+	if err != nil {
+		return nil, err
+	}
+	net := totals.TotalCredit.Sub(totals.TotalDebit)
+	discrepancy := totals.WalletBalance.Sub(net)
+	status := "BALANCED"
+	if !discrepancy.IsZero() {
+		status = "MISMATCH"
+	}
+	return &BalanceVerification{
+		WalletID:    walletID,
+		TotalDebit:  jsonDecimal(totals.TotalDebit),
+		TotalCredit: jsonDecimal(totals.TotalCredit),
+		Discrepancy: jsonDecimal(discrepancy),
+		Status:      status,
+	}, nil
+}
+
+// ExportLedger menghasilkan CSV (baris header + seluruh entry sesuai filter,
+// tanpa pagination) untuk POST /admin/ledger/export (E3).
+func (s *Service) ExportLedger(ctx context.Context, f LedgerFilter) ([]byte, error) {
+	rows, err := s.repo.ListLedgerForExport(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{"id", "wallet_id", "entry_type", "amount", "reference", "created_at", "status"}); err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if err := w.Write([]string{
+			r.ID.String(),
+			r.WalletID.String(),
+			r.EntryType,
+			r.Amount.String(),
+			r.Reference,
+			r.CreatedAt.UTC().Format(time.RFC3339),
+			r.Status,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func refundWalletOf(entries []LedgerEntry) uuid.UUID {

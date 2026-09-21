@@ -10,6 +10,9 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -455,4 +458,155 @@ func (r *Repository) ListRecentTransactions(ctx context.Context, limit, offset i
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// LedgerFilter adalah filter daftar / export ledger admin (STEP A3, E1 & E3).
+// DateFrom/DateTo bernilai nil bila filter tanggal tidak dipakai. Limit/Offset
+// hanya dipakai untuk query ber-pagination (ListLedger); export memakai semua
+// baris yang cocok.
+type LedgerFilter struct {
+	Offset     int
+	Limit      int
+	DateFrom   *time.Time
+	DateTo     *time.Time
+	WalletType string
+	EntryType  string
+	Search     string
+}
+
+const ledgerEntrySelect = `
+	SELECT le.id, le.wallet_id, le.entry_type, le.amount,
+	       COALESCE(le.reference_type, '') || '/' || COALESCE(le.reference_id::text, '') AS reference,
+	       le.created_at,
+	       CASE WHEN le.is_reversed THEN 'REVERSED' ELSE 'ACTIVE' END AS status,
+	       COALESCE(le.description, '') AS note
+	FROM ledger_entries le
+	LEFT JOIN wallets w ON w.id = le.wallet_id`
+
+// ledgerFilterWhere membangun fragment WHERE (+ optional LIMIT/OFFSET) untuk
+// query ledger admin dengan placeholder dinamis sesuai filter yang terisi.
+func ledgerFilterWhere(f LedgerFilter, paginate bool) (where, order string, args []any) {
+	conds := []string{"TRUE"}
+	idx := 1
+	if f.DateFrom != nil {
+		conds = append(conds, fmt.Sprintf("le.created_at >= $%d", idx))
+		args = append(args, *f.DateFrom)
+		idx++
+	}
+	if f.DateTo != nil {
+		conds = append(conds, fmt.Sprintf("le.created_at <= $%d", idx))
+		args = append(args, *f.DateTo)
+		idx++
+	}
+	if f.WalletType != "" {
+		conds = append(conds, fmt.Sprintf("w.wallet_type::text = $%d", idx))
+		args = append(args, f.WalletType)
+		idx++
+	}
+	if f.EntryType != "" {
+		conds = append(conds, fmt.Sprintf("le.entry_type::text = $%d", idx))
+		args = append(args, f.EntryType)
+		idx++
+	}
+	if f.Search != "" {
+		conds = append(conds, fmt.Sprintf(
+			"(le.reference_type ILIKE '%%' || $%d || '%%' OR le.reference_id::text ILIKE '%%' || $%d || '%%' OR COALESCE(le.description, '') ILIKE '%%' || $%d || '%%')",
+			idx, idx, idx,
+		))
+		args = append(args, f.Search, f.Search, f.Search)
+		idx++
+	}
+	where = strings.Join(conds, " AND ")
+	if paginate {
+		order = fmt.Sprintf(" ORDER BY le.created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+		args = append(args, f.Limit, f.Offset)
+	} else {
+		order = " ORDER BY le.created_at DESC"
+	}
+	return where, order, args
+}
+
+// scanRecentTransactions membaca baris RecentTransaction dari pgx.Rows.
+func scanRecentTransactions(rows pgx.Rows) ([]RecentTransaction, error) {
+	var out []RecentTransaction
+	for rows.Next() {
+		var t RecentTransaction
+		if err := rows.Scan(&t.ID, &t.WalletID, &t.EntryType, &t.Amount, &t.Reference, &t.CreatedAt, &t.Status, &t.Note); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListLedger mengambil daftar ledger entries sesuai filter (pagination). JOIN
+// wallets hanya untuk filter wallet_type (kolom ada di tabel wallets, bukan
+// ledger_entries).
+func (r *Repository) ListLedger(ctx context.Context, f LedgerFilter) ([]RecentTransaction, error) {
+	where, order, args := ledgerFilterWhere(f, true)
+	rows, err := r.db.Query(ctx, ledgerEntrySelect+" WHERE "+where+order, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRecentTransactions(rows)
+}
+
+// CountLedger menghitung total baris ledger sesuai filter (untuk total_count).
+func (r *Repository) CountLedger(ctx context.Context, f LedgerFilter) (int64, error) {
+	where, _, args := ledgerFilterWhere(f, false)
+	var total int64
+	err := r.db.QueryRow(ctx,
+		"SELECT COUNT(*) FROM ledger_entries le LEFT JOIN wallets w ON w.id = le.wallet_id WHERE "+where,
+		args...,
+	).Scan(&total)
+	return total, err
+}
+
+// ListLedgerForExport mengambil SEMUA ledger entries sesuai filter tanpa
+// pagination (untuk export CSV, E3).
+func (r *Repository) ListLedgerForExport(ctx context.Context, f LedgerFilter) ([]RecentTransaction, error) {
+	where, order, args := ledgerFilterWhere(f, false)
+	rows, err := r.db.Query(ctx, ledgerEntrySelect+" WHERE "+where+order, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRecentTransactions(rows)
+}
+
+// LedgerTotals adalah hasil verifikasi ledger milik sebuah wallet: saldo saat
+// ini (wallets.balance) vs agregat DEBIT/CREDIT entries non-reversed.
+type LedgerTotals struct {
+	WalletBalance decimal.Decimal
+	TotalDebit    decimal.Decimal
+	TotalCredit   decimal.Decimal
+}
+
+// VerifyWalletLedger membaca saldo wallet + total DEBIT/CREDIT ledger-nya.
+// Wallet tidak ada -> ErrWalletNotFound.
+func (r *Repository) VerifyWalletLedger(ctx context.Context, walletID uuid.UUID) (*LedgerTotals, error) {
+	balance := decimal.Zero
+	err := r.db.QueryRow(ctx, `SELECT balance FROM wallets WHERE id = $1`, walletID).Scan(&balance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWalletNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var debit, credit decimal.Decimal
+	err = r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount) FILTER (WHERE entry_type = 'DEBIT'), 0),
+		       COALESCE(SUM(amount) FILTER (WHERE entry_type = 'CREDIT'), 0)
+		FROM ledger_entries
+		WHERE wallet_id = $1 AND is_reversed = FALSE
+	`, walletID).Scan(&debit, &credit)
+	if err != nil {
+		return nil, err
+	}
+	return &LedgerTotals{WalletBalance: balance, TotalDebit: debit, TotalCredit: credit}, nil
 }

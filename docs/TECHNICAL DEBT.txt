@@ -444,6 +444,35 @@ Judul      : Dashboard KPI `error_rate` masih STUB 0.0 — belum ada
 Prioritas  : RENDAH
 Status     : OPEN
 
+ID         : TD-047
+Kategori   : KODE
+Judul      : Wallet-type filter mismatch: UI kirim CUSTOMER_ESCROW/
+             RECIPIENT_PAYOUT/MERCHANT_PAYOUT/DRIVER_EARNING/
+             PLATFORM_SHARE, tapi wallet_type_enum DB cuma CUSTOMER/DRIVER/
+             MERCHANT/SYSTEM_*. Filter ledger akan return kosong untuk
+             value UI.
+Solusi     : mapping layer atau update enum + taxonomy.
+Prioritas  : SEDANG
+Status     : OPEN
+
+ID         : TD-048
+Kategori   : KODE
+Judul      : entry_type filter mismatch: UI kirim HOLD/RELEASE/REVERSAL,
+             tapi entry_type_enum DB cuma DEBIT/CREDIT. Filter akan
+             return kosong.
+Solusi     : mapping layer atau ubah UI value.
+Prioritas  : SEDANG
+Status     : OPEN
+
+ID         : TD-049
+Kategori   : ARSITEKTUR
+Judul      : UpdateWalletBalance (repository, auto-sweep/adjustment) TIDAK
+             lewat ledger_entries → sumber discrepancy di verify endpoint.
+             Invariant double-entry bisa dilanggar.
+Solusi     : audit & enforce semua perubahan balance lewat ledger_entries.
+Prioritas  : TINGGI
+Status     : OPEN
+
 -------------------------------------------------------------------------------
 E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
    golang-migrate): statement yang butuh auto-commit (di luar transaction block)
@@ -492,13 +521,13 @@ Status                : OPEN
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 41 item
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 44 item
 - KRITIS  : 3 item  (TD-001, TD-002, TD-023)
-- TINGGI  : 13 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030)
-- SEDANG  : 11 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045)
+- TINGGI  : 14 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049)
+- SEDANG  : 13 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048)
 - RENDAH  : 14 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046)
 
-STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 18 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045, TD-046).
+STATUS: 22 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 21 item OPEN (TD-007, TD-022, TD-024 s/d TD-027, TD-030, TD-031, TD-032 s/d TD-037, TD-042, TD-043, TD-045 s/d TD-049).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -524,10 +553,10 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-20):
-   - Total hutang teridentifikasi      : 41 item.
+   - Total hutang teridentifikasi      : 44 item.
    - Sudah FIXED/CLOSED                : 22 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-   - ❌ OPEN                           : 18 item (TD-007 - deployment backend endpoint belum
+   - ❌ OPEN                           : 21 item (TD-007 - deployment backend endpoint belum
                                           dilakukan; TD-022 - Language toggle UI; TD-024,
                                           TD-025, TD-026, TD-027 - admin auth flow, STEP 1C-1F;
                                           TD-030 - ganti password default admin; TD-031 -
@@ -539,7 +568,10 @@ REKOMENDASI:
                                           migration 011; TD-037 - golang-migrate tanpa --no-tx;
                                           TD-042 - AuthGuard redirect ke /; TD-043 - DESIGN
                                           ADMIN WEB.md:995 stale; TD-045 - API CONTRACT §10
-                                          outdated; TD-046 - dashboard error_rate stub 0.0).
+                                          outdated; TD-046 - dashboard error_rate stub 0.0;
+                                          TD-047 - wallet-type filter mismatch; TD-048 -
+                                          entry_type filter mismatch; TD-049 - UpdateWalletBalance
+                                          tidak lewat ledger_entries).
 
    CATATAN:
    - STEP 1B menambahkan TD-023 (FIXED - 2FA secret via ADMIN_2FA_SECRET) dan
@@ -569,6 +601,15 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
     - TD-045 (2026-09-21) menambahkan TD-045 (DOKUMENTASI, OPEN): API
       CONTRACT.txt §10 (Admin Endpoints) outdated vs implementasi ROADMAP 04
       (rute /api/v1/admin/*).
+    - STEP LEDGER FILTER (2026-09-21) menambahkan TD-047 & TD-048 (KODE,
+      SEDANG, OPEN): filter ledger di admin_web (ledger-client.tsx) kirim
+      value yang ga match enum DB (wallet_type: CUSTOMER_ESCROW/... vs
+      CUSTOMER/DRIVER/MERCHANT/SYSTEM_*; entry_type: HOLD/RELEASE/REVERSAL
+      vs DEBIT/CREDIT) → filter return kosong. Perlu mapping layer atau
+      update enum + ubah value UI. Menambahkan TD-049 (ARSITEKTUR, TINGGI,
+      OPEN): UpdateWalletBalance (internal/admin/repository.go:229) update
+      saldo langsung tanpa ledger_entries → sumber discrepancy di verify
+      endpoint; harus audit & enforce lewat ledger_entries.
     - STATUS: SIAP LIVE DEMO / PORTOFOLIO (celah admin auth masih OPEN, TD-024 s/d TD-027).
 
 ================================================================================

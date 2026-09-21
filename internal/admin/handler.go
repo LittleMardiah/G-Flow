@@ -17,10 +17,12 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -260,6 +262,152 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 			"user_type":     result.UserType,
 		},
 	})
+}
+
+// ledgerExportRequest adalah body POST /admin/ledger/export (filter sama E1).
+type ledgerExportRequest struct {
+	Offset     int    `json:"offset"`
+	Limit      int    `json:"limit"`
+	DateFrom   string `json:"date_from"`
+	DateTo     string `json:"date_to"`
+	WalletType string `json:"wallet_type"`
+	EntryType  string `json:"entry_type"`
+	Search     string `json:"search"`
+}
+
+// GetLedgerList GET /admin/ledger
+// Mengembalikan daftar ledger entries dengan filter opsional (offset, limit,
+// date_from, date_to, wallet_type, entry_type, search) + total_count.
+// Envelope {success, data: {ledger, total_count}} sesuai types.ts -> LedgerPage.
+func (h *Handler) GetLedgerList(c *gin.Context) {
+	f := LedgerFilter{Limit: 10, Offset: 0}
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "limit harus bilangan bulat positif")
+			return
+		}
+		f.Limit = min(n, 100)
+	}
+	if v := c.Query("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "offset harus bilangan bulat non-negatif")
+			return
+		}
+		f.Offset = n
+	}
+	if v := c.Query("date_from"); v != "" {
+		d, err := parseLedgerDate(v)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "date_from tidak valid (format RFC3339 atau YYYY-MM-DD)")
+			return
+		}
+		f.DateFrom = &d
+	}
+	if v := c.Query("date_to"); v != "" {
+		d, err := parseLedgerDate(v)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "date_to tidak valid (format RFC3339 atau YYYY-MM-DD)")
+			return
+		}
+		f.DateTo = &d
+	}
+	f.WalletType = strings.TrimSpace(c.Query("wallet_type"))
+	f.EntryType = strings.TrimSpace(c.Query("entry_type"))
+	f.Search = strings.TrimSpace(c.Query("search"))
+
+	list, err := h.svc.GetLedger(c.Request.Context(), f)
+	if err != nil {
+		h.logger.Error("get ledger failed", "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal mengambil ledger")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
+}
+
+// VerifyLedger GET /admin/ledger/verify/:wallet_id
+// Memverifikasi saldo wallet terhadap agregat ledger entries (double-entry).
+// Response {total_debit, total_credit, discrepancy, status} dengan status
+// "BALANCED" | "MISMATCH" (types.ts -> BalanceVerification).
+func (h *Handler) VerifyLedger(c *gin.Context) {
+	walletID, err := uuid.Parse(c.Param("wallet_id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_WALLET_ID", "wallet id tidak valid")
+		return
+	}
+
+	result, err := h.svc.VerifyLedger(c.Request.Context(), walletID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrWalletNotFound):
+			writeError(c, http.StatusNotFound, "WALLET_NOT_FOUND", "wallet tidak ditemukan")
+		default:
+			h.logger.Error("verify ledger failed", "wallet_id", walletID, "error", err)
+			writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal memverifikasi ledger")
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+// ExportLedger POST /admin/ledger/export
+// Menerima filter JSON (sama seperti E1) dan mengembalikan file CSV
+// (Content-Type: text/csv, filename ledger-export-<timestamp>.csv).
+func (h *Handler) ExportLedger(c *gin.Context) {
+	var body ledgerExportRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "format body tidak valid")
+		return
+	}
+
+	f := LedgerFilter{
+		Offset:     body.Offset,
+		WalletType: strings.TrimSpace(body.WalletType),
+		EntryType:  strings.TrimSpace(body.EntryType),
+		Search:     strings.TrimSpace(body.Search),
+	}
+	if body.Limit > 0 {
+		f.Limit = body.Limit
+	}
+	if body.DateFrom != "" {
+		d, err := parseLedgerDate(body.DateFrom)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "date_from tidak valid (format RFC3339 atau YYYY-MM-DD)")
+			return
+		}
+		f.DateFrom = &d
+	}
+	if body.DateTo != "" {
+		d, err := parseLedgerDate(body.DateTo)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "date_to tidak valid (format RFC3339 atau YYYY-MM-DD)")
+			return
+		}
+		f.DateTo = &d
+	}
+
+	data, err := h.svc.ExportLedger(c.Request.Context(), f)
+	if err != nil {
+		h.logger.Error("export ledger failed", "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal mengekspor ledger")
+		return
+	}
+
+	filename := fmt.Sprintf("ledger-export-%d.csv", time.Now().Unix())
+	c.Header("Content-Type", "text/csv")
+	c.Header("Content-Disposition", "attachment; filename="+filename)
+	c.Data(http.StatusOK, "text/csv", data)
+}
+
+// parseLedgerDate mem-parse tanggal filter ledger (RFC3339 atau YYYY-MM-DD
+// dari <input type="date"> frontend admin_web).
+func parseLedgerDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02", s)
 }
 
 // writeError menulis error response sesuai format API_CONTRACT.
