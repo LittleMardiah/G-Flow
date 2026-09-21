@@ -8,10 +8,13 @@ export function useLedger(filters: LedgerFilters) {
   return useQuery({
     queryKey: ["ledger", filters],
     queryFn: async (): Promise<LedgerPage> => {
-      const { data } = await api.get<LedgerPage>("/admin/ledger", {
-        params: filters,
-      });
-      return data;
+      const { data } = await api.get<{ success: boolean; data: LedgerPage }>(
+        "/api/v1/admin/ledger",
+        {
+          params: filters,
+        },
+      );
+      return data.data;
     },
   });
 }
@@ -21,10 +24,11 @@ export function useBalanceVerification(walletId: string | null) {
     queryKey: ["ledger", "verify", walletId],
     enabled: !!walletId && walletId.trim().length > 0,
     queryFn: async (): Promise<BalanceVerification> => {
-      const { data } = await api.get<BalanceVerification>(
-        `/admin/ledger/verify/${walletId}`,
-      );
-      return data;
+      const { data } = await api.get<{
+        success: boolean;
+        data: BalanceVerification;
+      }>(`/api/v1/admin/ledger/verify/${encodeURIComponent(walletId!)}`);
+      return data.data;
     },
   });
 }
@@ -32,7 +36,7 @@ export function useBalanceVerification(walletId: string | null) {
 export function useLedgerExport() {
   return useMutation({
     mutationFn: async (filters: LedgerFilters) => {
-      const { data } = await api.post("/admin/ledger/export", filters, {
+      const { data } = await api.post("/api/v1/admin/ledger/export", filters, {
         responseType: "blob",
       });
       return data as Blob;

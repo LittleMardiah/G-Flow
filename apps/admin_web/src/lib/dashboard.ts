@@ -11,8 +11,10 @@ export function useDashboardKPIs() {
   return useQuery({
     queryKey: ["dashboard", "kpis"],
     queryFn: async (): Promise<DashboardKPIs> => {
-      const { data } = await api.get<DashboardKPIs>("/api/v1/admin/dashboard/kpis");
-      return data;
+      const { data } = await api.get<{ success: boolean; data: DashboardKPIs }>(
+        "/api/v1/admin/dashboard/kpis",
+      );
+      return data.data;
     },
   });
 }
@@ -21,11 +23,11 @@ export function useLatestTransactions(limit = 10) {
   return useQuery({
     queryKey: ["dashboard", "transactions", limit],
     queryFn: async (): Promise<TransactionListResponse> => {
-      const { data } = await api.get<TransactionListResponse>(
-        "/api/v1/admin/dashboard/transactions",
-        { params: { limit } },
-      );
-      return data;
+      const { data } = await api.get<{
+        success: boolean;
+        data: TransactionListResponse;
+      }>("/api/v1/admin/dashboard/transactions", { params: { limit } });
+      return data.data;
     },
   });
 }
