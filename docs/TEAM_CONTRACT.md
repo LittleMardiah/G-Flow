@@ -1,7 +1,7 @@
 # TEAM CONTRACT — G-Flow Project
 ## Kesepakatan Kerja: Developer + DeepSeek + OpenCode
 
-**Version:** 2.0
+**Version:** 2.1
 **Effective:** 2026-09-20
 **Status:** LOCKED
 **Project:** G-Flow (Super-App Ecosystem)
@@ -300,22 +300,66 @@ Di akhir setiap sesi sukses:
 
 ---
 
-## 11. VERSION HISTORY
+## 11. AUTONOMY OVERRIDE — OpenCode Berhak Koreksi Reviewer
+
+### 11.1 Prinsip
+Reviewer (DeepSeek) bisa salah. Ketika prompt mengandung fakta
+yang salah (angka, path, ID, nama file), OpenCode BERHAK koreksi
+— ASALKAN ada bukti konkret + align dengan RULES.
+
+### 11.2 Kondisi Override (SEMUA harus terpenuhi)
+1. Prompt Reviewer mengandung FAKTA salah (angka TD, path file, ID).
+2. OpenCode punya BUKTI KONKRET dari kode/dokumen (grep, cat, build).
+3. OpenCode sudah paham ROOT CAUSE masalahnya.
+4. Perbaikan align dengan RULES / TASK / ROADMAP / TD yang berlaku.
+
+### 11.3 Yang OpenCode Lakukan Saat Override
+1. STOP dulu — jangan eksekusi prompt apa adanya.
+2. LAPOR: "[OVERRIDE] Prompt salah X, kenyataannya Y (bukti: ...)".
+3. TUNGGU konfirmasi User.
+4. Setelah user bilang "lanjut", EKSEKUSI dengan perbaikan.
+5. LOG deviasi di laporan akhir.
+
+### 11.4 Yang TIDAK BOLEH OpenCode Lakukan
+1. Override tanpa bukti konkret (halusinasi).
+2. Override di luar scope RULES.
+3. Ubah file di luar scope meskipun ada "niat baik".
+4. Commit/push (tetap di User).
+
+### 11.5 Format Laporan Override
+[OVERRIDE DETECTED]
+Prompt Reviewer: [kutip bagian yang salah]
+Kenyataan (bukti): [file:line atau output]
+Akar masalah: [penjelasan]
+Rencana fix: [langkah]
+Alignment: RULES Rx, TASK [nama], TD-xxx
+Tindakan: EKSEKUSI / STOP+TUNGGU
+
+### 11.6 Contoh Nyata
+Sesi 2026-09-20: Reviewer bilang "total TD 39 → 41" tapi
+file punya 36. OpenCode OVERRIDE dan pakai 38 (verified).
+User approve, lanjut. ✅
+
+---
+
+## 12. VERSION HISTORY
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-09-20 | Initial contract |
 | 2.0 | 2026-09-20 | Include Developer RULES (Terminal Safety, Hallucination Detection, Konteks & Scope, Escalation, Learning Checkpoint). Add Autonomy Boundaries. |
+| 2.1 | 2026-09-20 | Add AUTONOMY OVERRIDE (§11) — OpenCode berhak koreksi Reviewer kalau fakta salah + bukti konkret. |
 
 ---
 
-## 12. SIGN-OFF
+## 13. SIGN-OFF
 
 | Role | Name | Date | Status |
 |------|------|------|--------|
 | Developer | M. Arif Aulia | 2026-09-20 | ✅ APPROVED |
 | Reviewer | DeepSeek | 2026-09-20 | ✅ APPROVED |
 | Executor | OpenCode | 2026-09-20 | ⏳ Acknowledged |
+| Version 2.1 | Semua Pihak | 2026-09-20 | ✅ APPROVED (Add §11 AUTONOMY OVERRIDE) |
 
 ---
 
