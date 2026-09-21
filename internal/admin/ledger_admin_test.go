@@ -149,6 +149,39 @@ func TestGetLedger_Handler(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// TestGetLedger_Handler_AllFilter: wallet_type/entry_type "ALL" (default UI
+// dropdown) TIDAK diteruskan ke filter SQL -> query hanya berjalan dengan
+// limit+offset (list) dan tanpa filter (count). Regression untuk filter
+// kosong saat frontend kirim value "ALL".
+func TestGetLedger_Handler_AllFilter(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	now := time.Now()
+	id1 := uuid.New()
+	wID := uuid.New()
+	mDB.ExpectQuery("ORDER BY le.created_at DESC LIMIT").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()). // limit + offset only
+		WillReturnRows(ledgerResultRows().
+			AddRow(id1, wID, "DEBIT", decimal.NewFromInt(30000), "RIDE_SETTLEMENT/"+testTxnID.String(), now, "ACTIVE", "release escrow"))
+	mDB.ExpectQuery("SELECT COUNT").
+		WithArgs().
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(1)))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+		"/admin/ledger?wallet_type=ALL&entry_type=ALL", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `"success":true`)
+	assert.Contains(t, body, `"total_count":1`)
+	assert.Contains(t, body, `"entry_type":"DEBIT"`)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 // TestGetLedger_InvalidParams: limit/offset/date tidak valid -> 400
 // INVALID_REQUEST tanpa menyentuh database.
 func TestGetLedger_InvalidParams(t *testing.T) {

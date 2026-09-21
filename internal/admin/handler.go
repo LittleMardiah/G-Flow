@@ -313,8 +313,18 @@ func (h *Handler) GetLedgerList(c *gin.Context) {
 		}
 		f.DateTo = &d
 	}
-	f.WalletType = strings.TrimSpace(c.Query("wallet_type"))
-	f.EntryType = strings.TrimSpace(c.Query("entry_type"))
+	walletType := strings.TrimSpace(c.Query("wallet_type"))
+	if walletType == "ALL" {
+		walletType = ""
+	}
+	f.WalletType = walletType
+
+	entryType := strings.TrimSpace(c.Query("entry_type"))
+	if entryType == "ALL" {
+		entryType = ""
+	}
+	f.EntryType = entryType
+
 	f.Search = strings.TrimSpace(c.Query("search"))
 
 	list, err := h.svc.GetLedger(c.Request.Context(), f)
@@ -428,7 +438,8 @@ func (h *Handler) GetUsers(c *gin.Context) {
 		}
 		f.Offset = n
 	}
-	if role := strings.ToUpper(strings.TrimSpace(c.Query("role"))); role != "" {
+	role := strings.ToUpper(strings.TrimSpace(c.Query("role")))
+	if role != "" && role != "ALL" {
 		switch role {
 		case "CUSTOMER", "DRIVER", "MERCHANT", "ADMIN", "SYSTEM":
 			f.Role = role
@@ -437,7 +448,10 @@ func (h *Handler) GetUsers(c *gin.Context) {
 			return
 		}
 	}
-	f.Status = strings.ToUpper(strings.TrimSpace(c.Query("status")))
+	status := strings.ToUpper(strings.TrimSpace(c.Query("status")))
+	if status != "" && status != "ALL" {
+		f.Status = status
+	}
 	f.Search = strings.TrimSpace(c.Query("search"))
 
 	list, err := h.svc.GetUsers(c.Request.Context(), f)
