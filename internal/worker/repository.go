@@ -197,6 +197,70 @@ func (r *Repository) InsertSendOrderEvent(ctx context.Context, q Querier, e Send
 	return err
 }
 
+// ---- Ride orders ----
+
+// ExpiredRideOrderIDs mengembalikan ID ride order berstatus 'SEARCHING_DRIVER'
+// yang sudah melewati expires_at (TTL 15 menit sejak booking, TD-067). Partial
+// index idx_ride_expires mempercepat query ini.
+func (r *Repository) ExpiredRideOrderIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id FROM ride_orders
+		WHERE status = 'SEARCHING_DRIVER'
+		  AND expires_at IS NOT NULL
+		  AND expires_at < NOW()
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// LockRideOrder mengambil + mengunci baris ride_orders dengan SELECT ... FOR
+// UPDATE NOWAIT. Mengembalikan ErrLockTimeout (SQLSTATE 55P03) jika lock tidak
+// tersedia.
+func (r *Repository) LockRideOrder(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error) {
+	return scanRideOrderRow(q.QueryRow(ctx, `
+		SELECT id, customer_wallet_id, payment_method, status, estimated_fare
+		FROM ride_orders WHERE id = $1 FOR UPDATE NOWAIT
+	`, orderID))
+}
+
+// CancelRideOrder menandai ride order CANCELLED + cancellation_reason='EXPIRED'
+// secara atomik (CAS) dengan guard status 'SEARCHING_DRIVER'. Return true jika
+// baris berubah.
+func (r *Repository) CancelRideOrder(ctx context.Context, q Querier, orderID uuid.UUID) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE ride_orders
+		SET status = 'CANCELLED',
+		    cancellation_reason = 'EXPIRED',
+		    updated_at = NOW()
+		WHERE id = $1 AND status = $2
+	`, orderID, rideStatusSearchingDriver)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// InsertRideOrderEvent mencatat audit trail transisi status ride order.
+func (r *Repository) InsertRideOrderEvent(ctx context.Context, q Querier, e RideOrderEvent) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO ride_order_events (order_id, from_status, to_status, reason, triggered_by, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, e.OrderID, e.FromStatus, e.ToStatus, e.Reason, e.TriggeredBy, e.Metadata)
+	return err
+}
+
 // ---- scanner helpers ----
 
 func scanFoodOrderRow(row pgx.Row) (*FoodOrder, error) {
@@ -222,6 +286,20 @@ func scanSendOrderRow(row pgx.Row) (*SendOrder, error) {
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSendOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+func scanRideOrderRow(row pgx.Row) (*RideOrder, error) {
+	var o RideOrder
+	err := row.Scan(
+		&o.ID, &o.CustomerWalletID, &o.PaymentMethod, &o.Status, &o.EstimatedFare,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrRideOrderNotFound
 	}
 	if err != nil {
 		return nil, err

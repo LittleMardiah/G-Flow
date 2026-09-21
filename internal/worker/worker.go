@@ -1,13 +1,15 @@
-// Package worker — Auto-Cancel Workers untuk G-Food & G-Send (Task 3.7).
+// Package worker — Auto-Cancel Workers untuk G-Food, G-Send & G-Ride
+// (Task 3.7 + TD-067).
 //
 // Lihat dokumentasi package (file types.go / repository.go) untuk arsitektur
 // dan alur per-order. Berikut implementasi engine:
 //   - Worker.Run(ctx) menjalankan loop ticker 1 menit.
 //   - Setiap tick => (1) ambil Redis distributed lock (SET NX), (2) sweep food,
-//     (3) sweep send, (4) lepas lock. Jika lock tidak didapat (instance lain
-//     sedang berjalan) => skip tick tanpa query DB.
-//   - CancelFoodOrders / CancelSendOrders memproses tiap order dalam transaksi
-//     terpisah (lock order -> wallets -> cancel -> refund -> audit).
+//     (3) sweep send, (4) sweep ride, (5) lepas lock. Jika lock tidak didapat
+//     (instance lain sedang berjalan) => skip tick tanpa query DB.
+//   - CancelFoodOrders / CancelSendOrders / CancelRideOrders memproses tiap
+//     order dalam transaksi terpisah (lock order -> wallets -> cancel -> refund
+//     -> audit).
 package worker
 
 import (
@@ -107,10 +109,11 @@ func (w *Worker) sweepOnce(ctx context.Context) {
 	log.Println("worker auto-cancel: distributed lock didapat, mulai sweep")
 	foodDone := w.CancelFoodOrders(ctx)
 	sendDone := w.CancelSendOrders(ctx)
+	rideDone := w.CancelRideOrders(ctx)
 
 	w.releaseLock(ctx)
 
-	log.Printf("worker auto-cancel: sweep selesai (food cancelled=%d, send cancelled=%d)", foodDone, sendDone)
+	log.Printf("worker auto-cancel: sweep selesai (food cancelled=%d, send cancelled=%d, ride cancelled=%d)", foodDone, sendDone, rideDone)
 }
 
 // acquireLock mencoba mengambil Redis distributed lock (SET NX) dengan TTL.
@@ -364,6 +367,117 @@ func (w *Worker) refundSendEscrow(ctx context.Context, tx pgx.Tx, order *SendOrd
 		},
 	})
 }
+
+// CancelRideOrders membatalkan ride order 'SEARCHING_DRIVER' yang sudah
+// melewati expires_at (TTL 15 menit, TD-067). Mengembalikan jumlah order yang
+// berhasil di-cancel. Idempoten: guard status CAS mencegah double-refund.
+func (w *Worker) CancelRideOrders(ctx context.Context) int {
+	ids, err := w.repo.ExpiredRideOrderIDs(ctx)
+	if err != nil {
+		log.Printf("worker auto-cancel: gagal query ride orders expired: %v", err)
+		return 0
+	}
+
+	cancelled := 0
+	for _, id := range ids {
+		if err := w.cancelOneRideOrder(ctx, id); err != nil {
+			log.Printf("worker auto-cancel: gagal cancel ride order %s: %v", id, err)
+			continue
+		}
+		cancelled++
+	}
+	return cancelled
+}
+
+// cancelOneRideOrder memproses satu ride order dalam transaksi terpisah.
+func (w *Worker) cancelOneRideOrder(ctx context.Context, id uuid.UUID) error {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		return err
+	}
+
+	// Lock baris order (FOR UPDATE NOWAIT) lalu guard status.
+	locked, err := w.repo.LockRideOrder(ctx, tx, id)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return ErrLockTimeout
+		}
+		return err
+	}
+	if locked.Status != rideStatusSearchingDriver {
+		return ErrInvalidTransition
+	}
+
+	// Refund escrow hanya untuk payment WALLET.
+	if locked.PaymentMethod == paymentMethodWallet {
+		if err := w.refundRideEscrow(ctx, tx, locked); err != nil {
+			return err
+		}
+	}
+
+	// CAS cancel: guard status 'SEARCHING_DRIVER'.
+	ok, err := w.repo.CancelRideOrder(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrInvalidTransition
+	}
+
+	// Audit event (reason EXPIRED + metadata).
+	if err := w.repo.InsertRideOrderEvent(ctx, tx, RideOrderEvent{
+		OrderID:    id,
+		FromStatus: strPtr(locked.Status),
+		ToStatus:   rideStatusCancelled,
+		Reason:     strPtr(cancellationReasonExpired),
+		Metadata:   jsonMetadata(cancellationReasonExpired),
+	}); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// refundRideEscrow mengembalikan dana escrow penuh (RIDE_REFUND) ke customer
+// wallet untuk ride order WALLET yang di-cancel. Lock wallets ORDER BY id ASC
+// (deadlock-free, sesuai Mandat Lock Hierarchy).
+func (w *Worker) refundRideEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder) error {
+	if order.CustomerWalletID == nil {
+		return ErrWalletNotFound
+	}
+	escrowID, err := w.repo.SystemWalletID(ctx, tx, "SYSTEM_ESCROW")
+	if err != nil {
+		return err
+	}
+	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID); err != nil {
+		return err
+	}
+	return w.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+		{
+			WalletID:      escrowID,
+			EntryType:     wallet.EntryDebit,
+			Amount:        order.EstimatedFare,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideRefund,
+			Description:   "RIDE_REFUND - escrow release to customer (auto-cancel EXPIRED)",
+		},
+		{
+			WalletID:      *order.CustomerWalletID,
+			EntryType:     wallet.EntryCredit,
+			Amount:        order.EstimatedFare,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideRefund,
+			Description:   "RIDE_REFUND - full refund customer wallet (auto-cancel EXPIRED)",
+		},
+	})
+}
+
 // purgeIdempotencyCache menghapus baris idempotency_cache yang sudah kedaluwarsa
 // (expires_at < NOW()). Membatasi 1000 baris per eksekusi agar tidak memblokir
 // DB terlalu lama; dipanggil berkala setiap jam sebagai background task.

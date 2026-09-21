@@ -16,12 +16,15 @@ const (
 	foodStatusCancelled       = "CANCELLED"
 	sendStatusSearchingDriver = "SEARCHING_DRIVER"
 	sendStatusCancelled       = "CANCELLED"
+	rideStatusSearchingDriver = "SEARCHING_DRIVER"
+	rideStatusCancelled       = "CANCELLED"
 
 	paymentMethodWallet = "WALLET"
 
 	// Reference type double-entry ledger untuk refund escrow.
 	referenceTypeFoodRefund = "FOOD_REFUND"
 	referenceTypeSendRefund = "SEND_REFUND"
+	referenceTypeRideRefund = "RIDE_REFUND"
 )
 
 var (
@@ -49,6 +52,7 @@ var (
 	ErrWalletNotFound    = errors.New("wallet not found")
 	ErrFoodOrderNotFound = errors.New("food order not found")
 	ErrSendOrderNotFound = errors.New("send order not found")
+	ErrRideOrderNotFound = errors.New("ride order not found")
 	ErrLockTimeout       = errors.New("order lock not available (NOWAIT timeout)")
 	ErrInvalidTransition = errors.New("invalid status transition for current order state")
 )
@@ -86,6 +90,25 @@ type FoodOrderEvent struct {
 
 // SendOrderEvent adalah baris tabel send_order_events (audit trail).
 type SendOrderEvent struct {
+	OrderID     uuid.UUID
+	FromStatus  *string
+	ToStatus    string
+	Reason      *string
+	TriggeredBy *uuid.UUID
+	Metadata    []byte
+}
+
+// RideOrder adalah subset baris ride_orders yang dibutuhkan worker.
+type RideOrder struct {
+	ID               uuid.UUID
+	CustomerWalletID *uuid.UUID
+	PaymentMethod    string
+	Status           string
+	EstimatedFare    decimal.Decimal
+}
+
+// RideOrderEvent adalah baris tabel ride_order_events (audit trail).
+type RideOrderEvent struct {
 	OrderID     uuid.UUID
 	FromStatus  *string
 	ToStatus    string
