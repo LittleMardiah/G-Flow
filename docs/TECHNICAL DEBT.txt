@@ -856,6 +856,10 @@ Solusi     : Register alias /drivers/{id}/available-orders ATAU ubah app ke endp
 Estimasi   : 4-6 jam
 Prioritas  : KRITIS
 Status     : OPEN
+Progress   : 2026-09-21 — Step A1 DONE (GET /rides/{id} endpoint,
+             handler+DTO+route+6 test, coverage 85.5%). Remaining:
+             A2 (GET /drivers/orders), B (mobile driver refactor),
+             C (mobile customer + TD-072).
 Referensi  : audit_r03.log (GAP-3), audit_r02.log (GAP driver app)
 
 ID         : TD-078
@@ -1221,19 +1225,49 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-104 (temuan OpenCode)
 
+ID         : TD-108
+Kategori   : ARSITEKTUR
+Judul      : Authz (ownership check) di GetRide ditaruh di handler
+             layer, sedangkan pattern UpdateStatus taruh di service
+             layer (validateStatusTransition service.go:956).
+Dampak     : Inkonsistensi pattern arsitektur (R6). Logic authz
+             di HTTP layer menyulitkan reuse + unit test service
+             langsung + enforcement konsisten.
+Solusi     : Pindahkan ownership check ke service method
+             GetOrderForUser(ctx, orderID, userID) → 403/404,
+             handler tinggal panggil.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-077 A1 (commit akan datang) — kritik OpenCode
+
+ID         : TD-109
+Kategori   : SECURITY
+Judul      : GetRide return 403 untuk "other user" = broadcast bahwa
+             order ID valid (enumeration info leak). Alternatif:
+             return 404 uniform untuk unauthorized/nonexistent.
+Dampak     : Attacker bisa probe order ID valid/invalid via respons
+             code (403 vs 404). Low severity untuk MVP, tapi defense
+             in depth.
+Solusi     : Pertimbangkan uniform 404 untuk unauthorized + not found.
+             Atau tetap 403 (match UpdateStatus pattern) dengan
+             justifikasi.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-077 A1 — saran OpenCode
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 101 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 103 item (TD-051 di-reserve/skip)
 - KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
 - TINGGI  : 37 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106)
-- SEDANG  : 34 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107)
+- SEDANG  : 36 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109)
 - RENDAH  : 23 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105)
 
-STATUS: 24 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 76 item OPEN (28 item lama + 48 item baru dari SECTION F, TD-058 s/d TD-107).
+STATUS: 24 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 78 item OPEN (28 item lama + 50 item baru dari SECTION F, TD-058 s/d TD-109).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1259,11 +1293,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-21):
-   - Total hutang teridentifikasi      : 101 item (TD-051 di-reserve/skip; +49 dari SECTION F, TD-107).
+   - Total hutang teridentifikasi      : 103 item (TD-051 di-reserve/skip; +51 dari SECTION F, TD-109).
    - Sudah FIXED/CLOSED                : 24 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044, TD-071, TD-104).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 76 item (28 item lama + 48 item baru,
-                                          TD-058 s/d TD-107).
+- ❌ OPEN                           : 78 item (28 item lama + 50 item baru,
+                                          TD-058 s/d TD-109).
    RINCIAN 28 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-024 s/d TD-027
                                           (admin auth flow STEP 1C-1F), TD-030 (password
@@ -1368,6 +1402,11 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       TINGGI) + TD-107 (ride guard inconsistency, SEDANG).
       Total register naik dari 99 → 101 item (KRITIS 7 / TINGGI 37 / SEDANG 34 /
       RENDAH 23; OPEN 76, FIXED 24, DEFERRED 1).
+    - TD-077 A1 FOLLOW-UP (2026-09-21): Step A1 done — GET /rides/{id}.
+      Menambahkan TD-108 (authz konsistensi handler→service, SEDANG) +
+      TD-109 (403 vs 404 enumeration, SEDANG). Total register naik
+      dari 101 → 103 item (KRITIS 7 / TINGGI 37 / SEDANG 36 / RENDAH 23;
+      OPEN 78, FIXED 24, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

@@ -22,6 +22,7 @@ type RideService interface {
 	BookRide(ctx context.Context, req BookRideRequest) (*BookRideResponse, error)
 	AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID uuid.UUID) (*AcceptOrderResponse, error)
 	UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error)
+	GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -194,6 +195,99 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 			"order_id":          resp.OrderID,
 			"status":            resp.Status,
 			"status_updated_at": time.Now(),
+		},
+	})
+}
+
+// rideDetailResponse memotong RideOrder ke field yang dijanjikan
+// API_CONTRACT 7.4 (GET /rides/{order_id}). Kolom internal (wallet_id,
+// voucher_id, surge, settlement_notes) tidak diekspos ke konsumen.
+type rideDetailResponse struct {
+	OrderID            uuid.UUID        `json:"order_id"`
+	CustomerID         uuid.UUID        `json:"customer_id"`
+	DriverID           *uuid.UUID       `json:"driver_id"`
+	Status             string           `json:"status"`
+	PickupLat          float64          `json:"pickup_lat"`
+	PickupLng          float64          `json:"pickup_lng"`
+	PickupAddress      string           `json:"pickup_address"`
+	DropoffLat         float64          `json:"dropoff_lat"`
+	DropoffLng         float64          `json:"dropoff_lng"`
+	DropoffAddress     string           `json:"dropoff_address"`
+	DistanceKm         decimal.Decimal  `json:"distance_km"`
+	BaseFare           decimal.Decimal  `json:"base_fare"`
+	PerKmRate          decimal.Decimal  `json:"per_km_rate"`
+	EstimatedFare      decimal.Decimal  `json:"estimated_fare"`
+	ActualFare         *decimal.Decimal `json:"actual_fare"`
+	DriverEarning      *decimal.Decimal `json:"driver_earning"`
+	DiscountAmount     *decimal.Decimal `json:"discount_amount"`
+	PaymentMethod      string           `json:"payment_method"`
+	CancellationReason *string          `json:"cancellation_reason"`
+	CreatedAt          time.Time        `json:"created_at"`
+	ExpiresAt          *time.Time       `json:"expires_at"`
+	AssignedAt         *time.Time       `json:"assigned_at"`
+	PickupAt           *time.Time       `json:"pickup_at"`
+	CompletedAt        *time.Time       `json:"completed_at"`
+	SettledAt          *time.Time       `json:"settled_at"`
+	IsSettled          bool             `json:"is_settled"`
+}
+
+// GetRide GET /api/v1/rides/:order_id
+// Auth: JWT. Detail order hanya untuk pemiliknya — customer pemesan atau
+// driver tertunjuk. Ownership divalidasi terhadap user_id dari JWT claim;
+// selain itu → 403 FORBIDDEN (mirror ErrNotAllowed di UpdateStatus).
+func (h *Handler) GetRide(c *gin.Context) {
+	orderID, err := uuid.Parse(c.Param("order_id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_ORDER_ID", "invalid order_id")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	order, err := h.svc.GetOrder(c.Request.Context(), orderID)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	if order.CustomerID != userID && (order.DriverID == nil || *order.DriverID != userID) {
+		writeError(c, statusForError(ErrNotAllowed), codeForError(ErrNotAllowed), ErrNotAllowed.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": rideDetailResponse{
+			OrderID:            order.ID,
+			CustomerID:         order.CustomerID,
+			DriverID:           order.DriverID,
+			Status:             order.Status,
+			PickupLat:          order.PickupLat,
+			PickupLng:          order.PickupLng,
+			PickupAddress:      order.PickupAddress,
+			DropoffLat:         order.DropoffLat,
+			DropoffLng:         order.DropoffLng,
+			DropoffAddress:     order.DropoffAddress,
+			DistanceKm:         order.DistanceKm,
+			BaseFare:           order.BaseFare,
+			PerKmRate:          order.PerKmRate,
+			EstimatedFare:      order.EstimatedFare,
+			ActualFare:         order.ActualFare,
+			DriverEarning:      order.DriverEarning,
+			DiscountAmount:     order.DiscountAmount,
+			PaymentMethod:      order.PaymentMethod,
+			CancellationReason: order.CancellationReason,
+			CreatedAt:          order.CreatedAt,
+			ExpiresAt:          order.ExpiresAt,
+			AssignedAt:         order.AssignedAt,
+			PickupAt:           order.PickupAt,
+			CompletedAt:        order.CompletedAt,
+			SettledAt:          order.SettledAt,
+			IsSettled:          order.IsSettled,
 		},
 	})
 }

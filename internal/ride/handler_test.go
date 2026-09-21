@@ -44,6 +44,14 @@ func (m *mockRideService) UpdateRideStatus(ctx context.Context, req UpdateRideSt
 	return args.Get(0).(*UpdateRideStatusResponse), args.Error(1)
 }
 
+func (m *mockRideService) GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error) {
+	args := m.Called(ctx, orderID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*RideOrder), args.Error(1)
+}
+
 func setupGin() (*gin.Engine, *gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -278,6 +286,114 @@ func TestHandler_UpdateStatus_ServiceError(t *testing.T) {
 	h.UpdateStatus(c)
 	assert.Equal(t, http.StatusConflict, w.Code)
 	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRide_CustomerOwner_Success(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Success bool               `json:"success"`
+		Data    rideDetailResponse `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.True(t, out.Success)
+	assert.Equal(t, svcOrderID, out.Data.OrderID)
+	assert.Equal(t, svcCustomerID, out.Data.CustomerID)
+	assert.NotNil(t, out.Data.DriverID)
+	assert.Equal(t, statusDriverAssigned, out.Data.Status)
+	assert.Equal(t, PaymentMethodWallet, out.Data.PaymentMethod)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRide_DriverAssigned_Success(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcDriverID.String())
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Success bool               `json:"success"`
+		Data    rideDetailResponse `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.True(t, out.Success)
+	assert.Equal(t, svcOrderID, out.Data.OrderID)
+	assert.Equal(t, svcCustomerID, out.Data.CustomerID)
+	assert.Equal(t, statusDriverAssigned, out.Data.Status)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRide_Forbidden(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	// User lain: bukan customer pemesan, bukan driver tertunjuk.
+	c.Set("user_id", "99999999-9999-9999-9999-999999999999")
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRide_NotFound(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(nil, ErrOrderNotFound)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRide_InvalidOrderID(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/notauuid", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	h := NewHandler(nil)
+	h.GetRide(c)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestHandler_GetRide_Unauthorized(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+
+	h := NewHandler(nil)
+	h.GetRide(c)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // ---- helper functions coverage ----
