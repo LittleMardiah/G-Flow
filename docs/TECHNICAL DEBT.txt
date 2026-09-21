@@ -1170,7 +1170,9 @@ Dampak     : Refund escrow (ride+food+send) tanpa test guard.
 Solusi     : Tambah internal/worker/worker_test.go (pgxmock,
              mirror pola internal/ride/service_test.go).
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-21, commit TD-104, coverage 66.4%)
+Note       : 9 test cases PASS, build OK, vet clean. Coverage 66.4% —
+             error-path extension dicatat di TD-106.
 Referensi  : TD-067
 
 ID         : TD-105
@@ -1187,19 +1189,51 @@ Prioritas  : RENDAH
 Status     : OPEN
 Referensi  : TD-071 (commit)
 
+ID         : TD-106
+Kategori   : TESTING
+Judul      : Worker coverage 66.4% (dari TD-104) < 85% target.
+             Error-path tests belum ada: refund ledger error →
+             rollback, LockOrder 55P03 timeout, CAS cancel false
+             → rollback.
+Dampak     : Handler refund uang (ride+food+send) tanpa test guard
+             untuk error path → bug refund gagal tidak terdeteksi
+             → risiko kerugian finansial + ledger inconsistency.
+Solusi     : Tambah error-path tests di internal/worker/worker_test.go
+             (mirror pola pgxmock internal/ride/service_test.go).
+             Target: coverage ≥ 80%.
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : TD-104 (coverage 66.4%)
+
+ID         : TD-107
+Kategori   : KODE
+Judul      : Ride tidak guard `is_settled`/`is_refunded` di query
+             lock (LockRideOrder). Food pakai (!IsSettled &&
+             !IsRefunded), Send pakai (!IsSettled). Ride hanya
+             CAS status 'SEARCHING_DRIVER'.
+Dampak     : Inkonsistensi pattern antar modul (R6). Aman sementara
+             karena status CAS meng-enforce SEARCHING_DRIVER
+             (settlement hanya terjadi di COMPLETED), tapi tidak
+             defensif terhadap data manual/migration error.
+Solusi     : Align pattern — tambahkan guard flag yang sama
+             (atau justifikasi kenapa ride beda).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-104 (temuan OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 99 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 101 item (TD-051 di-reserve/skip)
 - KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
-- TINGGI  : 36 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104)
-- SEDANG  : 33 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103)
+- TINGGI  : 37 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106)
+- SEDANG  : 34 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107)
 - RENDAH  : 23 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105)
 
-STATUS: 23 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 75 item OPEN (28 item lama + 47 item baru dari SECTION F, TD-058 s/d TD-105).
+STATUS: 24 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 76 item OPEN (28 item lama + 48 item baru dari SECTION F, TD-058 s/d TD-107).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1225,11 +1259,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-21):
-   - Total hutang teridentifikasi      : 99 item (TD-051 di-reserve/skip; +47 dari SECTION F, TD-105).
-   - Sudah FIXED/CLOSED                : 23 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044, TD-071).
+   - Total hutang teridentifikasi      : 101 item (TD-051 di-reserve/skip; +49 dari SECTION F, TD-107).
+   - Sudah FIXED/CLOSED                : 24 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044, TD-071, TD-104).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 75 item (28 item lama + 47 item baru,
-                                          TD-058 s/d TD-105).
+- ❌ OPEN                           : 76 item (28 item lama + 48 item baru,
+                                          TD-058 s/d TD-107).
    RINCIAN 28 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-024 s/d TD-027
                                           (admin auth flow STEP 1C-1F), TD-030 (password
@@ -1329,6 +1363,11 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       → pindahkan ke dalam tx setelah LockDriverUserForAccept (under-lock).
       Total register naik dari 98 → 99 item (KRITIS 7 / TINGGI 36 / SEDANG 33 / RENDAH 23;
       OPEN 75, FIXED 23, DEFERRED 1).
+    - TD-104 FOLLOW-UP (2026-09-21): TD-104 ditandai FIXED (9 test,
+      coverage 66.4%). Menambahkan TD-106 (worker error-path tests,
+      TINGGI) + TD-107 (ride guard inconsistency, SEDANG).
+      Total register naik dari 99 → 101 item (KRITIS 7 / TINGGI 37 / SEDANG 34 /
+      RENDAH 23; OPEN 76, FIXED 24, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
