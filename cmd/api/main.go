@@ -5,10 +5,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -281,10 +284,36 @@ func main() {
 	// setiap 1 jam) sebelum/ketika sweep auto-cancel berjalan.
 	go autoCancelWorker.Run(workerCtx)
 
-	log.Printf("Server running on port %s (env=%s)", cfg.App.Port, cfg.App.Env)
-	if err := r.Run(":" + cfg.App.Port); err != nil {
-		log.Fatalf("gagal menjalankan server: %v", err)
+	// TD-087: graceful shutdown. Server dijalankan sebagai goroutine agar main
+	// bisa menunggu sinyal SIGINT/SIGTERM, lalu men-drain request in-flight
+	// sebelum menutup pool DB/Redis dan menghentikan background worker.
+	srv := &http.Server{
+		Addr:              ":" + cfg.App.Port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	go func() {
+		log.Printf("Server running on port %s (env=%s)", cfg.App.Port, cfg.App.Env)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("gagal menjalankan server: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("shutting down: sinyal diterima, drain request in-flight...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutting down: timeout/gagal drain server: %v", err)
+	}
+
+	// Hentikan background worker (location flush + auto-cancel) setelah drain.
+	workerCancel()
+	log.Println("shutting down: server berhenti dengan graceful")
 }
 
 // initRedis membuat *redis.Client dari URL. Mengembalikan nil jika URL kosong,
