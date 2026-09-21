@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, BookOpenText, Users, LogOut } from "lucide-react";
 import { clearAdminSession } from "@/lib/api";
 
@@ -13,6 +13,7 @@ const nav = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const isActive = (item: (typeof nav)[number]) =>
     item.exact ? pathname === item.href : pathname.startsWith(item.href);
@@ -40,7 +41,10 @@ export function Sidebar() {
       </nav>
       <div className="border-t border-gray-200 p-3">
         <button
-          onClick={() => clearAdminSession()}
+          onClick={() => {
+            clearAdminSession();
+            router.push("/login");
+          }}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
         >
           <LogOut className="h-4 w-4" />

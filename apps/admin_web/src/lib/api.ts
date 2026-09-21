@@ -31,8 +31,9 @@ export function setAdminSession(
 ): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem("admin_token", token);
-  if (twoFaToken) {
-    window.localStorage.setItem("admin_2fa_token", twoFaToken);
+  window.localStorage.removeItem("admin_2fa_token");
+  if (twoFaToken && twoFaToken.trim()) {
+    window.localStorage.setItem("admin_2fa_token", twoFaToken.trim());
   }
 }
 
@@ -40,4 +41,22 @@ export function clearAdminSession(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem("admin_token");
   window.localStorage.removeItem("admin_2fa_token");
+}
+
+export interface AdminLoginData {
+  access_token: string;
+  refresh_token: string;
+  user_id: string;
+  user_type: string;
+}
+
+export async function loginAdmin(
+  email: string,
+  password: string,
+): Promise<AdminLoginData> {
+  const res = await api.post<{ success: boolean; data: AdminLoginData }>(
+    "/api/v1/admin/login",
+    { email, password },
+  );
+  return res.data.data;
 }
