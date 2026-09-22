@@ -193,6 +193,10 @@ func main() {
 		// /rides/:order_id (static > param; aman di Gin tree).
 		api.GET("/rides", auth.RBACMiddleware("customer"), rideHandler.GetRideHistory)
 		api.GET("/rides/:order_id", rideHandler.GetRide)
+		// TD-120: GET /wallets/me — auto-resolve wallet milik user berdasarkan
+		// JWT claim (query ?type=, default CUSTOMER). Static route di-register
+		// sebelum /wallets/:wallet_id/* (static > param; aman di Gin tree).
+		api.GET("/wallets/me", auth.RBACMiddleware("customer", "driver", "merchant"), handler.GetMyWallet)
 		api.POST("/wallets/:wallet_id/topup", handler.TopUp)
 		api.POST("/wallets/:wallet_id/transfer", handler.Transfer)
 		api.GET("/wallets/:wallet_id/balance", handler.GetBalance)

@@ -15,6 +15,10 @@ import '../screens/ride/ride_tracking_screen.dart';
 import '../screens/send/send_history_screen.dart';
 import '../screens/send/send_package_form_screen.dart';
 import '../screens/send/send_tracking_screen.dart';
+import '../screens/wallet/wallet_balance_screen.dart';
+import '../screens/wallet/wallet_history_screen.dart';
+import '../screens/wallet/wallet_topup_screen.dart';
+import '../screens/wallet/wallet_transfer_screen.dart';
 
 /// Konstanta nama route. Parameter order (misal orderId) diteruskan via
 /// `arguments:` pada Navigator.pushNamed (bukan path parameter).
@@ -42,6 +46,12 @@ class AppRoutes {
   static const String sendForm = '/send-form';
   static const String sendTracking = '/send-tracking';
   static const String sendHistory = '/send-history';
+
+  // Wallet
+  static const String walletBalance = '/wallet-balance';
+  static const String walletTopup = '/wallet-topup';
+  static const String walletTransfer = '/wallet-transfer';
+  static const String walletHistory = '/wallet-history';
 }
 
 /// Daftar route terpusat pengganti map inline di main.dart agar mudah
@@ -67,5 +77,10 @@ class AppRouter {
         AppRoutes.sendForm: (_) => const SendPackageFormScreen(),
         AppRoutes.sendTracking: (_) => const SendTrackingScreen(),
         AppRoutes.sendHistory: (_) => const SendHistoryScreen(),
+
+        AppRoutes.walletBalance: (_) => const WalletBalanceScreen(),
+        AppRoutes.walletTopup: (_) => const WalletTopupScreen(),
+        AppRoutes.walletTransfer: (_) => const WalletTransferScreen(),
+        AppRoutes.walletHistory: (_) => const WalletHistoryScreen(),
       };
 }

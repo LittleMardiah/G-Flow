@@ -24,6 +24,7 @@ type WalletService interface {
 	TopUp(ctx context.Context, req TopUpRequest) (*TopUpResponse, error)
 	Transfer(ctx context.Context, req TransferRequest) (*TransferResponse, error)
 	GetBalance(ctx context.Context, userID uuid.UUID, walletID uuid.UUID) (decimal.Decimal, error)
+	GetMyWallet(ctx context.Context, userID uuid.UUID, walletType string) (*MyWallet, error)
 	GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error)
 	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
 	UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, adminID uuid.UUID, newStatus string, reason string) (*UpdateWalletStatusResult, error)
@@ -216,6 +217,32 @@ func (h *Handler) GetBalance(c *gin.Context) {
 			"balance":   balance,
 		},
 	})
+}
+
+// GetMyWallet GET /api/v1/wallets/me (TD-120)
+// Query: ?type=CUSTOMER (default CUSTOMER). Auto-resolve wallet milik user
+// terautentikasi (JWT claim) berdasarkan user_id + wallet_type, jadi mobile
+// tidak perlu tahu wallet_id. 200 {success, data:{wallet_id, balance, status,
+// wallet_type}}; 404 (WALLET_NOT_FOUND) jika user tidak punya wallet tipe tsb.
+func (h *Handler) GetMyWallet(c *gin.Context) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	walletType := strings.TrimSpace(c.Query("type"))
+	if walletType == "" {
+		walletType = WalletTypeCustomer
+	}
+
+	resp, err := h.svc.GetMyWallet(c.Request.Context(), userID, walletType)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
 }
 
 // GetWalletHistory GET /api/v1/wallets/:wallet_id/history

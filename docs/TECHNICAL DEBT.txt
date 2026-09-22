@@ -1392,19 +1392,46 @@ Prioritas  : RENDAH
 Status     : OPEN
 Referensi  : TD-058 SS4 (observasi OpenCode)
 
+ID         : TD-120
+Kategori   : BACKEND / FITUR
+Judul      : Tidak ada GET /wallets/me. Login hanya return user_id/
+             user_type. Customer app tidak tahu wallet_id → wallet
+             screens (SS5) pakai kDemoCustomerWalletId hardcoded →
+             403/404 di real device.
+Dampak     : Wallet cluster (TD-060) TIDAK FUNGSIONAL end-to-end.
+Solusi     : GET /api/v1/wallets/me (JWT) → auto-resolve wallet_id
+             by user_id + wallet_type. Alternatif: extend login
+             response dengan wallet_id.
+Prioritas  : KRITIS
+Status     : OPEN
+Referensi  : TD-060 SS5 (blocker OpenCode)
+
+ID         : TD-121
+Kategori   : TESTING
+Judul      : GET /wallets/me punya unit test (service 3 + handler 4)
+             tapi belum ada integration test (#integration via DB real).
+Dampak     : Query GetByUserIDAndType terhadap DB real belum ter-cover;
+             pola sama seperti modul lain (ride/wallet integration
+             existing) belum diikuti.
+Solusi     : internal/wallet/integration_test.go tambah 1 case
+             /wallets/me via real DB.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-120 (temuan OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 113 item (TD-051 di-reserve/skip)
-- KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 115 item (TD-051 di-reserve/skip)
+- KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114)
-- SEDANG  : 42 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118)
+- SEDANG  : 43 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121)
 - RENDAH  : 26 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119)
 
-STATUS: 28 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 84 item OPEN (25 item lama + 59 item baru dari SECTION F, TD-058 s/d TD-119).
+STATUS: 28 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 86 item OPEN (25 item lama + 61 item baru dari SECTION F, TD-058 s/d TD-121).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1430,11 +1457,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-22):
-   - Total hutang teridentifikasi      : 113 item (TD-051 di-reserve/skip; +61 dari SECTION F, TD-119).
+   - Total hutang teridentifikasi      : 115 item (TD-051 di-reserve/skip; +63 dari SECTION F, TD-121).
    - Sudah FIXED/CLOSED                : 28 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 84 item (25 item lama + 59 item baru,
-                                          TD-058 s/d TD-119).
+- ❌ OPEN                           : 86 item (25 item lama + 61 item baru,
+                                          TD-058 s/d TD-121).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -1592,6 +1619,12 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       duplikat header "2. RINGKASAN" pre-existing. Total register
       naik dari 111 → 113 item (KRITIS 7 / TINGGI 35 / SEDANG 42 /
       RENDAH 26; OPEN 84, FIXED 28, DEFERRED 1).
+    - TD-120 (2026-09-22): GET /wallets/me ditambahkan ke register
+      (BACKEND / FITUR, KRITIS). Blocker wallet cluster (TD-060):
+      customer app tidak tahu wallet_id → screens SS5 pakai
+      kDemoCustomerWalletId hardcoded → 403/404 di real device.
+      Total register naik dari 113 → 114 item (KRITIS 8 / TINGGI 35 /
+      SEDANG 42 / RENDAH 26; OPEN 85, FIXED 28, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

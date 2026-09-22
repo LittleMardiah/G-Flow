@@ -110,6 +110,14 @@ class _RideBookingScreenState extends ConsumerState<RideBookingScreen> {
         title: const Text('Book Ride'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.account_balance_wallet_outlined),
+            tooltip: 'Wallet',
+            onPressed: () => Navigator.pushNamed(
+              context,
+              AppRoutes.walletBalance,
+            ),
+          ),
+          IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Riwayat Perjalanan',
             onPressed: () => Navigator.pushNamed(context, AppRoutes.rideHistory),

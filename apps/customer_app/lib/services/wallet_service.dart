@@ -6,6 +6,7 @@ import 'api_client.dart';
 /// Layanan data wallet (PayPulse/F001) untuk customer_app.
 ///
 /// Endpoint (main.go:196-201, KODE = source of truth):
+/// - GET  /api/v1/wallets/me?type=CUSTOMER (TD-120, auto-resolve wallet_id)
 /// - GET  /api/v1/wallets/{wallet_id}/balance
 /// - GET  /api/v1/wallets/{wallet_id}/history?page=&page_size=&reference_type=
 /// - POST /api/v1/wallets/{wallet_id}/topup
@@ -14,6 +15,21 @@ class WalletService {
   const WalletService(this.apiClient);
 
   final ApiClient apiClient;
+
+  /// GET /api/v1/wallets/me — auto-resolve wallet milik user terautentikasi
+  /// (TD-120). Client TIDAK perlu tahu wallet_id. Query `type` default
+  /// CUSTOMER di backend. Response data: {wallet_id, balance, status,
+  /// wallet_type}. 404 jika user tidak punya wallet tipe tsb.
+  Future<Wallet> getMyWallet({String type = 'CUSTOMER'}) async {
+    final res = await apiClient.get('/api/v1/wallets/me?type=$type');
+    final data = res.data is Map<String, dynamic>
+        ? (res.data as Map)['data']
+        : null;
+    if (data is! Map<String, dynamic>) {
+      throw StateError('Respons tidak valid untuk wallet saya (type=$type)');
+    }
+    return Wallet.fromJson(data);
+  }
 
   /// GET /api/v1/wallets/{wallet_id}/balance — saldo wallet milik user.
   Future<Wallet> getBalance(String walletId) async {

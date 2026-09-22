@@ -31,6 +31,8 @@ import (
 // Wallet type constants.
 const (
 	WalletTypeCustomer          = "CUSTOMER"
+	WalletTypeDriver            = "DRIVER"
+	WalletTypeMerchant          = "MERCHANT"
 	WalletTypeSystemBankGateway = "SYSTEM_BANK_GATEWAY"
 	WalletTypeSystemPlatform    = "SYSTEM_PLATFORM"
 
@@ -118,6 +120,16 @@ type WalletHistory struct {
 	PageSize   int
 	Total      int
 	TotalPages int
+}
+
+// MyWallet hasil resolusi GET /wallets/me: profil wallet milik user
+// terautentikasi (TD-120). Field sesuai DESIGN: {wallet_id, balance,
+// status, wallet_type}.
+type MyWallet struct {
+	WalletID   uuid.UUID       `json:"wallet_id"`
+	Balance    decimal.Decimal `json:"balance"`
+	Status     string          `json:"status"`
+	WalletType string          `json:"wallet_type"`
 }
 
 // WalletRepo adalah kontrak repository yang dibutuhkan Service.
@@ -492,6 +504,24 @@ func (s *Service) GetBalance(ctx context.Context, userID, walletID uuid.UUID) (d
 		return decimal.Zero, ErrWalletNotOwned
 	}
 	return s.repo.GetBalance(ctx, walletID)
+}
+
+// GetMyWallet me-resolve wallet milik user terautentikasi berdasarkan
+// wallet_type (TD-120: GET /wallets/me) sehingga consumer mobile tidak
+// perlu tahu wallet_id. Flow: repo.GetByUserIDAndType(userID, walletType).
+// Error: ErrWalletNotFound (404) jika user tidak memiliki wallet dengan
+// tipe tsb.
+func (s *Service) GetMyWallet(ctx context.Context, userID uuid.UUID, walletType string) (*MyWallet, error) {
+	w, err := s.repo.GetByUserIDAndType(ctx, userID, walletType)
+	if err != nil {
+		return nil, err
+	}
+	return &MyWallet{
+		WalletID:   w.ID,
+		Balance:    w.Balance,
+		Status:     w.Status,
+		WalletType: w.Type,
+	}, nil
 }
 
 // GetWalletHistory mengembalikan riwayat ledger entries milik wallet user

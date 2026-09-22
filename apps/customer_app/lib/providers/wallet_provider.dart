@@ -98,6 +98,38 @@ final walletBalanceProvider =
   return notifier;
 });
 
+/// Notifier wallet milik user terautentikasi (TD-120: GET /wallets/me).
+/// Client tidak perlu tahu wallet_id.
+class MyWalletNotifier extends StateNotifier<WalletBalanceState> {
+  MyWalletNotifier(this._service, {this.walletType = 'CUSTOMER'})
+      : super(const WalletBalanceState());
+
+  final WalletService _service;
+  final String walletType;
+
+  Future<void> load() async {
+    state = const WalletBalanceState(isLoading: true);
+    try {
+      final wallet = await _service.getMyWallet(type: walletType);
+      state = WalletBalanceState(isLoading: false, wallet: wallet);
+    } catch (_) {
+      state = WalletBalanceState(
+        isLoading: false,
+        error: 'Gagal memuat saldo wallet. Pastikan server aktif.',
+      );
+    }
+  }
+}
+
+/// Provider auto-resolve wallet milik user (tanpa argumen). Load otomatis
+/// saat pertama di-watch.
+final myWalletProvider =
+    StateNotifierProvider<MyWalletNotifier, WalletBalanceState>((ref) {
+  final notifier = MyWalletNotifier(ref.watch(walletServiceProvider));
+  Future.microtask(notifier.load);
+  return notifier;
+});
+
 /// Argumen riwayat wallet: id wallet + filter reference_type opsional.
 class WalletHistoryArgs {
   const WalletHistoryArgs({required this.walletId, this.referenceType});

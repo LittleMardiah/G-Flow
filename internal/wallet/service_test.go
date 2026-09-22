@@ -166,6 +166,62 @@ func TestTopUpSuccess(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// ---- GetMyWallet (TD-120) ----
+
+func TestService_GetMyWallet_Success(t *testing.T) {
+	repo := new(mockRepo)
+	svc := NewService(repo, nil, nil, nil)
+
+	repo.On("GetByUserIDAndType", mock.Anything, testUserID, WalletTypeCustomer).
+		Return(newCustomerWallet(decimal.NewFromInt(150000)), nil)
+
+	got, err := svc.GetMyWallet(context.Background(), testUserID, WalletTypeCustomer)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.Equal(t, testWalletID, got.WalletID)
+	assert.Equal(t, WalletStatusActive, got.Status)
+	assert.Equal(t, WalletTypeCustomer, got.WalletType)
+	assert.Equal(t, "150000", got.Balance.String())
+	repo.AssertExpectations(t)
+}
+
+func TestService_GetMyWallet_NotFound(t *testing.T) {
+	repo := new(mockRepo)
+	svc := NewService(repo, nil, nil, nil)
+
+	repo.On("GetByUserIDAndType", mock.Anything, testUserID, WalletTypeCustomer).
+		Return(nil, ErrWalletNotFound)
+
+	got, err := svc.GetMyWallet(context.Background(), testUserID, WalletTypeCustomer)
+
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrWalletNotFound)
+	repo.AssertExpectations(t)
+}
+
+func TestService_GetMyWallet_DriverType(t *testing.T) {
+	repo := new(mockRepo)
+	svc := NewService(repo, nil, nil, nil)
+
+	driverWallet := &Wallet{
+		ID:      uuid.MustParse("77777777-7777-7777-7777-777777777777"),
+		UserID:  testUserID,
+		Type:    WalletTypeDriver,
+		Balance: decimal.NewFromInt(900000),
+		Status:  WalletStatusActive,
+	}
+	repo.On("GetByUserIDAndType", mock.Anything, testUserID, WalletTypeDriver).
+		Return(driverWallet, nil)
+
+	got, err := svc.GetMyWallet(context.Background(), testUserID, WalletTypeDriver)
+
+	assert.NoError(t, err)
+	assert.Equal(t, WalletTypeDriver, got.WalletType)
+	assert.Equal(t, "900000", got.Balance.String())
+	repo.AssertExpectations(t)
+}
+
 // ---- Test 2: TopUp idempotency duplicate (L2 COMPLETED cached) ----
 
 func TestTopUpIdempotencyDuplicate(t *testing.T) {

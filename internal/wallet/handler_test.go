@@ -44,6 +44,14 @@ func (m *mockWalletService) GetBalance(ctx context.Context, userID uuid.UUID, wa
 	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
+func (m *mockWalletService) GetMyWallet(ctx context.Context, userID uuid.UUID, walletType string) (*MyWallet, error) {
+	args := m.Called(ctx, userID, walletType)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*MyWallet), args.Error(1)
+}
+
 func (m *mockWalletService) GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error) {
 	args := m.Called(ctx, userID, walletID, referenceType, page, pageSize)
 	if args.Get(0) == nil {
@@ -353,6 +361,87 @@ func TestHandler_GetBalance_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, "WALLET_NOT_FOUND", errCode(t, decodeBody(t, w)))
 	svc.AssertExpectations(t)
+}
+
+// ---- GetMyWallet (TD-120) ----
+
+func TestHandler_GetMyWallet_Success(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetMyWallet", mock.Anything, testHU, WalletTypeCustomer).Return(&MyWallet{
+		WalletID:   testHW,
+		Balance:    decimal.NewFromInt(500000),
+		Status:     WalletStatusActive,
+		WalletType: WalletTypeCustomer,
+	}, nil)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/me?type=CUSTOMER", nil, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetMyWallet(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	m := decodeBody(t, w)
+	assert.Equal(t, true, m["success"])
+	data, ok := m["data"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, testHW.String(), data["wallet_id"])
+	assert.Equal(t, "ACTIVE", data["status"])
+	assert.Equal(t, "CUSTOMER", data["wallet_type"])
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetMyWallet_DefaultType(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	// Tanpa query ?type= -> handler default ke CUSTOMER.
+	svc.On("GetMyWallet", mock.Anything, testHU, WalletTypeCustomer).Return(&MyWallet{
+		WalletID:   testHW,
+		Balance:    decimal.Zero,
+		Status:     WalletStatusActive,
+		WalletType: WalletTypeCustomer,
+	}, nil)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/me", nil, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetMyWallet(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, true, decodeBody(t, w)["success"])
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetMyWallet_NotFound(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetMyWallet", mock.Anything, testHU, WalletTypeCustomer).Return(nil, ErrWalletNotFound)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/me?type=CUSTOMER", nil, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetMyWallet(c)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "WALLET_NOT_FOUND", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetMyWallet_Unauthorized(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/me?type=CUSTOMER", nil, "")
+	// user_id tidak diset -> 401, service tidak dipanggil.
+
+	h.GetMyWallet(c)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, "UNAUTHORIZED", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "GetMyWallet", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // ---- Webhook ----
