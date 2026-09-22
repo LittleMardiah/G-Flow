@@ -37,4 +37,19 @@ psql $DATABASE_URL -f migrations/009_fix_order_updated_at.up.sql
 # Migration 010
 psql $DATABASE_URL -f migrations/010_admin_lockouts.up.sql
 
+# Migration 011
+psql $DATABASE_URL -f migrations/011_add_performance_indexes.up.sql
+
+# Migration 012
+psql $DATABASE_URL -f migrations/012_add_overdue_debt_trigger.up.sql
+
+# Migration 013
+psql $DATABASE_URL -f migrations/013_fix_send_stop_status.up.sql
+
+# Migration 014
+psql $DATABASE_URL -f migrations/014_seed_admin.up.sql
+
+# Migration 015
+psql $DATABASE_URL -f migrations/015_seed_admin_e2e.up.sql
+
 echo "Migrations completed."

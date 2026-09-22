@@ -64,7 +64,7 @@ export default function LoginPage() {
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@gflow.app"
+                placeholder="admin@g-flow.local"
               />
             </div>
             <div>

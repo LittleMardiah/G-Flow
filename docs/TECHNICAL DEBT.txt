@@ -326,14 +326,16 @@ Kategori   : FITUR
 Judul      : Admin user seed TIDAK ADA di migrations. Enum user_type='admin'
              ada, tapi tidak ada INSERT → admin tidak bisa login.
 Prioritas  : TINGGI
-Status     : OPEN (rencana: STEP 1C)
+Status     : ✅ FIXED (2026-09-22, sync from code — migration 014_seed_admin.up.sql
+             seed admin@g-flow.local, user_type='admin')
 
 ID         : TD-025
 Kategori   : FITUR
 Judul      : Endpoint POST /api/v1/admin/login TIDAK ADA. Login admin pakai
              /auth/login generic (tanpa 2FA).
 Prioritas  : TINGGI
-Status     : OPEN (rencana: STEP 1D)
+Status     : ✅ FIXED (2026-09-22, sync from code — main.go:179
+             POST /api/v1/admin/login → adminHandler.AdminLogin)
 
 ID         : TD-026
 Kategori   : KODE
@@ -348,7 +350,8 @@ Kategori   : FITUR
 Judul      : Admin web (apps/admin_web) TIDAK punya login page / auth flow.
              Frontend api.ts tidak punya loginAdmin().
 Prioritas  : TINGGI
-Status     : OPEN (rencana: STEP 1F)
+Status     : ✅ FIXED (2026-09-22, sync from code — apps/admin_web/src/app/login/
+             page.tsx + loginAdmin() di lib/api.ts)
 
 ID         : TD-030
 Kategori   : SECURITY
@@ -1322,19 +1325,44 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-077 C2 (temuan OpenCode)
 
+ID         : TD-114
+Kategori   : SECURITY
+Judul      : Login lockout (password-failure) admin belum ada — AdminLogin
+             (internal/admin/handler.go:222) langsung validasi kredensial
+             tanpa lockout akun setelah Nx gagal password. Lockout existing
+             hanya di endpoint sensitif (reversal 2FA, handler.go:78-95).
+Dampak     : Brute-force password admin tidak dibatasi → risiko penyusupan
+             akun admin (OWASP A07:2021 — Identification and Authentication
+             Failures).
+Solusi     : Implementasi failed-attempt counter + lockout (mis. 5x → 15
+             menit), pola lockout.go for reversal, diterapkan di AdminLogin.
+Prioritas  : TINGGI
+Status     : OPEN
+
+ID         : TD-115
+Kategori   : KODE
+Judul      : refresh_token dikembalikan di response admin login (internal/
+             admin/handler.go:260) tapi belum ada endpoint /auth/refresh.
+Dampak     : Token refresh tidak bisa dipakai → access token yang expired
+             tidak bisa dirotasi; refresh_token jadi dead payload.
+Solusi     : Implement endpoint refresh (atau drop refresh_token dari
+             response) + wire frontend admin_web.
+Prioritas  : SEDANG
+Status     : OPEN
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 107 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 109 item (TD-051 di-reserve/skip)
 - KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
-- TINGGI  : 37 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106)
-- SEDANG  : 40 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113)
+- TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114)
+- SEDANG  : 41 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115)
 - RENDAH  : 23 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105)
 
-STATUS: 25 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 81 item OPEN (28 item lama + 53 item baru dari SECTION F, TD-058 s/d TD-113).
+STATUS: 28 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 80 item OPEN (25 item lama + 55 item baru dari SECTION F, TD-058 s/d TD-115).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1359,15 +1387,15 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-21):
-   - Total hutang teridentifikasi      : 107 item (TD-051 di-reserve/skip; +55 dari SECTION F, TD-113).
-   - Sudah FIXED/CLOSED                : 25 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044, TD-071, TD-104, TD-072).
+3. RINGKASAN STATUS TERKINI (2026-09-22):
+   - Total hutang teridentifikasi      : 109 item (TD-051 di-reserve/skip; +57 dari SECTION F, TD-115).
+   - Sudah FIXED/CLOSED                : 28 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 81 item (28 item lama + 53 item baru,
-                                          TD-058 s/d TD-113).
-   RINCIAN 28 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
-                                          TD-022 (language toggle UI), TD-024 s/d TD-027
-                                          (admin auth flow STEP 1C-1F), TD-030 (password
+- ❌ OPEN                           : 80 item (25 item lama + 55 item baru,
+                                          TD-058 s/d TD-115).
+   RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
+                                          TD-022 (language toggle UI), TD-026
+                                          (admin lockout refactor), TD-030 (password
                                           default admin), TD-031 (bcrypt hash di migration
                                           014), TD-032 s/d TD-034 (docker-compose infra),
                                           TD-035 s/d TD-037 (migration runner), TD-042
@@ -1497,6 +1525,13 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       rideDetailResponse, SEDANG). Total register naik dari 106 → 107
       item (KRITIS 7 / TINGGI 37 / SEDANG 40 / RENDAH 23; OPEN 81,
       FIXED 25, DEFERRED 1).
+    - TD-024/025/027 (2026-09-22): sync from code — admin seed (014),
+      /admin/login (main.go:179), login page (admin_web).
+      TD-024/025/027 ditandai FIXED (TINGGI 37→34, FIXED 25→28, OPEN
+      81→78). Menambahkan TD-114 (login lockout belum ada, SECURITY
+      TINGGI) & TD-115 (refresh_token tanpa /auth/refresh, KODE SEDANG).
+      Total register naik dari 107 → 109 item (KRITIS 7 / TINGGI 35 /
+      SEDANG 41 / RENDAH 23; OPEN 80, FIXED 28, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

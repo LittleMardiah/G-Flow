@@ -36,4 +36,19 @@ if errorlevel 1 exit /b 1
 psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\010_admin_lockouts.up.sql
 if errorlevel 1 exit /b 1
 
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\011_add_performance_indexes.up.sql
+if errorlevel 1 exit /b 1
+
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\012_add_overdue_debt_trigger.up.sql
+if errorlevel 1 exit /b 1
+
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\013_fix_send_stop_status.up.sql
+if errorlevel 1 exit /b 1
+
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\014_seed_admin.up.sql
+if errorlevel 1 exit /b 1
+
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\015_seed_admin_e2e.up.sql
+if errorlevel 1 exit /b 1
+
 echo Migrations completed.
