@@ -10,6 +10,7 @@ package ride
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -285,6 +286,51 @@ func scanOrderRow(row pgx.Row) (*RideOrder, error) {
 // Mengembalikan ErrOrderNotFound jika tidak ada.
 func (r *Repository) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*RideOrder, error) {
 	return scanOrderRow(r.db.QueryRow(ctx, `SELECT `+rideOrderColumns+` FROM ride_orders WHERE id = $1`, orderID))
+}
+
+// ListOrdersByCustomer mengambil riwayat order milik customer (pagination,
+// urut created_at DESC). Status opsional: jika non-empty, filter exact match
+// status. Dipakai GET /rides; di-serve oleh idx_ride_customer + idx_ride_created.
+func (r *Repository) ListOrdersByCustomer(ctx context.Context, customerID uuid.UUID, status string, limit, offset int) ([]RideOrder, error) {
+	query := `SELECT ` + rideOrderColumns + ` FROM ride_orders WHERE customer_id = $1`
+	args := []any{customerID}
+	if status != "" {
+		query += ` AND status = $2`
+		args = append(args, status)
+	}
+	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	orders := make([]RideOrder, 0)
+	for rows.Next() {
+		o, err := scanOrderRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, *o)
+	}
+	return orders, rows.Err()
+}
+
+// CountOrdersByCustomer menghitung total order milik customer (untuk
+// pagination meta). Status opsional, sama dengan ListOrdersByCustomer.
+func (r *Repository) CountOrdersByCustomer(ctx context.Context, customerID uuid.UUID, status string) (int, error) {
+	query := `SELECT COUNT(*) FROM ride_orders WHERE customer_id = $1`
+	args := []any{customerID}
+	if status != "" {
+		query += ` AND status = $2`
+		args = append(args, status)
+	}
+
+	var count int
+	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
+	return count, err
 }
 
 // LockOrderForUpdate mengambil + mengunci baris ride_orders dengan

@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +25,7 @@ type RideService interface {
 	AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID uuid.UUID) (*AcceptOrderResponse, error)
 	UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error)
 	GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error)
+	GetRidesHistory(ctx context.Context, customerID uuid.UUID, page, pageSize int, status string) ([]RideOrder, int, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -292,6 +295,89 @@ func (h *Handler) GetRide(c *gin.Context) {
 	})
 }
 
+// rideHistoryResponse memotong RideOrder ke field yang diekspos pada
+// GET /rides list history (API_CONTRACT 7.4). Kolom internal (wallet_id,
+// voucher_id, surge, base_fare, per_km_rate) tidak ditampilkan di list.
+type rideHistoryResponse struct {
+	OrderID        uuid.UUID        `json:"order_id"`
+	Status         string           `json:"status"`
+	PickupAddress  string           `json:"pickup_address"`
+	DropoffAddress string           `json:"dropoff_address"`
+	DistanceKm     decimal.Decimal  `json:"distance_km"`
+	EstimatedFare  decimal.Decimal  `json:"estimated_fare"`
+	ActualFare     *decimal.Decimal `json:"actual_fare"`
+	PaymentMethod  string           `json:"payment_method"`
+	CreatedAt      time.Time        `json:"created_at"`
+	CompletedAt    *time.Time       `json:"completed_at"`
+	SettledAt      *time.Time       `json:"settled_at"`
+}
+
+// GetRideHistory GET /api/v1/rides
+// Auth: customer (RBAC di route). Riwayat ride customer dengan pagination
+// (default page=1, page_size=20, maks 50), urut created_at DESC. Status
+// opsional untuk filter (exact match, case-insensitive).
+func (h *Handler) GetRideHistory(c *gin.Context) {
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page")
+		return
+	}
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page_size")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	status := strings.ToUpper(c.Query("status"))
+
+	orders, total, err := h.svc.GetRidesHistory(c.Request.Context(), userID, page, pageSize, status)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	list := make([]rideHistoryResponse, 0, len(orders))
+	for _, o := range orders {
+		list = append(list, rideHistoryResponse{
+			OrderID:        o.ID,
+			Status:         o.Status,
+			PickupAddress:  o.PickupAddress,
+			DropoffAddress: o.DropoffAddress,
+			DistanceKm:     o.DistanceKm,
+			EstimatedFare:  o.EstimatedFare,
+			ActualFare:     o.ActualFare,
+			PaymentMethod:  o.PaymentMethod,
+			CreatedAt:      o.CreatedAt,
+			CompletedAt:    o.CompletedAt,
+			SettledAt:      o.SettledAt,
+		})
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"orders": list,
+		},
+		"meta": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": totalPages,
+		},
+	})
+}
+
 // --- helpers ---
 
 // userIDFromContext mengambil user_id dari Gin context (diset oleh
@@ -345,7 +431,8 @@ func statusForError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrNotAllowed):
 		return http.StatusForbidden
-	case errors.Is(err, ErrInvalidStatus):
+	case errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrInvalidPagination):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
@@ -392,6 +479,8 @@ func codeForError(err error) string {
 	case errors.Is(err, ErrLockTimeout):
 		return "LOCK_TIMEOUT"
 	case errors.Is(err, ErrInvalidStatus):
+		return "INVALID_REQUEST"
+	case errors.Is(err, ErrInvalidPagination):
 		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidTransition):
 		return "INVALID_STATUS_TRANSITION"

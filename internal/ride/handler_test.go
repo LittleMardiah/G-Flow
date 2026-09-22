@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/g-flow/g-flow/internal/auth"
 )
 
 type mockRideService struct {
@@ -50,6 +53,14 @@ func (m *mockRideService) GetOrder(ctx context.Context, orderID uuid.UUID) (*Rid
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*RideOrder), args.Error(1)
+}
+
+func (m *mockRideService) GetRidesHistory(ctx context.Context, customerID uuid.UUID, page, pageSize int, status string) ([]RideOrder, int, error) {
+	args := m.Called(ctx, customerID, page, pageSize, status)
+	if args.Get(0) == nil {
+		return nil, args.Int(1), args.Error(2)
+	}
+	return args.Get(0).([]RideOrder), args.Int(1), args.Error(2)
 }
 
 func setupGin() (*gin.Engine, *gin.Context, *httptest.ResponseRecorder) {
@@ -396,6 +407,218 @@ func TestHandler_GetRide_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// svcHistoryOrder membangun RideOrder dengan field yang diekspos di list
+// history (GET /rides).
+func svcHistoryOrder(id uuid.UUID, status, payment string) *RideOrder {
+	completed := time.Now().Add(-time.Minute)
+	return &RideOrder{
+		ID:             id,
+		CustomerID:     svcCustomerID,
+		PickupAddress:  "Jl. Merdeka 1",
+		DropoffAddress: "Jl. Sudirman 88",
+		DistanceKm:     decimal.NewFromFloat(6.7),
+		EstimatedFare:  decimal.NewFromInt(36800),
+		PaymentMethod:  payment,
+		Status:         status,
+		CreatedAt:      time.Now().Add(-time.Hour),
+		CompletedAt:    &completed,
+	}
+}
+
+func TestHandler_GetRideHistory_Empty(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 1, 20, "").Return([]RideOrder{}, 0, nil)
+
+	h := NewHandler(svc)
+	h.GetRideHistory(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Orders []rideHistoryResponse `json:"orders"`
+		} `json:"data"`
+		Meta struct {
+			Page       int `json:"page"`
+			PageSize   int `json:"page_size"`
+			Total      int `json:"total"`
+			TotalPages int `json:"total_pages"`
+		} `json:"meta"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.True(t, out.Success)
+	assert.Empty(t, out.Data.Orders)
+	assert.Equal(t, 0, out.Meta.Total)
+	assert.Equal(t, 0, out.Meta.TotalPages)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRideHistory_SingleOrder(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	order := svcHistoryOrder(svcOrderID, statusSettled, PaymentMethodWallet)
+	svc := new(mockRideService)
+	svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 1, 20, "").Return([]RideOrder{*order}, 1, nil)
+
+	h := NewHandler(svc)
+	h.GetRideHistory(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Orders []rideHistoryResponse `json:"orders"`
+		} `json:"data"`
+		Meta struct {
+			Total      int `json:"total"`
+			TotalPages int `json:"total_pages"`
+		} `json:"meta"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.True(t, out.Success)
+	assert.Len(t, out.Data.Orders, 1)
+	assert.Equal(t, svcOrderID, out.Data.Orders[0].OrderID)
+	assert.Equal(t, statusSettled, out.Data.Orders[0].Status)
+	assert.Equal(t, "Jl. Merdeka 1", out.Data.Orders[0].PickupAddress)
+	assert.Equal(t, "Jl. Sudirman 88", out.Data.Orders[0].DropoffAddress)
+	assert.Equal(t, PaymentMethodWallet, out.Data.Orders[0].PaymentMethod)
+	assert.NotNil(t, out.Data.Orders[0].CompletedAt)
+	assert.Equal(t, 1, out.Meta.Total)
+	assert.Equal(t, 1, out.Meta.TotalPages)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRideHistory_Pagination(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?page=2&page_size=10", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	orders := []RideOrder{
+		*svcHistoryOrder(svcOrderID, statusSettled, PaymentMethodWallet),
+		*svcHistoryOrder(uuid.MustParse("77777777-7777-7777-7777-777777777777"), statusCompleted, PaymentMethodCash),
+	}
+	svc := new(mockRideService)
+	svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 2, 10, "").Return(orders, 47, nil)
+
+	h := NewHandler(svc)
+	h.GetRideHistory(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Orders []rideHistoryResponse `json:"orders"`
+		} `json:"data"`
+		Meta struct {
+			Page       int `json:"page"`
+			PageSize   int `json:"page_size"`
+			Total      int `json:"total"`
+			TotalPages int `json:"total_pages"`
+		} `json:"meta"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.True(t, out.Success)
+	assert.Len(t, out.Data.Orders, 2)
+	assert.Equal(t, 2, out.Meta.Page)
+	assert.Equal(t, 10, out.Meta.PageSize)
+	assert.Equal(t, 47, out.Meta.Total)
+	assert.Equal(t, 5, out.Meta.TotalPages)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRideHistory_FilterStatus(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?status=completed", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	order := svcHistoryOrder(svcOrderID, statusCompleted, PaymentMethodWallet)
+	svc := new(mockRideService)
+	svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 1, 20, "COMPLETED").Return([]RideOrder{*order}, 1, nil)
+
+	h := NewHandler(svc)
+	h.GetRideHistory(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Data struct {
+			Orders []rideHistoryResponse `json:"orders"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Len(t, out.Data.Orders, 1)
+	assert.Equal(t, statusCompleted, out.Data.Orders[0].Status)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetRideHistory_NonCustomer_Forbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/v1/rides",
+		func(c *gin.Context) {
+			c.Set("user_id", svcDriverID.String())
+			c.Set("user_type", "driver")
+			c.Next()
+		},
+		auth.RBACMiddleware("customer"),
+		func(c *gin.Context) { NewHandler(new(mockRideService)).GetRideHistory(c) },
+	)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rides", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestHandler_GetRideHistory_Unauthorized(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides", nil)
+
+	h := NewHandler(nil)
+	h.GetRideHistory(c)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandler_GetRideHistory_InvalidPage(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?page=abc", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	h := NewHandler(nil)
+	h.GetRideHistory(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_GetRideHistory_InvalidPageSize(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?page_size=abc", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	h := NewHandler(nil)
+	h.GetRideHistory(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_GetRideHistory_ServiceError(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?page=0", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 0, 20, "").Return(nil, 0, ErrInvalidPagination)
+
+	h := NewHandler(svc)
+	h.GetRideHistory(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	svc.AssertExpectations(t)
+}
+
 // ---- helper functions coverage ----
 
 func TestStatusForError(t *testing.T) {
@@ -422,6 +645,7 @@ func TestStatusForError(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, statusForError(ErrInvalidTransition))
 	assert.Equal(t, http.StatusForbidden, statusForError(ErrNotAllowed))
 	assert.Equal(t, http.StatusBadRequest, statusForError(ErrInvalidStatus))
+	assert.Equal(t, http.StatusBadRequest, statusForError(ErrInvalidPagination))
 	assert.Equal(t, http.StatusInternalServerError, statusForError(errors.New("other")))
 }
 
@@ -445,6 +669,7 @@ func TestCodeForError(t *testing.T) {
 	assert.Equal(t, "INSUFFICIENT_DRIVER_BALANCE", codeForError(ErrInsufficientDriverBalance))
 	assert.Equal(t, "LOCK_TIMEOUT", codeForError(ErrLockTimeout))
 	assert.Equal(t, "INVALID_REQUEST", codeForError(ErrInvalidStatus))
+	assert.Equal(t, "INVALID_REQUEST", codeForError(ErrInvalidPagination))
 	assert.Equal(t, "INVALID_STATUS_TRANSITION", codeForError(ErrInvalidTransition))
 	assert.Equal(t, "FORBIDDEN", codeForError(ErrNotAllowed))
 	assert.Equal(t, "INVALID_IDEMPOTENCY_KEY", codeForError(ErrIdempotencyKeyRequired))

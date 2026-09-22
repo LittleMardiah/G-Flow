@@ -1285,19 +1285,35 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-077 Step B (temuan OpenCode, pre-existing)
 
+ID         : TD-112
+Kategori   : KODE
+Judul      : Inconsistency pagination antar modul: Ride (TD-077 C1)
+             pakai strict validation (page<1 || pageSize<1 || >50 →
+             400 INVALID_REQUEST), Food pakai clamp (page<1→1,
+             pageSize>50→20) + 422 INVALID_PAGE_SIZE.
+Dampak     : API behavior beda antar modul. Mobile consumer harus
+             handle 2 skenario berbeda untuk error yang semantically
+             sama. R6 (konsistensi) violation.
+Solusi     : Pilih 1 pattern (strict 400 ATAU clamp+422) + apply
+             seragam ke food/ride/send. Update handler + service +
+             test.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-077 C1 (temuan OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 105 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 106 item (TD-051 di-reserve/skip)
 - KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
 - TINGGI  : 37 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106)
-- SEDANG  : 38 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111)
+- SEDANG  : 39 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112)
 - RENDAH  : 23 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105)
 
-STATUS: 24 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 80 item OPEN (28 item lama + 52 item baru dari SECTION F, TD-058 s/d TD-111).
+STATUS: 24 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 81 item OPEN (28 item lama + 53 item baru dari SECTION F, TD-058 s/d TD-112).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1323,11 +1339,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-21):
-   - Total hutang teridentifikasi      : 105 item (TD-051 di-reserve/skip; +53 dari SECTION F, TD-111).
+   - Total hutang teridentifikasi      : 106 item (TD-051 di-reserve/skip; +54 dari SECTION F, TD-112).
    - Sudah FIXED/CLOSED                : 24 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-041, TD-044, TD-071, TD-104).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 80 item (28 item lama + 52 item baru,
-                                          TD-058 s/d TD-111).
+- ❌ OPEN                           : 81 item (28 item lama + 53 item baru,
+                                          TD-058 s/d TD-112).
    RINCIAN 28 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-024 s/d TD-027
                                           (admin auth flow STEP 1C-1F), TD-030 (password
@@ -1447,6 +1463,12 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       TD-111 (earnings test infra gap, SEDANG). Total register naik
       dari 104 → 105 item (KRITIS 7 / TINGGI 37 / SEDANG 38 / RENDAH 23;
       OPEN 80, FIXED 24, DEFERRED 1).
+    - TD-077 C1 FOLLOW-UP (2026-09-22): Step C1 done — GET /rides list
+      (coverage 86.5%, 140 test PASS). Menambahkan TD-112 (pagination
+      inconsistency food vs ride, SEDANG). Rate-limiter gap TIDAK di-log
+      baru — sudah covered TD-083. Total register naik dari 105 → 106
+      item (KRITIS 7 / TINGGI 37 / SEDANG 39 / RENDAH 23; OPEN 81,
+      FIXED 24, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

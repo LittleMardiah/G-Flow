@@ -245,6 +245,67 @@ func TestRepository_GetOrderByID_NotFound(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+func TestRepository_ListOrdersByCustomer_NoStatus(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	o := repoOrder(statusSettled, &repoDriverID)
+	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+		WithArgs(repoCustID, 20, 0).
+		WillReturnRows(orderRowSet(o))
+
+	repo := NewRepository(mDB)
+	got, err := repo.ListOrdersByCustomer(context.Background(), repoCustID, "", 20, 0)
+	assert.NoError(t, err)
+	assert.Len(t, got, 1)
+	assert.Equal(t, repoOrderID, got[0].ID)
+	assert.Equal(t, statusSettled, got[0].Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepository_ListOrdersByCustomer_WithStatus(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	o := repoOrder(statusCompleted, &repoDriverID)
+	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+		WithArgs(repoCustID, "COMPLETED", 10, 10).
+		WillReturnRows(orderRowSet(o))
+
+	repo := NewRepository(mDB)
+	got, err := repo.ListOrdersByCustomer(context.Background(), repoCustID, "COMPLETED", 10, 10)
+	assert.NoError(t, err)
+	assert.Len(t, got, 1)
+	assert.Equal(t, statusCompleted, got[0].Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepository_CountOrdersByCustomer(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	mDB.ExpectQuery("SELECT COUNT").
+		WithArgs(repoCustID).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(47))
+
+	repo := NewRepository(mDB)
+	count, err := repo.CountOrdersByCustomer(context.Background(), repoCustID, "")
+	assert.NoError(t, err)
+	assert.Equal(t, 47, count)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepository_CountOrdersByCustomer_WithStatus(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	mDB.ExpectQuery("SELECT COUNT").
+		WithArgs(repoCustID, "COMPLETED").
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(2))
+
+	repo := NewRepository(mDB)
+	count, err := repo.CountOrdersByCustomer(context.Background(), repoCustID, "COMPLETED")
+	assert.NoError(t, err)
+	assert.Equal(t, 2, count)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 func TestRepository_LockOrderForUpdate(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)

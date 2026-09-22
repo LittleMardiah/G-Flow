@@ -50,6 +50,19 @@ func (m *mockRepo) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*RideOr
 	return args.Get(0).(*RideOrder), args.Error(1)
 }
 
+func (m *mockRepo) ListOrdersByCustomer(ctx context.Context, customerID uuid.UUID, status string, limit, offset int) ([]RideOrder, error) {
+	args := m.Called(ctx, customerID, status, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]RideOrder), args.Error(1)
+}
+
+func (m *mockRepo) CountOrdersByCustomer(ctx context.Context, customerID uuid.UUID, status string) (int, error) {
+	args := m.Called(ctx, customerID, status)
+	return args.Int(0), args.Error(1)
+}
+
 func (m *mockRepo) InsertOrder(ctx context.Context, q Querier, order *RideOrder) error {
 	args := m.Called(ctx, q, order)
 	return args.Error(0)
@@ -515,6 +528,119 @@ func TestGetOrder(t *testing.T) {
 	got, err := svc.GetOrder(context.Background(), svcOrderID)
 	assert.NoError(t, err)
 	assert.Equal(t, svcOrderID, got.ID)
+	repo.AssertExpectations(t)
+}
+
+// GetRidesHistory
+
+func TestGetRidesHistory_Success(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	orders := []RideOrder{
+		*svcHistoryOrder(svcOrderID, statusSettled, PaymentMethodWallet),
+		*svcHistoryOrder(uuid.MustParse("77777777-7777-7777-7777-777777777777"), statusCompleted, PaymentMethodCash),
+	}
+	repo.On("CountOrdersByCustomer", mock.Anything, svcCustomerID, "").Return(3, nil)
+	repo.On("ListOrdersByCustomer", mock.Anything, svcCustomerID, "", 20, 0).Return(orders, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, total, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 1, 20, "")
+	assert.NoError(t, err)
+	assert.Equal(t, 3, total)
+	assert.Len(t, got, 2)
+	assert.Equal(t, svcOrderID, got[0].ID)
+	repo.AssertExpectations(t)
+}
+
+func TestGetRidesHistory_PaginationOffset(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	repo.On("CountOrdersByCustomer", mock.Anything, svcCustomerID, "").Return(25, nil)
+	repo.On("ListOrdersByCustomer", mock.Anything, svcCustomerID, "", 10, 10).Return([]RideOrder{}, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, total, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 2, 10, "")
+	assert.NoError(t, err)
+	assert.Equal(t, 25, total)
+	assert.Empty(t, got)
+	repo.AssertExpectations(t)
+}
+
+func TestGetRidesHistory_StatusFilter(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	order := svcHistoryOrder(svcOrderID, statusCompleted, PaymentMethodWallet)
+	repo.On("CountOrdersByCustomer", mock.Anything, svcCustomerID, "COMPLETED").Return(1, nil)
+	repo.On("ListOrdersByCustomer", mock.Anything, svcCustomerID, "COMPLETED", 20, 0).Return([]RideOrder{*order}, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, total, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 1, 20, "COMPLETED")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, got, 1)
+	assert.Equal(t, statusCompleted, got[0].Status)
+	repo.AssertExpectations(t)
+}
+
+func TestGetRidesHistory_InvalidPage(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, _, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 0, 20, "")
+	assert.ErrorIs(t, err, ErrInvalidPagination)
+	repo.AssertNotCalled(t, "CountOrdersByCustomer", mock.Anything, mock.Anything, mock.Anything)
+	repo.AssertNotCalled(t, "ListOrdersByCustomer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestGetRidesHistory_InvalidPageSize(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, _, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 1, 0, "")
+	assert.ErrorIs(t, err, ErrInvalidPagination)
+	_, _, err = svc.GetRidesHistory(context.Background(), svcCustomerID, 1, 51, "")
+	assert.ErrorIs(t, err, ErrInvalidPagination)
+	repo.AssertNotCalled(t, "CountOrdersByCustomer", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestGetRidesHistory_CountError(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	repo.On("CountOrdersByCustomer", mock.Anything, svcCustomerID, "").Return(0, errors.New("conn refused"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, total, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 1, 20, "")
+	assert.ErrorContains(t, err, "conn refused")
+	assert.Nil(t, got)
+	assert.Equal(t, 0, total)
+	repo.AssertNotCalled(t, "ListOrdersByCustomer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestGetRidesHistory_ListError(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	repo.On("CountOrdersByCustomer", mock.Anything, svcCustomerID, "").Return(1, nil)
+	repo.On("ListOrdersByCustomer", mock.Anything, svcCustomerID, "", 20, 0).Return(nil, errors.New("conn refused"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, total, err := svc.GetRidesHistory(context.Background(), svcCustomerID, 1, 20, "")
+	assert.ErrorContains(t, err, "conn refused")
+	assert.Nil(t, got)
+	assert.Equal(t, 0, total)
 	repo.AssertExpectations(t)
 }
 

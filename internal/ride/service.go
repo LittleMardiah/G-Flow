@@ -126,6 +126,7 @@ var (
 	ErrInvalidStatus     = errors.New("invalid status value")
 	ErrInvalidTransition = errors.New("invalid status transition for current order state")
 	ErrNotAllowed        = errors.New("user is not allowed to update this order")
+	ErrInvalidPagination = errors.New("invalid page or page_size")
 )
 
 // BookRideRequest input untuk operasi booking ride.
@@ -179,6 +180,8 @@ type Repo interface {
 	GetCustomer(ctx context.Context, userID uuid.UUID) (*Customer, error)
 	GetWalletByUserAndType(ctx context.Context, userID uuid.UUID, walletType string) (*RideWallet, error)
 	GetOrderByID(ctx context.Context, orderID uuid.UUID) (*RideOrder, error)
+	ListOrdersByCustomer(ctx context.Context, customerID uuid.UUID, status string, limit, offset int) ([]RideOrder, error)
+	CountOrdersByCustomer(ctx context.Context, customerID uuid.UUID, status string) (int, error)
 	InsertOrder(ctx context.Context, q Querier, order *RideOrder) error
 	TransitionStatus(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, toStatus string) (bool, error)
 	InsertEvent(ctx context.Context, q Querier, event RideOrderEvent) error
@@ -392,6 +395,24 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 // GetOrder mengambil order lengkap berdasarkan id.
 func (s *Service) GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error) {
 	return s.repo.GetOrderByID(ctx, orderID)
+}
+
+// GetRidesHistory mengembalikan riwayat ride customer dengan pagination
+// (page mulai 1, page_size 1..50, default 20), urut created_at DESC, dan
+// filter status opsional (exact match, di-uppercase oleh handler).
+func (s *Service) GetRidesHistory(ctx context.Context, customerID uuid.UUID, page, pageSize int, status string) ([]RideOrder, int, error) {
+	if page < 1 || pageSize < 1 || pageSize > 50 {
+		return nil, 0, ErrInvalidPagination
+	}
+	total, err := s.repo.CountOrdersByCustomer(ctx, customerID, status)
+	if err != nil {
+		return nil, 0, err
+	}
+	orders, err := s.repo.ListOrdersByCustomer(ctx, customerID, status, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
 }
 
 // AcceptOrder menetapkan driver ke order yang sedang mencari driver

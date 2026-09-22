@@ -189,6 +189,9 @@ func main() {
 		api.POST("/rides/book", rideHandler.BookRide)
 		api.POST("/rides/:order_id/accept", rideHandler.AcceptOrder)
 		api.PATCH("/rides/:order_id/status", rideHandler.UpdateStatus)
+		// TD-077 C1: customer ride history — static route di-register sebelum
+		// /rides/:order_id (static > param; aman di Gin tree).
+		api.GET("/rides", auth.RBACMiddleware("customer"), rideHandler.GetRideHistory)
 		api.GET("/rides/:order_id", rideHandler.GetRide)
 		api.POST("/wallets/:wallet_id/topup", handler.TopUp)
 		api.POST("/wallets/:wallet_id/transfer", handler.Transfer)
