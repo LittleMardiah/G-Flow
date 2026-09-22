@@ -1359,19 +1359,52 @@ Prioritas  : RENDAH
 Status     : OPEN
 Referensi  : TD-058 SS1 (temuan OpenCode)
 
+ID         : TD-117
+Kategori   : PERFORMA
+Judul      : GetBalance (wallet service) tidak cache di Redis (spek F001).
+             langsung DB hit setiap request.
+Dampak     : Load DB naik di traffic tinggi. Low impact untuk MVP/localhost.
+Solusi     : Redis cache balance:{walletID} dengan TTL + invalidasi
+             post-commit di TopUp/Transfer/UpdateWalletStatus.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-059 SS3 (skip by user)
+
+ID         : TD-118
+Kategori   : ARSITEKTUR
+Judul      : Wallet idempotency pakai JSON body (idempotency_key),
+             ride/food pakai header X-Idempotency-Key. Inkonsistensi
+             antar modul (R6).
+Dampak     : Mobile & consumer baru harus tahu convention beda per
+             modul. TD-065 related.
+Solusi     : Unify ke header X-Idempotency-Key (backend wallet +
+             mobile). Kalau ubah, perlu backward-compat window.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-058 SS4 (override OpenCode)
+
+ID         : TD-119
+Kategori   : HYGIENE
+Judul      : TECHNICAL DEBT.txt punya duplikat header "2. RINGKASAN"
+             (baris ~1365, pre-existing).
+Solusi     : Hapus salah satu.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-058 SS4 (observasi OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 110 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 113 item (TD-051 di-reserve/skip)
 - KRITIS  : 7 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089)
 - TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114)
-- SEDANG  : 41 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115)
-- RENDAH  : 24 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116)
+- SEDANG  : 42 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118)
+- RENDAH  : 26 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119)
 
-STATUS: 28 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 81 item OPEN (25 item lama + 56 item baru dari SECTION F, TD-058 s/d TD-116).
+STATUS: 28 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 84 item OPEN (25 item lama + 59 item baru dari SECTION F, TD-058 s/d TD-119).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1397,11 +1430,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-22):
-   - Total hutang teridentifikasi      : 110 item (TD-051 di-reserve/skip; +58 dari SECTION F, TD-116).
+   - Total hutang teridentifikasi      : 113 item (TD-051 di-reserve/skip; +61 dari SECTION F, TD-119).
    - Sudah FIXED/CLOSED                : 28 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 81 item (25 item lama + 56 item baru,
-                                          TD-058 s/d TD-116).
+- ❌ OPEN                           : 84 item (25 item lama + 59 item baru,
+                                          TD-058 s/d TD-119).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -1546,6 +1579,19 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       Menambahkan TD-116 (HYGIENE, RENDAH, OPEN). Total register naik dari
       109 → 110 item (KRITIS 7 / TINGGI 35 / SEDANG 41 / RENDAH 24;
       OPEN 81, FIXED 28, DEFERRED 1).
+    - WALLET SS4 (2026-09-22): mobile data layer wallet dibuat di
+      customer_app (models/wallet.dart, services/wallet_service.dart,
+      providers/wallet_provider.dart). Menambahkan TD-117 (PERFORMA,
+      RENDAH, OPEN): GetBalance tidak cache di Redis (spek F001). Total
+      register naik dari 110 → 111 item (KRITIS 7 / TINGGI 35 /
+      SEDANG 41 / RENDAH 25; OPEN 82, FIXED 28, DEFERRED 1).
+    - SS4 FOLLOW-UP (2026-09-22): fix judul TD-117 (karakter CJK →
+      "langsung"). Menambahkan TD-118 (ARSITEKTUR, SEDANG,
+      OPEN): inkonsistensi idempotency wallet (JSON body) vs ride/food
+      (header X-Idempotency-Key); dan TD-119 (HYGIENE, RENDAH, OPEN):
+      duplikat header "2. RINGKASAN" pre-existing. Total register
+      naik dari 111 → 113 item (KRITIS 7 / TINGGI 35 / SEDANG 42 /
+      RENDAH 26; OPEN 84, FIXED 28, DEFERRED 1).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
