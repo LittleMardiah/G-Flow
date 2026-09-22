@@ -9,6 +9,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,6 +24,7 @@ type WalletService interface {
 	TopUp(ctx context.Context, req TopUpRequest) (*TopUpResponse, error)
 	Transfer(ctx context.Context, req TransferRequest) (*TransferResponse, error)
 	GetBalance(ctx context.Context, userID uuid.UUID, walletID uuid.UUID) (decimal.Decimal, error)
+	GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error)
 	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
 }
 
@@ -51,6 +55,43 @@ type transferRequestBody struct {
 type webhookRequestBody struct {
 	TransactionID uuid.UUID `json:"transaction_id"`
 	Status        string    `json:"status"`
+}
+
+// ledgerEntryResponse adalah bentuk JSON satu entry sesuai DESIGN TD-058
+// (align field API CONTRACT /ledger/audit, tanpa wallet_id karena konteksnya
+// sudah scoped ke satu wallet).
+type ledgerEntryResponse struct {
+	LedgerID      uuid.UUID       `json:"ledger_id"`
+	EntryType     string          `json:"entry_type"`
+	Amount        decimal.Decimal `json:"amount"`
+	BalanceAfter  decimal.Decimal `json:"balance_after"`
+	ReferenceType string          `json:"reference_type"`
+	ReferenceID   string          `json:"reference_id"`
+	Description   string          `json:"description"`
+	IsReversed    bool            `json:"is_reversed"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+// ledgerEntryToJSON memetakan LedgerEntry domain ke bentuk response.
+// reference_id yang nil (uuid.Nil setelah COALESCE di repository) diekspos
+// sebagai string kosong agar field tetap ada dan JSON-nya tidak bergantung
+// pada nilai kebetulan.
+func ledgerEntryToJSON(e LedgerEntry) ledgerEntryResponse {
+	refID := ""
+	if e.ReferenceID != uuid.Nil {
+		refID = e.ReferenceID.String()
+	}
+	return ledgerEntryResponse{
+		LedgerID:      e.ID,
+		EntryType:     e.EntryType,
+		Amount:        e.Amount,
+		BalanceAfter:  e.BalanceAfter,
+		ReferenceType: e.ReferenceType,
+		ReferenceID:   refID,
+		Description:   e.Description,
+		IsReversed:    e.IsReversed,
+		CreatedAt:     e.CreatedAt,
+	}
 }
 
 // --- endpoints ---
@@ -171,6 +212,69 @@ func (h *Handler) GetBalance(c *gin.Context) {
 	})
 }
 
+// GetWalletHistory GET /api/v1/wallets/:wallet_id/history
+// Query: ?reference_type=&page=1&page_size=20 (default page=1, page_size=20,
+// max 50). Sort created_at DESC. Pemilik wallet (JWT claim) wajib cocok.
+func (h *Handler) GetWalletHistory(c *gin.Context) {
+	walletID, err := uuid.Parse(c.Param("wallet_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_WALLET_ID", "invalid wallet_id")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	page, pageSize := 1, 20
+	if v := c.Query("page"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "page harus bilangan bulat >= 1")
+			return
+		}
+		page = n
+	}
+	if v := c.Query("page_size"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 50 {
+			writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "page_size harus bilangan bulat 1..50")
+			return
+		}
+		pageSize = n
+	}
+
+	resp, err := h.svc.GetWalletHistory(
+		c.Request.Context(), userID, walletID,
+		strings.TrimSpace(c.Query("reference_type")),
+		page, pageSize,
+	)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	entries := make([]ledgerEntryResponse, 0, len(resp.Entries))
+	for _, e := range resp.Entries {
+		entries = append(entries, ledgerEntryToJSON(e))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"entries": entries,
+		},
+		"meta": gin.H{
+			"page":        resp.Page,
+			"page_size":   resp.PageSize,
+			"total":       resp.Total,
+			"total_pages": resp.TotalPages,
+		},
+	})
+}
+
 // ProcessTopUpWebhook POST /webhooks/topup
 func (h *Handler) ProcessTopUpWebhook(c *gin.Context) {
 	var body webhookRequestBody
@@ -224,6 +328,8 @@ func statusForError(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrWalletNotOwned):
 		return http.StatusForbidden
+	case errors.Is(err, ErrInvalidPagination):
+		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}
@@ -248,6 +354,8 @@ func codeForError(err error) string {
 		return "WALLET_INACTIVE"
 	case errors.Is(err, ErrWalletNotOwned):
 		return "WALLET_NOT_OWNED"
+	case errors.Is(err, ErrInvalidPagination):
+		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidCachedResponse):
 		return "INTERNAL_ERROR"
 	default:

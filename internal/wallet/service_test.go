@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -46,6 +47,19 @@ func (m *mockRepo) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.
 func (m *mockRepo) GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error) {
 	args := m.Called(ctx, walletID)
 	return args.Get(0).(uuid.UUID), args.Error(1)
+}
+
+func (m *mockRepo) ListLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string, limit, offset int) ([]LedgerEntry, error) {
+	args := m.Called(ctx, walletID, refType, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]LedgerEntry), args.Error(1)
+}
+
+func (m *mockRepo) CountLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string) (int, error) {
+	args := m.Called(ctx, walletID, refType)
+	return args.Int(0), args.Error(1)
 }
 
 type mockLedger struct {
@@ -1086,4 +1100,199 @@ func TestService_redisSet(t *testing.T) {
 	assert.NoError(t, json.Unmarshal([]byte(got), &cached))
 	assert.Equal(t, redisCompleted, cached.State)
 	assert.JSONEq(t, `{"ok":true}`, string(cached.Response))
+}
+
+// ---- Test Service: GetWalletHistory ----
+
+// sampleLedgerEntries membuat 2 entry contoh milik wallet test.
+func sampleLedgerEntries() []LedgerEntry {
+	return []LedgerEntry{
+		{
+			ID:            uuid.MustParse("44444444-4444-4444-4444-444444444444"),
+			WalletID:      testWalletID,
+			EntryType:     EntryDebit,
+			Amount:        decimal.NewFromInt(50000),
+			BalanceAfter:  decimal.NewFromInt(150000),
+			ReferenceID:   uuid.MustParse("55555555-5555-5555-5555-555555555555"),
+			ReferenceType: "TRANSFER",
+			Description:   "TRANSFER - from wallet",
+			CreatedAt:     time.Now(),
+		},
+		{
+			ID:            uuid.MustParse("66666666-6666-6666-6666-666666666666"),
+			WalletID:      testWalletID,
+			EntryType:     EntryCredit,
+			Amount:        decimal.NewFromInt(100000),
+			BalanceAfter:  decimal.NewFromInt(200000),
+			ReferenceID:   uuid.MustParse("77777777-7777-7777-7777-777777777777"),
+			ReferenceType: "TOPUP",
+			Description:   "TOPUP - CREDIT CUSTOMER wallet",
+			CreatedAt:     time.Now(),
+		},
+	}
+}
+
+// TestService_GetWalletHistory_Success: owner cocok, count + list terpanggil,
+// total_pages dihitung benar (2 entries, page_size 20 -> 1 page).
+func TestService_GetWalletHistory_Success(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	entries := sampleLedgerEntries()
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(testUserID, nil)
+	repo.On("CountLedgerEntries", mock.Anything, testWalletID, "").Return(2, nil)
+	repo.On("ListLedgerEntries", mock.Anything, testWalletID, "", 20, 0).Return(entries, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 1, 20)
+
+	assert.NoError(t, err)
+	assert.Len(t, got.Entries, 2)
+	assert.Equal(t, 1, got.Page)
+	assert.Equal(t, 20, got.PageSize)
+	assert.Equal(t, 2, got.Total)
+	assert.Equal(t, 1, got.TotalPages)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetWalletHistory_NotOwned: wallet milik user lain -> 403.
+func TestService_GetWalletHistory_NotOwned(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	otherUser := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(otherUser, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 1, 20)
+
+	assert.ErrorIs(t, err, ErrWalletNotOwned)
+	assert.Nil(t, got)
+	repo.AssertNotCalled(t, "CountLedgerEntries", mock.Anything, mock.Anything, mock.Anything)
+	repo.AssertNotCalled(t, "ListLedgerEntries", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetWalletHistory_NotFound: wallet tidak ada -> ErrWalletNotFound.
+func TestService_GetWalletHistory_NotFound(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(uuid.Nil, ErrWalletNotFound)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 1, 20)
+
+	assert.ErrorIs(t, err, ErrWalletNotFound)
+	assert.Nil(t, got)
+	repo.AssertNotCalled(t, "CountLedgerEntries", mock.Anything, mock.Anything, mock.Anything)
+	repo.AssertNotCalled(t, "ListLedgerEntries", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetWalletHistory_Empty: wallet sah tapi belum ada transaksi.
+func TestService_GetWalletHistory_Empty(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(testUserID, nil)
+	repo.On("CountLedgerEntries", mock.Anything, testWalletID, "").Return(0, nil)
+	repo.On("ListLedgerEntries", mock.Anything, testWalletID, "", 20, 0).Return([]LedgerEntry{}, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 1, 20)
+
+	assert.NoError(t, err)
+	assert.Empty(t, got.Entries)
+	assert.Equal(t, 0, got.Total)
+	assert.Equal(t, 0, got.TotalPages)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetWalletHistory_FilterRefType: filter reference_type diteruskan
+// ke count & list.
+func TestService_GetWalletHistory_FilterRefType(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	entries := sampleLedgerEntries()
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(testUserID, nil)
+	repo.On("CountLedgerEntries", mock.Anything, testWalletID, "TOPUP").Return(1, nil)
+	repo.On("ListLedgerEntries", mock.Anything, testWalletID, "TOPUP", 10, 0).Return(entries[:1], nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "TOPUP", 1, 10)
+
+	assert.NoError(t, err)
+	assert.Len(t, got.Entries, 1)
+	assert.Equal(t, 1, got.Total)
+	assert.Equal(t, 1, got.TotalPages)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetWalletHistory_Pagination: page 2, page_size 5, total 12 ->
+// offset 5, total_pages 3.
+func TestService_GetWalletHistory_Pagination(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	entries := sampleLedgerEntries()
+	repo.On("GetWalletOwner", mock.Anything, testWalletID).Return(testUserID, nil)
+	repo.On("CountLedgerEntries", mock.Anything, testWalletID, "").Return(12, nil)
+	repo.On("ListLedgerEntries", mock.Anything, testWalletID, "", 5, 5).Return(entries, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 2, 5)
+
+	assert.NoError(t, err)
+	assert.Len(t, got.Entries, 2)
+	assert.Equal(t, 2, got.Page)
+	assert.Equal(t, 5, got.PageSize)
+	assert.Equal(t, 12, got.Total)
+	assert.Equal(t, 3, got.TotalPages)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_GetWalletHistory_InvalidPagination: page 0 / page_size 51 ->
+// ErrInvalidPagination tanpa menyentuh repo.
+func TestService_GetWalletHistory_InvalidPagination(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	svc := NewService(repo, lgr, nil, mDB)
+
+	got, err := svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 0, 20)
+	assert.ErrorIs(t, err, ErrInvalidPagination)
+	assert.Nil(t, got)
+
+	got, err = svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 1, 51)
+	assert.ErrorIs(t, err, ErrInvalidPagination)
+	assert.Nil(t, got)
+
+	got, err = svc.GetWalletHistory(context.Background(), testUserID, testWalletID, "", 1, 0)
+	assert.ErrorIs(t, err, ErrInvalidPagination)
+	assert.Nil(t, got)
+
+	repo.AssertNotCalled(t, "GetWalletOwner", mock.Anything, mock.Anything)
+	repo.AssertNotCalled(t, "CountLedgerEntries", mock.Anything, mock.Anything, mock.Anything)
+	repo.AssertNotCalled(t, "ListLedgerEntries", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }

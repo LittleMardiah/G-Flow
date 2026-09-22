@@ -196,6 +196,9 @@ func main() {
 		api.POST("/wallets/:wallet_id/topup", handler.TopUp)
 		api.POST("/wallets/:wallet_id/transfer", handler.Transfer)
 		api.GET("/wallets/:wallet_id/balance", handler.GetBalance)
+		// TD-058: wallet history — RBAC customer/driver/merchant (pemilik
+		// wallet, ownership divalidasi di Service).
+		api.GET("/wallets/:wallet_id/history", auth.RBACMiddleware("customer", "driver", "merchant"), handler.GetWalletHistory)
 		// Driver update lokasi: auth wajib + role driver.
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
 		// Driver available orders (TD-009): auth wajib + role driver.

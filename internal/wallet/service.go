@@ -58,6 +58,7 @@ var (
 	ErrSameWalletTransfer    = errors.New("from and to wallet cannot be the same")
 	ErrWalletNotOwned        = errors.New("wallet is not owned by the authenticated user")
 	ErrInvalidCachedResponse = errors.New("cached idempotency response is invalid")
+	ErrInvalidPagination     = errors.New("page must be >= 1 and page_size between 1 and 50")
 )
 
 // amount bounds dan limit KYC.
@@ -104,6 +105,15 @@ type TransferResponse struct {
 	ToBalance   decimal.Decimal `json:"to_balance"`
 }
 
+// WalletHistory hasil query riwayat ledger entries (pagination).
+type WalletHistory struct {
+	Entries    []LedgerEntry
+	Page       int
+	PageSize   int
+	Total      int
+	TotalPages int
+}
+
 // WalletRepo adalah kontrak repository yang dibutuhkan Service.
 // Dipenuhi oleh *Repository (internal/wallet/repository.go); dijadikan
 // interface agar mudah di-mock pada unit test.
@@ -112,6 +122,8 @@ type WalletRepo interface {
 	GetByID(ctx context.Context, walletID uuid.UUID) (*Wallet, error)
 	GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
 	GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error)
+	ListLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string, limit, offset int) ([]LedgerEntry, error)
+	CountLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string) (int, error)
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
@@ -473,6 +485,47 @@ func (s *Service) GetBalance(ctx context.Context, userID, walletID uuid.UUID) (d
 		return decimal.Zero, ErrWalletNotOwned
 	}
 	return s.repo.GetBalance(ctx, walletID)
+}
+
+// GetWalletHistory mengembalikan riwayat ledger entries milik wallet user
+// terautentikasi dengan pagination. Flow: validasi page/pageSize -> owner
+// check -> count -> list. Error: ErrWalletNotFound, ErrWalletNotOwned (403),
+// ErrInvalidPagination (400). Sort created_at DESC dilakukan di repository.
+func (s *Service) GetWalletHistory(ctx context.Context, userID, walletID uuid.UUID, refType string, page, pageSize int) (*WalletHistory, error) {
+	if page < 1 || pageSize < 1 || pageSize > 50 {
+		return nil, ErrInvalidPagination
+	}
+
+	owner, err := s.repo.GetWalletOwner(ctx, walletID)
+	if err != nil {
+		return nil, err
+	}
+	if owner != userID {
+		return nil, ErrWalletNotOwned
+	}
+
+	total, err := s.repo.CountLedgerEntries(ctx, walletID, refType)
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := s.repo.ListLedgerEntries(ctx, walletID, refType, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+
+	return &WalletHistory{
+		Entries:    entries,
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      total,
+		TotalPages: totalPages,
+	}, nil
 }
 
 // ---- helpers internal ----

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -41,6 +42,14 @@ func (m *mockWalletService) Transfer(ctx context.Context, req TransferRequest) (
 func (m *mockWalletService) GetBalance(ctx context.Context, userID uuid.UUID, walletID uuid.UUID) (decimal.Decimal, error) {
 	args := m.Called(ctx, userID, walletID)
 	return args.Get(0).(decimal.Decimal), args.Error(1)
+}
+
+func (m *mockWalletService) GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error) {
+	args := m.Called(ctx, userID, walletID, referenceType, page, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*WalletHistory), args.Error(1)
 }
 
 func (m *mockWalletService) ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error {
@@ -514,6 +523,7 @@ func TestHandler_codeForError(t *testing.T) {
 		{name: "idempotency in progress", err: ErrIdempotencyInProgress, want: "IDEMPOTENCY_IN_PROGRESS"},
 		{name: "wallet inactive", err: ErrWalletInactive, want: "WALLET_INACTIVE"},
 		{name: "wallet not owned", err: ErrWalletNotOwned, want: "WALLET_NOT_OWNED"},
+		{name: "invalid pagination", err: ErrInvalidPagination, want: "INVALID_REQUEST"},
 		{name: "invalid cached response", err: ErrInvalidCachedResponse, want: "INTERNAL_ERROR"},
 		{name: "unknown error", err: errors.New("boom"), want: "INTERNAL_SERVER_ERROR"},
 		{name: "nil error", err: nil, want: "INTERNAL_SERVER_ERROR"},
@@ -542,6 +552,7 @@ func TestHandler_statusForError(t *testing.T) {
 		{name: "idempotency", err: ErrIdempotencyInProgress, want: http.StatusConflict},
 		{name: "wallet inactive", err: ErrWalletInactive, want: http.StatusForbidden},
 		{name: "wallet not owned", err: ErrWalletNotOwned, want: http.StatusForbidden},
+		{name: "invalid pagination", err: ErrInvalidPagination, want: http.StatusBadRequest},
 		{name: "unknown", err: errors.New("boom"), want: http.StatusInternalServerError},
 	}
 
@@ -550,4 +561,184 @@ func TestHandler_statusForError(t *testing.T) {
 			assert.Equal(t, tt.want, statusForError(tt.err))
 		})
 	}
+}
+
+// ---- GetWalletHistory ----
+
+// sampleHistory membuat WalletHistory contoh dengan 2 entries.
+func sampleHistory() *WalletHistory {
+	return &WalletHistory{
+		Entries: []LedgerEntry{
+			{
+				ID:            uuid.MustParse("44444444-4444-4444-4444-444444444444"),
+				WalletID:      testHW,
+				EntryType:     EntryDebit,
+				Amount:        decimal.NewFromInt(50000),
+				BalanceAfter:  decimal.NewFromInt(150000),
+				ReferenceID:   uuid.MustParse("55555555-5555-5555-5555-555555555555"),
+				ReferenceType: "TRANSFER",
+				Description:   "TRANSFER - from wallet",
+				CreatedAt:     time.Date(2026, 8, 14, 10, 30, 0, 0, time.UTC),
+			},
+			{
+				ID:            uuid.MustParse("66666666-6666-6666-6666-666666666666"),
+				WalletID:      testHW,
+				EntryType:     EntryCredit,
+				Amount:        decimal.NewFromInt(100000),
+				BalanceAfter:  decimal.NewFromInt(200000),
+				ReferenceID:   uuid.Nil,
+				ReferenceType: "TOPUP",
+				Description:   "TOPUP - CREDIT CUSTOMER wallet",
+				CreatedAt:     time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC),
+			},
+		},
+		Page:       1,
+		PageSize:   20,
+		Total:      2,
+		TotalPages: 1,
+	}
+}
+
+func TestHandler_GetWalletHistory_Success(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetWalletHistory", mock.Anything, testHU, testHW, "TRANSFER", 1, 20).Return(sampleHistory(), nil)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/history?reference_type=TRANSFER&page=1&page_size=20",
+		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	m := decodeBody(t, w)
+	assert.Equal(t, true, m["success"])
+	meta, ok := m["meta"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.EqualValues(t, 1, meta["page"])
+	assert.EqualValues(t, 20, meta["page_size"])
+	assert.EqualValues(t, 2, meta["total"])
+	assert.EqualValues(t, 1, meta["total_pages"])
+
+	data, ok := m["data"].(map[string]interface{})
+	assert.True(t, ok)
+	entries, ok := data["entries"].([]interface{})
+	assert.True(t, ok)
+	assert.Len(t, entries, 2)
+
+	first, ok := entries[0].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, "44444444-4444-4444-4444-444444444444", first["ledger_id"])
+	assert.Equal(t, "DEBIT", first["entry_type"])
+	assert.Equal(t, "TRANSFER", first["reference_type"])
+	assert.Equal(t, "55555555-5555-5555-5555-555555555555", first["reference_id"])
+	assert.Equal(t, false, first["is_reversed"])
+
+	// reference_id nil -> string kosong, field tetap ada.
+	second, ok := entries[1].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, "", second["reference_id"])
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetWalletHistory_NotFound(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetWalletHistory", mock.Anything, testHU, testHW, "", 1, 20).Return(nil, ErrWalletNotFound)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/history",
+		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "WALLET_NOT_FOUND", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetWalletHistory_NotOwned(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetWalletHistory", mock.Anything, testHU, testHW, "", 1, 20).Return(nil, ErrWalletNotOwned)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/history",
+		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, "WALLET_NOT_OWNED", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetWalletHistory_InvalidPaginationFromService(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetWalletHistory", mock.Anything, testHU, testHW, "", 1, 20).Return(nil, ErrInvalidPagination)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/history",
+		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_GetWalletHistory_InvalidWalletID(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/not-a-uuid/history",
+		map[string]string{"wallet_id": "not-a-uuid"}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_WALLET_ID", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "GetWalletHistory", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestHandler_GetWalletHistory_Unauthorized(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/history",
+		map[string]string{"wallet_id": testHW.String()}, "")
+	// user_id tidak diset -> 401, service tidak dipanggil.
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, "UNAUTHORIZED", errCode(t, decodeBody(t, w)))
+	svc.AssertNotCalled(t, "GetWalletHistory", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestHandler_GetWalletHistory_BadQuery(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	tests := []string{
+		"/wallets/" + testHW.String() + "/history?page=abc",
+		"/wallets/" + testHW.String() + "/history?page_size=0",
+		"/wallets/" + testHW.String() + "/history?page_size=51",
+	}
+	for _, target := range tests {
+		c, w := newCtx(t, http.MethodGet, target, map[string]string{"wallet_id": testHW.String()}, "")
+		c.Set("user_id", testHU.String())
+		h.GetWalletHistory(c)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	}
+	svc.AssertNotCalled(t, "GetWalletHistory", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

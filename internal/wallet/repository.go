@@ -7,6 +7,7 @@ package wallet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -236,4 +237,75 @@ func (r *Repository) GetBalance(ctx context.Context, walletID uuid.UUID) (decima
 	}
 
 	return balance, nil
+}
+
+// ListLedgerEntries mengambil riwayat ledger entries milik wallet tertentu,
+// diurutkan created_at DESC (terbaru dulu). refType kosong berarti tanpa
+// filter reference_type. limit/offset untuk pagination. Query memakai kolom
+// yang ter-cover idx_ledger_wallet + idx_ledger_created. Kolom nullable
+// di-COALESCE agar hasil deterministic.
+func (r *Repository) ListLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string, limit, offset int) ([]LedgerEntry, error) {
+	query := `
+		SELECT id, wallet_id, entry_type, amount,
+		       COALESCE(balance_after, 0) AS balance_after,
+		       COALESCE(reference_type, '') AS reference_type,
+		       COALESCE(reference_id, '00000000-0000-0000-0000-000000000000') AS reference_id,
+		       COALESCE(description, '') AS description,
+		       is_reversed,
+		       COALESCE(created_at, NOW()) AS created_at
+		FROM ledger_entries
+		WHERE wallet_id = $1`
+	args := []any{walletID}
+	if refType != "" {
+		query += ` AND reference_type = $2`
+		args = append(args, refType)
+	}
+	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]LedgerEntry, 0)
+	for rows.Next() {
+		var e LedgerEntry
+		if err := rows.Scan(
+			&e.ID, &e.WalletID, &e.EntryType, &e.Amount, &e.BalanceAfter,
+			&e.ReferenceType, &e.ReferenceID, &e.Description,
+			&e.IsReversed, &e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// CountLedgerEntries menghitung total ledger entries milik wallet untuk
+// pagination. refType kosong berarti tanpa filter reference_type.
+func (r *Repository) CountLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM ledger_entries
+		WHERE wallet_id = $1`
+	args := []any{walletID}
+	if refType != "" {
+		query += ` AND reference_type = $2`
+		args = append(args, refType)
+	}
+
+	var total int
+	err := r.db.QueryRow(ctx, query, args...).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+
+	return total, nil
 }
