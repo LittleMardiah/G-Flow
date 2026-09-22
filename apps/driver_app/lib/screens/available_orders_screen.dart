@@ -87,7 +87,7 @@ class _AvailableOrdersScreenState extends ConsumerState<AvailableOrdersScreen> {
         title: const Text('Pesanan Tersedia'),
         actions: [
           if (state.orders.any((o) => o.isMock))
-            const DemoBadge(tooltip: 'Mode demo: endpoint GET /rides/available, /food-orders/available, /send-orders/available belum ada di backend.'),
+            const DemoBadge(tooltip: 'Mode demo: endpoint GET /drivers/available-orders belum ada di backend.'),
         ],
       ),
       body: Column(

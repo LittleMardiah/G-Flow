@@ -1,75 +1,85 @@
 import 'package:dio/dio.dart';
 
+import '../config/constants.dart';
 import '../models/driver_order.dart';
 import 'api_client.dart';
 
-/// Fallback DEMO untuk fetching order bila endpoint listing belum ada di
-/// backend (GET /rides/available, /food-orders/available,
-/// /send-orders/available, /drivers/{id}/available-orders & GET /rides/{id}
-/// belum diimplementasikan — catatan BLUEPRINT). Dataset mock ber-label
-/// isMock=true dan UI menampilkan badge DEMO (konvensi customer_app).
+/// Fallback DEMO bila endpoint listing tidak tersedia atau mode demo aktif.
+/// Endpoint real: GET /drivers/available-orders (TD-009, unified) &
+/// GET /drivers/orders (TD-077 A2). Dataset mock ber-label isMock=true dan
+/// UI menampilkan badge DEMO (konvensi customer_app).
 const bool kUseMockAvailableOrders = false;
+
+/// Hasil GET /drivers/available-orders (TD-009): daftar order tersedia
+/// (ride/food/send) dalam radius driver + status kapasitas driver.
+class AvailableOrdersResult {
+  const AvailableOrdersResult({
+    required this.orders,
+    this.capacityAvailable = false,
+    this.activeOrders = 0,
+    this.maxActiveOrders = kMaxActiveOrders,
+    this.radiusKm = 5,
+  });
+
+  final List<DriverOrder> orders;
+  final bool capacityAvailable;
+  final int activeOrders;
+  final int maxActiveOrders;
+  final double radiusKm;
+}
 
 class OrderService {
   const OrderService(this.apiClient);
 
   final ApiClient apiClient;
 
-  /// GET /rides/available — order ride yang sedang SEARCHING_DRIVER.
-  Future<List<DriverOrder>> fetchAvailableRides() async {
-    if (kUseMockAvailableOrders) return _mockRideOrders();
-    final res = await apiClient.get('/api/v1/rides/available');
-    return unwrapList(res.data)
-        .whereType<Map>()
-        .map((e) => DriverOrder.fromRideJson(e.cast<String, dynamic>()))
-        .toList();
-  }
-
-  /// GET /food-orders/available — order food siap diambil driver.
-  Future<List<DriverOrder>> fetchAvailableFoodOrders() async {
-    if (kUseMockAvailableOrders) return _mockFoodOrders();
-    final res = await apiClient.get('/api/v1/food-orders/available');
-    return unwrapList(res.data)
-        .whereType<Map>()
-        .map((e) => DriverOrder.fromFoodJson(e.cast<String, dynamic>()))
-        .toList();
-  }
-
-  /// GET /send-orders/available — order send yang SEARCHING_DRIVER.
-  Future<List<DriverOrder>> fetchAvailableSendOrders() async {
-    if (kUseMockAvailableOrders) return _mockSendOrders();
-    final res = await apiClient.get('/api/v1/send-orders/available');
-    return unwrapList(res.data)
-        .whereType<Map>()
-        .map((e) => DriverOrder.fromSendJson(e.cast<String, dynamic>()))
-        .toList();
-  }
-
-  /// Semua order available: ride + food + send (dashboard & list screen).
-  Future<List<DriverOrder>> fetchAvailableOrders() async {
-    final results = await Future.wait([
-      fetchAvailableRides(),
-      fetchAvailableFoodOrders(),
-      fetchAvailableSendOrders(),
-    ]);
-    return results.expand((e) => e).toList()
+  /// GET /drivers/available-orders — semua order tersedia (ride + food + send)
+  /// dalam radius driver + status kapasitas. Satu panggilan unified (TD-009)
+  /// menggantikan 3 endpoint per-tipe yang tidak ada di backend.
+  Future<AvailableOrdersResult> fetchAvailableOrders() async {
+    if (kUseMockAvailableOrders) return _mockAvailableOrders();
+    final res = await apiClient.get('/api/v1/drivers/available-orders');
+    final data = unwrapData(res.data) ?? const <String, dynamic>{};
+    final orders = _ordersFromData(data)
       ..sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+    return AvailableOrdersResult(
+      orders: orders,
+      capacityAvailable: data['capacity_available'] == true,
+      activeOrders: data['active_orders'] is int
+          ? data['active_orders'] as int
+          : orders.length,
+      maxActiveOrders: data['max_active_orders'] is int
+          ? data['max_active_orders'] as int
+          : kMaxActiveOrders,
+      radiusKm: data['radius_km'] is num
+          ? (data['radius_km'] as num).toDouble()
+          : 5,
+    );
   }
 
-  /// GET /drivers/{driver_id}/available-orders — order aktif milik driver
-  /// (mengembalikan order assigned + in-progress). Endpoint ini juga belum
-  /// ada di backend → fallback mock.
-  Future<List<DriverOrder>> fetchActiveOrders(String driverId) async {
-    if (kUseMockAvailableOrders) return _mockActiveOrders(driverId);
-    final res = await apiClient.get('/api/v1/drivers/$driverId/available-orders');
+  /// GET /drivers/orders — daftar order aktif milik driver (ride/food/send).
+  /// Identitas driver diambil dari JWT claim `user_id` di backend.
+  Future<List<DriverOrder>> fetchActiveOrders() async {
+    if (kUseMockAvailableOrders) return _mockActiveOrders('demo-driver');
+    final res = await apiClient.get('/api/v1/drivers/orders');
     return unwrapList(res.data)
         .whereType<Map>()
         .map((e) => DriverOrder.fromJson(e.cast<String, dynamic>()))
         .toList();
   }
 
-  /// GET /rides/{order_id} — detail ride. Backend belum punya route GET ini;
-  /// fallback ke mock agar screen detail tetap bisa ditampilkan.
+  /// Konversi field `orders` pada bentuk seragam AvailableOrder ke model.
+  static List<DriverOrder> _ordersFromData(Map<String, dynamic> data) {
+    final list = data['orders'];
+    if (list is! List) return const <DriverOrder>[];
+    return list
+        .whereType<Map>()
+        .map((e) => DriverOrder.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// GET /rides/{order_id} — detail ride (TD-077 A1). Fallback mock bila
+  /// order tidak ditemukan atau koneksi gagal (isMock=true).
   Future<DriverOrder> fetchRideDetail(String orderId) async {
     try {
       final res = await apiClient.get('/api/v1/rides/$orderId');
@@ -185,6 +195,21 @@ class OrderService {
 
   static const double _baseLat = -6.2088;
   static const double _baseLng = 106.8456;
+
+  AvailableOrdersResult _mockAvailableOrders() {
+    final orders = [
+      ..._mockRideOrders(),
+      ..._mockFoodOrders(),
+      ..._mockSendOrders(),
+    ]..sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+    return AvailableOrdersResult(
+      orders: orders,
+      capacityAvailable: true,
+      activeOrders: 0,
+      maxActiveOrders: kMaxActiveOrders,
+      radiusKm: 5,
+    );
+  }
 
   List<DriverOrder> _mockRideOrders() {
     return [

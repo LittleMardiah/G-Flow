@@ -1,3 +1,4 @@
+import 'package:driver_app/config/constants.dart';
 import 'package:driver_app/models/driver_order.dart';
 import 'package:driver_app/services/api_client.dart';
 import 'package:driver_app/services/order_service.dart';
@@ -22,10 +23,18 @@ class FakeOrderService extends OrderService {
   bool failAccept = false;
 
   @override
-  Future<List<DriverOrder>> fetchAvailableOrders() async => availableOrders;
+  Future<AvailableOrdersResult> fetchAvailableOrders() async {
+    return AvailableOrdersResult(
+      orders: availableOrders,
+      capacityAvailable: availableOrders.length < kMaxActiveOrders,
+      activeOrders: activeOrders.length,
+      maxActiveOrders: kMaxActiveOrders,
+      radiusKm: 5,
+    );
+  }
 
   @override
-  Future<List<DriverOrder>> fetchActiveOrders(String driverId) async => activeOrders;
+  Future<List<DriverOrder>> fetchActiveOrders() async => activeOrders;
 
   @override
   Future<Map<String, dynamic>> acceptRide(String orderId) async {

@@ -15,8 +15,24 @@ class _FakeOrderService extends OrderService {
   final List<String> acceptedFoods = [];
   final List<String> rideStatuses = [];
   final List<String> stoppedStops = [];
+  List<DriverOrder> availableOrders = [_ride('a-1')];
+  List<DriverOrder> activeOrders = [_ride('ax-1', status: 'TRIP_STARTED')];
   bool failAccept = false;
   bool failUpdate = false;
+
+  @override
+  Future<AvailableOrdersResult> fetchAvailableOrders() async {
+    return AvailableOrdersResult(
+      orders: availableOrders,
+      capacityAvailable: true,
+      activeOrders: activeOrders.length,
+      maxActiveOrders: kMaxActiveOrders,
+      radiusKm: 5,
+    );
+  }
+
+  @override
+  Future<List<DriverOrder>> fetchActiveOrders() async => activeOrders;
 
   @override
   Future<Map<String, dynamic>> acceptRide(String orderId) async {

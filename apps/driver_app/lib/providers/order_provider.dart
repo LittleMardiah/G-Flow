@@ -12,21 +12,33 @@ class OrdersListState {
     this.isLoading = false,
     this.error,
     this.message,
+    this.capacityAvailable = false,
+    this.activeOrders = 0,
+    this.maxActiveOrders = kMaxActiveOrders,
+    this.radiusKm = 5,
   });
 
   final List<DriverOrder> orders;
   final bool isLoading;
   final String? error;
   final String? message;
+  final bool capacityAvailable;
+  final int activeOrders;
+  final int maxActiveOrders;
+  final double radiusKm;
 
   int get activeCount => orders.length;
-  bool get isAtCapacity => activeCount >= kMaxActiveOrders;
+  bool get isAtCapacity => activeCount >= maxActiveOrders;
 
   OrdersListState copyWith({
     List<DriverOrder>? orders,
     bool? isLoading,
     String? error,
     String? message,
+    bool? capacityAvailable,
+    int? activeOrders,
+    int? maxActiveOrders,
+    double? radiusKm,
     bool clearMessage = false,
     bool clearError = false,
   }) {
@@ -35,6 +47,10 @@ class OrdersListState {
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
       message: clearMessage ? null : (message ?? this.message),
+      capacityAvailable: capacityAvailable ?? this.capacityAvailable,
+      activeOrders: activeOrders ?? this.activeOrders,
+      maxActiveOrders: maxActiveOrders ?? this.maxActiveOrders,
+      radiusKm: radiusKm ?? this.radiusKm,
     );
   }
 }
@@ -52,8 +68,14 @@ class AvailableOrdersNotifier extends StateNotifier<OrdersListState> {
   Future<void> fetch() async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final orders = await service.fetchAvailableOrders();
-      state = OrdersListState(orders: orders);
+      final result = await service.fetchAvailableOrders();
+      state = OrdersListState(
+        orders: result.orders,
+        capacityAvailable: result.capacityAvailable,
+        activeOrders: result.activeOrders,
+        maxActiveOrders: result.maxActiveOrders,
+        radiusKm: result.radiusKm,
+      );
     } catch (e) {
       state = state.copyWith(isLoading: false, error: '$e', clearError: false);
     }
@@ -85,7 +107,7 @@ class ActiveOrdersNotifier extends StateNotifier<OrdersListState> {
         state = OrdersListState(orders: const []);
         return;
       }
-      final orders = await service.fetchActiveOrders(driverId);
+      final orders = await service.fetchActiveOrders();
       state = OrdersListState(orders: orders);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: '$e', clearError: false);
