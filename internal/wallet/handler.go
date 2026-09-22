@@ -26,6 +26,7 @@ type WalletService interface {
 	GetBalance(ctx context.Context, userID uuid.UUID, walletID uuid.UUID) (decimal.Decimal, error)
 	GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error)
 	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
+	UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, adminID uuid.UUID, newStatus string, reason string) (*UpdateWalletStatusResult, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -55,6 +56,11 @@ type transferRequestBody struct {
 type webhookRequestBody struct {
 	TransactionID uuid.UUID `json:"transaction_id"`
 	Status        string    `json:"status"`
+}
+
+type updateWalletStatusRequestBody struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
 }
 
 // ledgerEntryResponse adalah bentuk JSON satu entry sesuai DESIGN TD-058
@@ -275,6 +281,47 @@ func (h *Handler) GetWalletHistory(c *gin.Context) {
 	})
 }
 
+// UpdateWalletStatus PATCH /api/v1/wallets/:wallet_id/status
+// Khusus role admin (RBAC). Body: {status, reason}. Status non-ACTIVE wajib
+// reason. admin_id dari JWT claim.
+func (h *Handler) UpdateWalletStatus(c *gin.Context) {
+	walletID, err := uuid.Parse(c.Param("wallet_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_WALLET_ID", "invalid wallet_id")
+		return
+	}
+
+	adminID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	var body updateWalletStatusRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+
+	resp, err := h.svc.UpdateWalletStatus(
+		c.Request.Context(), walletID, adminID,
+		strings.TrimSpace(body.Status), strings.TrimSpace(body.Reason),
+	)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"wallet_id":  resp.WalletID,
+			"status":     resp.Status,
+			"updated_at": resp.UpdatedAt,
+		},
+	})
+}
+
 // ProcessTopUpWebhook POST /webhooks/topup
 func (h *Handler) ProcessTopUpWebhook(c *gin.Context) {
 	var body webhookRequestBody
@@ -328,7 +375,9 @@ func statusForError(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrWalletNotOwned):
 		return http.StatusForbidden
-	case errors.Is(err, ErrInvalidPagination):
+	case errors.Is(err, ErrInvalidPagination),
+		errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrReasonRequired):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
@@ -354,7 +403,9 @@ func codeForError(err error) string {
 		return "WALLET_INACTIVE"
 	case errors.Is(err, ErrWalletNotOwned):
 		return "WALLET_NOT_OWNED"
-	case errors.Is(err, ErrInvalidPagination):
+	case errors.Is(err, ErrInvalidPagination),
+		errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrReasonRequired):
 		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidCachedResponse):
 		return "INTERNAL_ERROR"

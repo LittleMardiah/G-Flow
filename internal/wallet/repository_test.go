@@ -84,6 +84,42 @@ func TestRepository_UpdateStatus_Success(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// TestRepository_UpdateWalletStatus_Success: 1 baris ter-update -> kembalikan
+// updated_at terbaru.
+func TestRepository_UpdateWalletStatus_Success(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	now := time.Now()
+	mDB.ExpectQuery("UPDATE wallets").
+		WithArgs(WalletStatusSuspended, testWalletID).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(now))
+
+	repo := NewRepository(mDB)
+	updatedAt, err := repo.UpdateWalletStatus(context.Background(), testWalletID, WalletStatusSuspended)
+
+	assert.NoError(t, err)
+	assert.Equal(t, now, updatedAt)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepository_UpdateWalletStatus_NotFound: pgx.ErrNoRows -> ErrWalletNotFound.
+func TestRepository_UpdateWalletStatus_NotFound(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	mDB.ExpectQuery("UPDATE wallets").
+		WithArgs(WalletStatusSuspended, testWalletID).
+		WillReturnError(pgx.ErrNoRows)
+
+	repo := NewRepository(mDB)
+	updatedAt, err := repo.UpdateWalletStatus(context.Background(), testWalletID, WalletStatusSuspended)
+
+	assert.ErrorIs(t, err, ErrWalletNotFound)
+	assert.True(t, updatedAt.IsZero())
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 // TestRepository_UpdateBalance_NotFound: 0 baris ter-update -> ErrWalletNotFound.
 func TestRepository_UpdateBalance_NotFound(t *testing.T) {
 	mDB, err := pgxmock.NewPool()

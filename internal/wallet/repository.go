@@ -197,6 +197,29 @@ func (r *Repository) UpdateStatus(ctx context.Context, walletID uuid.UUID, statu
 	return nil
 }
 
+// UpdateWalletStatus mengubah status wallet dan mengembalikan updated_at
+// terbaru. Mengembalikan ErrWalletNotFound jika wallet tidak ditemukan
+// (0 baris). Dipakai admin update status wallet (TD-059).
+func (r *Repository) UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, newStatus string) (time.Time, error) {
+	query := `
+		UPDATE wallets
+		SET status = $1, updated_at = NOW()
+		WHERE id = $2
+		RETURNING updated_at
+	`
+
+	var updatedAt time.Time
+	err := r.db.QueryRow(ctx, query, newStatus, walletID).Scan(&updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, ErrWalletNotFound
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return updatedAt, nil
+}
+
 // UpdateBalance menambah/mengurangi saldo wallet secara atomik.
 // amount positif = CREDIT, negatif = DEBIT. Mengembalikan
 // ErrWalletNotFound jika wallet tidak ditemukan (0 baris).

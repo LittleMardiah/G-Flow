@@ -57,6 +57,14 @@ func (m *mockWalletService) ProcessTopUpWebhook(ctx context.Context, txnID uuid.
 	return args.Error(0)
 }
 
+func (m *mockWalletService) UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, adminID uuid.UUID, newStatus string, reason string) (*UpdateWalletStatusResult, error) {
+	args := m.Called(ctx, walletID, adminID, newStatus, reason)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*UpdateWalletStatusResult), args.Error(1)
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }
@@ -509,6 +517,95 @@ func TestHandler_Webhook_Error(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// ---- UpdateWalletStatus ----
+
+func TestHandler_UpdateWalletStatus_Success(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	updatedAt := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	svc.On("UpdateWalletStatus", mock.Anything, testHW, testHU, "SUSPENDED", "fraud investigation").
+		Return(&UpdateWalletStatusResult{
+			WalletID:  testHW,
+			Status:    "SUSPENDED",
+			UpdatedAt: updatedAt,
+		}, nil)
+
+	c, w := newCtx(t, http.MethodPatch, "/wallets/"+testHW.String()+"/status",
+		map[string]string{"wallet_id": testHW.String()},
+		`{"status":"SUSPENDED","reason":"fraud investigation"}`)
+	c.Set("user_id", testHU.String())
+
+	h.UpdateWalletStatus(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	m := decodeBody(t, w)
+	assert.Equal(t, true, m["success"])
+	data, ok := m["data"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, testHW.String(), data["wallet_id"])
+	assert.Equal(t, "SUSPENDED", data["status"])
+	assert.Equal(t, updatedAt.Format(time.RFC3339Nano), data["updated_at"])
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_UpdateWalletStatus_InvalidStatus(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("UpdateWalletStatus", mock.Anything, testHW, testHU, "BLOCKED", "x").
+		Return(nil, ErrInvalidStatus)
+
+	c, w := newCtx(t, http.MethodPatch, "/wallets/"+testHW.String()+"/status",
+		map[string]string{"wallet_id": testHW.String()},
+		`{"status":"BLOCKED","reason":"x"}`)
+	c.Set("user_id", testHU.String())
+
+	h.UpdateWalletStatus(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_UpdateWalletStatus_ReasonRequired(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("UpdateWalletStatus", mock.Anything, testHW, testHU, "FROZEN", "").
+		Return(nil, ErrReasonRequired)
+
+	c, w := newCtx(t, http.MethodPatch, "/wallets/"+testHW.String()+"/status",
+		map[string]string{"wallet_id": testHW.String()},
+		`{"status":"FROZEN"}`)
+	c.Set("user_id", testHU.String())
+
+	h.UpdateWalletStatus(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_UpdateWalletStatus_NotFound(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("UpdateWalletStatus", mock.Anything, testHW, testHU, "SUSPENDED", "wallet tidak ada").
+		Return(nil, ErrWalletNotFound)
+
+	c, w := newCtx(t, http.MethodPatch, "/wallets/"+testHW.String()+"/status",
+		map[string]string{"wallet_id": testHW.String()},
+		`{"status":"SUSPENDED","reason":"wallet tidak ada"}`)
+	c.Set("user_id", testHU.String())
+
+	h.UpdateWalletStatus(c)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, "WALLET_NOT_FOUND", errCode(t, decodeBody(t, w)))
+	svc.AssertExpectations(t)
+}
+
 func TestHandler_codeForError(t *testing.T) {
 	tests := []struct {
 		name string
@@ -524,6 +621,8 @@ func TestHandler_codeForError(t *testing.T) {
 		{name: "wallet inactive", err: ErrWalletInactive, want: "WALLET_INACTIVE"},
 		{name: "wallet not owned", err: ErrWalletNotOwned, want: "WALLET_NOT_OWNED"},
 		{name: "invalid pagination", err: ErrInvalidPagination, want: "INVALID_REQUEST"},
+		{name: "invalid status", err: ErrInvalidStatus, want: "INVALID_REQUEST"},
+		{name: "reason required", err: ErrReasonRequired, want: "INVALID_REQUEST"},
 		{name: "invalid cached response", err: ErrInvalidCachedResponse, want: "INTERNAL_ERROR"},
 		{name: "unknown error", err: errors.New("boom"), want: "INTERNAL_SERVER_ERROR"},
 		{name: "nil error", err: nil, want: "INTERNAL_SERVER_ERROR"},
@@ -553,6 +652,8 @@ func TestHandler_statusForError(t *testing.T) {
 		{name: "wallet inactive", err: ErrWalletInactive, want: http.StatusForbidden},
 		{name: "wallet not owned", err: ErrWalletNotOwned, want: http.StatusForbidden},
 		{name: "invalid pagination", err: ErrInvalidPagination, want: http.StatusBadRequest},
+		{name: "invalid status", err: ErrInvalidStatus, want: http.StatusBadRequest},
+		{name: "reason required", err: ErrReasonRequired, want: http.StatusBadRequest},
 		{name: "unknown", err: errors.New("boom"), want: http.StatusInternalServerError},
 	}
 

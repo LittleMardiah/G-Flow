@@ -34,6 +34,10 @@ const (
 	WalletTypeSystemBankGateway = "SYSTEM_BANK_GATEWAY"
 	WalletTypeSystemPlatform    = "SYSTEM_PLATFORM"
 
+	WalletStatusActive   = "ACTIVE"
+	WalletStatusSuspended = "SUSPENDED"
+	WalletStatusFrozen    = "FROZEN"
+
 	referenceTypeTopUp             = "TOPUP"
 	referenceTypeTransfer          = "TRANSFER"
 	referenceTypeOverdueSettlement = "OVERDUE_SETTLEMENT"
@@ -59,6 +63,8 @@ var (
 	ErrWalletNotOwned        = errors.New("wallet is not owned by the authenticated user")
 	ErrInvalidCachedResponse = errors.New("cached idempotency response is invalid")
 	ErrInvalidPagination     = errors.New("page must be >= 1 and page_size between 1 and 50")
+	ErrInvalidStatus         = errors.New("status must be one of ACTIVE, SUSPENDED, FROZEN")
+	ErrReasonRequired        = errors.New("reason is required when status is not ACTIVE")
 )
 
 // amount bounds dan limit KYC.
@@ -124,6 +130,7 @@ type WalletRepo interface {
 	GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error)
 	ListLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string, limit, offset int) ([]LedgerEntry, error)
 	CountLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string) (int, error)
+	UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, newStatus string) (time.Time, error)
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
@@ -526,6 +533,62 @@ func (s *Service) GetWalletHistory(ctx context.Context, userID, walletID uuid.UU
 		Total:      total,
 		TotalPages: totalPages,
 	}, nil
+}
+
+// UpdateWalletStatusResult hasil operasi update status wallet oleh admin.
+type UpdateWalletStatusResult struct {
+	WalletID  uuid.UUID `json:"wallet_id"`
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UpdateWalletStatus mengubah status wallet oleh admin (TD-059):
+//   - status wajib ACTIVE/SUSPENDED/FROZEN -> ErrInvalidStatus.
+//   - reason wajib jika status != ACTIVE -> ErrReasonRequired.
+//   - repo.UpdateWalletStatus -> ErrWalletNotFound jika wallet tidak ada.
+//   - best-effort INSERT admin_action_logs (audit trail); kegagalan hanya
+//     log warning, tidak membatalkan operasi.
+func (s *Service) UpdateWalletStatus(ctx context.Context, walletID, adminID uuid.UUID, newStatus, reason string) (*UpdateWalletStatusResult, error) {
+	switch newStatus {
+	case WalletStatusActive, WalletStatusSuspended, WalletStatusFrozen:
+	default:
+		return nil, ErrInvalidStatus
+	}
+	if newStatus != WalletStatusActive && reason == "" {
+		return nil, ErrReasonRequired
+	}
+
+	updatedAt, err := s.repo.UpdateWalletStatus(ctx, walletID, newStatus)
+	if err != nil {
+		return nil, err
+	}
+
+	s.insertAdminStatusActionLog(ctx, adminID, walletID, newStatus, reason)
+
+	return &UpdateWalletStatusResult{
+		WalletID:  walletID,
+		Status:    newStatus,
+		UpdatedAt: updatedAt,
+	}, nil
+}
+
+// insertAdminStatusActionLog menulis audit trail aksi admin ke
+// admin_action_logs. Best-effort: marshal/insert error hanya log warning.
+func (s *Service) insertAdminStatusActionLog(ctx context.Context, adminID, walletID uuid.UUID, newStatus, reason string) {
+	details, err := json.Marshal(map[string]any{
+		"new_status": newStatus,
+		"reason":     reason,
+	})
+	if err != nil {
+		log.Printf("wallet: warning: gagal marshal details admin_action_logs: %v", err)
+		return
+	}
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO admin_action_logs (admin_id, action, entity_type, entity_id, details)
+		VALUES ($1, $2, $3, $4, $5)
+	`, adminID, "wallet_status_change", "wallet", walletID, details); err != nil {
+		log.Printf("wallet: warning: gagal insert admin_action_logs: %v", err)
+	}
 }
 
 // ---- helpers internal ----

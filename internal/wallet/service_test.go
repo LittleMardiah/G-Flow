@@ -62,6 +62,11 @@ func (m *mockRepo) CountLedgerEntries(ctx context.Context, walletID uuid.UUID, r
 	return args.Int(0), args.Error(1)
 }
 
+func (m *mockRepo) UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, newStatus string) (time.Time, error) {
+	args := m.Called(ctx, walletID, newStatus)
+	return args.Get(0).(time.Time), args.Error(1)
+}
+
 type mockLedger struct {
 	mock.Mock
 }
@@ -1100,6 +1105,91 @@ func TestService_redisSet(t *testing.T) {
 	assert.NoError(t, json.Unmarshal([]byte(got), &cached))
 	assert.Equal(t, redisCompleted, cached.State)
 	assert.JSONEq(t, `{"ok":true}`, string(cached.Response))
+}
+
+// ---- Test Service: UpdateWalletStatus ----
+
+var testAdminID = uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+
+// TestService_UpdateWalletStatus_Success: reponse berisi wallet_id, status,
+// updated_at dari repo; audit log admin_action_logs tercatat (best-effort).
+func TestService_UpdateWalletStatus_Success(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	now := time.Now()
+	repo.On("UpdateWalletStatus", mock.Anything, testWalletID, WalletStatusSuspended).
+		Return(now, nil)
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(testAdminID, "wallet_status_change", "wallet", testWalletID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	res, err := svc.UpdateWalletStatus(context.Background(), testWalletID, testAdminID, WalletStatusSuspended, "fraud investigation")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+	assert.Equal(t, testWalletID, res.WalletID)
+	assert.Equal(t, WalletStatusSuspended, res.Status)
+	assert.Equal(t, now, res.UpdatedAt)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_UpdateWalletStatus_InvalidStatus: status di luar whitelist ->
+// ErrInvalidStatus, repo tidak dipanggil.
+func TestService_UpdateWalletStatus_InvalidStatus(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	res, err := svc.UpdateWalletStatus(context.Background(), testWalletID, testAdminID, "BLOCKED", "x")
+
+	assert.ErrorIs(t, err, ErrInvalidStatus)
+	assert.Nil(t, res)
+	repo.AssertNotCalled(t, "UpdateWalletStatus", mock.Anything, mock.Anything, mock.Anything)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_UpdateWalletStatus_ReasonRequired: status non-ACTIVE tanpa
+// reason -> ErrReasonRequired, repo tidak dipanggil.
+func TestService_UpdateWalletStatus_ReasonRequired(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	res, err := svc.UpdateWalletStatus(context.Background(), testWalletID, testAdminID, WalletStatusFrozen, "")
+
+	assert.ErrorIs(t, err, ErrReasonRequired)
+	assert.Nil(t, res)
+	repo.AssertNotCalled(t, "UpdateWalletStatus", mock.Anything, mock.Anything, mock.Anything)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestService_UpdateWalletStatus_NotFound: repo mengembalikan
+// ErrWalletNotFound -> error diteruskan; audit log tidak di-insert.
+func TestService_UpdateWalletStatus_NotFound(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	repo.On("UpdateWalletStatus", mock.Anything, testWalletID, WalletStatusSuspended).
+		Return(time.Time{}, ErrWalletNotFound)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	res, err := svc.UpdateWalletStatus(context.Background(), testWalletID, testAdminID, WalletStatusSuspended, "wallet tidak ada")
+
+	assert.ErrorIs(t, err, ErrWalletNotFound)
+	assert.Nil(t, res)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
 // ---- Test Service: GetWalletHistory ----
