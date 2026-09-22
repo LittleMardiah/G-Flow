@@ -106,7 +106,16 @@ class _RideBookingScreenState extends ConsumerState<RideBookingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Book Ride')),
+      appBar: AppBar(
+        title: const Text('Book Ride'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Riwayat Perjalanan',
+            onPressed: () => Navigator.pushNamed(context, AppRoutes.rideHistory),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           // Peta (2/3 layar)

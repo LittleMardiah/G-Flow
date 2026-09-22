@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../config/router.dart';
 import '../../models/ride_order.dart';
 import '../../providers/ride_provider.dart';
 
@@ -202,6 +203,12 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
               _TerminalBox(
                 order: order,
                 onDone: () => Navigator.of(context).pop(),
+                onViewDetail: _detailEnabled(order)
+                    ? () => Navigator.of(context).pushNamed(
+                          AppRoutes.rideDetail,
+                          arguments: RideDetailArgs(orderId: order.id),
+                        )
+                    : null,
               )
             else
               _CancelButton(
@@ -700,10 +707,11 @@ class _OrderDetailsCard extends StatelessWidget {
 // Aksi terminal & cancel
 
 class _TerminalBox extends StatelessWidget {
-  const _TerminalBox({required this.order, required this.onDone});
+  const _TerminalBox({required this.order, required this.onDone, this.onViewDetail});
 
   final RideOrder order;
   final VoidCallback onDone;
+  final VoidCallback? onViewDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -732,6 +740,14 @@ class _TerminalBox extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
+        if (done && onViewDetail != null) ...[
+          FilledButton.icon(
+            onPressed: onViewDetail,
+            icon: const Icon(Icons.receipt_long_outlined),
+            label: const Text('Lihat Detail'),
+          ),
+          const SizedBox(height: 8),
+        ],
         OutlinedButton.icon(
           onPressed: onDone,
           icon: const Icon(Icons.home_outlined),
@@ -874,6 +890,9 @@ const Map<String, String> _statusText = {
 };
 
 String _statusLabel(String status) => _statusText[status] ?? status.replaceAll('_', ' ');
+
+bool _detailEnabled(RideOrder order) =>
+    order.status == 'COMPLETED' || order.status == 'SETTLED';
 
 IconData _statusIcon(String status) {
   return switch (status) {

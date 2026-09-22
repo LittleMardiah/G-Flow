@@ -30,8 +30,14 @@ class RideOrder {
     this.dropoffAddress = '',
     this.distanceKm = 0,
     this.estimatedFare = 0,
+    this.baseFare = 0,
+    this.perKmRate = 0,
+    this.actualFare,
+    this.discountAmount,
     this.paymentMethod = 'WALLET',
     this.createdAt,
+    this.completedAt,
+    this.settledAt,
     this.cancellationReason,
   });
 
@@ -46,8 +52,14 @@ class RideOrder {
   final String dropoffAddress;
   final double distanceKm;
   final int estimatedFare;
+  final int baseFare;
+  final int perKmRate;
+  final int? actualFare;
+  final int? discountAmount;
   final String paymentMethod;
   final DateTime? createdAt;
+  final DateTime? completedAt;
+  final DateTime? settledAt;
   final String? cancellationReason;
 
   factory RideOrder.fromJson(Map<String, dynamic> j) {
@@ -63,8 +75,14 @@ class RideOrder {
       dropoffAddress: _str(j['dropoff_address']) ?? '',
       distanceKm: _num(j['distance_km']),
       estimatedFare: _int(j['estimated_fare']),
+      baseFare: _int(j['base_fare']),
+      perKmRate: _int(j['per_km_rate']),
+      actualFare: _intNullable(j['actual_fare']),
+      discountAmount: _intNullable(j['discount_amount']),
       paymentMethod: _str(j['payment_method']) ?? 'WALLET',
       createdAt: _date(j['created_at']),
+      completedAt: _date(j['completed_at']),
+      settledAt: _date(j['settled_at']),
       cancellationReason: _str(j['cancellation_reason']),
     );
   }
@@ -82,8 +100,14 @@ class RideOrder {
       dropoffAddress: dropoffAddress,
       distanceKm: distanceKm,
       estimatedFare: estimatedFare,
+      baseFare: baseFare,
+      perKmRate: perKmRate,
+      actualFare: actualFare,
+      discountAmount: discountAmount,
       paymentMethod: paymentMethod,
       createdAt: createdAt,
+      completedAt: completedAt,
+      settledAt: settledAt,
       cancellationReason: cancellationReason ?? this.cancellationReason,
     );
   }
@@ -98,7 +122,19 @@ class RideOrder {
       v == null ? null : v is String ? v : v.toString();
   static double _num(Object? v) => v is num ? v.toDouble() : (double.tryParse('$v') ?? 0);
   static int _int(Object? v) => v is num ? v.round() : (int.tryParse('$v') ?? 0);
+  static int? _intNullable(Object? v) {
+    if (v is num) return v.round();
+    return v == null || '$v'.isEmpty ? null : int.tryParse('$v');
+  }
   static DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v) : null;
+}
+
+/// Argumen navigasi ke `/ride-detail`. Diteruskan via
+/// `Navigator.pushNamed(context, AppRoutes.rideDetail, arguments: ...)`.
+class RideDetailArgs {
+  const RideDetailArgs({required this.orderId});
+
+  final String orderId;
 }
 
 /// Info driver yang ditampilkan di kartu driver pada tracking screen.

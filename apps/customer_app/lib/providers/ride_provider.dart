@@ -202,3 +202,137 @@ final rideTrackingProvider =
     return notifier..start();
   },
 );
+
+/// State detail satu ride.
+class RideDetailState {
+  const RideDetailState({
+    this.isLoading = true,
+    this.error,
+    this.order,
+  });
+
+  final bool isLoading;
+  final String? error;
+  final RideOrder? order;
+
+  RideDetailState copyWith({
+    bool? isLoading,
+    String? error,
+    RideOrder? order,
+  }) {
+    return RideDetailState(
+      isLoading: isLoading ?? this.isLoading,
+      error: error ?? this.error,
+      order: order ?? this.order,
+    );
+  }
+}
+
+/// Notifier detail satu ride (sekali fetch via GET /rides/{id}; retry via
+/// tombol "Coba lagi"). Berbeda dari tracking — tidak ada polling.
+class RideDetailNotifier extends StateNotifier<RideDetailState> {
+  RideDetailNotifier(this._service, this._orderId)
+      : super(const RideDetailState());
+
+  final RideService _service;
+  final String _orderId;
+
+  Future<void> load() async {
+    state = const RideDetailState();
+    try {
+      final order = await _service.getRideDetails(_orderId);
+      state = RideDetailState(isLoading: false, order: order);
+    } catch (_) {
+      state = RideDetailState(
+        isLoading: false,
+        error: 'Gagal memuat detail perjalanan (jaringan/API). Pastikan server aktif.',
+      );
+    }
+  }
+}
+
+final rideDetailProvider =
+    StateNotifierProvider.family<RideDetailNotifier, RideDetailState, String>(
+  (ref, orderId) {
+    final notifier = RideDetailNotifier(ref.watch(rideServiceProvider), orderId);
+    Future.microtask(notifier.load);
+    return notifier;
+  },
+);
+
+/// State riwayat ride (pagination, mirror pola FoodHistoryNotifier).
+class RideHistoryState {
+  const RideHistoryState({
+    this.isLoading = false,
+    this.error,
+    this.orders = const [],
+    this.hasMore = false,
+  });
+
+  final bool isLoading;
+  final String? error;
+  final List<RideOrder> orders;
+  final bool hasMore;
+
+  RideHistoryState copyWith({
+    bool? isLoading,
+    String? error,
+    List<RideOrder>? orders,
+    bool? hasMore,
+  }) {
+    return RideHistoryState(
+      isLoading: isLoading ?? this.isLoading,
+      error: error ?? this.error,
+      orders: orders ?? this.orders,
+      hasMore: hasMore ?? this.hasMore,
+    );
+  }
+}
+
+class RideHistoryNotifier extends StateNotifier<RideHistoryState> {
+  RideHistoryNotifier(this._service) : super(const RideHistoryState());
+
+  final RideService _service;
+  int _page = 1;
+
+  static const int _pageSize = 20;
+
+  Future<void> loadFirst() async {
+    _page = 1;
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final result = await _service.getHistory(page: _page, pageSize: _pageSize);
+      state = RideHistoryState(
+        isLoading: false,
+        orders: result.orders,
+        hasMore: result.totalPages > _page,
+      );
+    } catch (_) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Gagal memuat riwayat perjalanan.',
+      );
+    }
+  }
+
+  Future<void> loadMore() async {
+    if (state.isLoading || !state.hasMore) return;
+    _page++;
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final result = await _service.getHistory(page: _page, pageSize: _pageSize);
+      state = RideHistoryState(
+        isLoading: false,
+        orders: [...state.orders, ...result.orders],
+        hasMore: result.totalPages > _page,
+      );
+    } catch (_) {
+      state = state.copyWith(isLoading: false, error: 'Gagal memuat halaman berikut.');
+    }
+  }
+}
+
+final rideHistoryProvider =
+    StateNotifierProvider<RideHistoryNotifier, RideHistoryState>((ref) {
+  return RideHistoryNotifier(ref.watch(rideServiceProvider));
+});

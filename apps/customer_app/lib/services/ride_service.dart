@@ -9,10 +9,10 @@ import 'api_client.dart';
 /// Flag fitur sementara (Phase 2 mobile).
 ///
 /// TODO(v2): Set `false` setelah backend mengimplementasikan:
-///   1. GET /rides/{order_id} (API_CONTRACT 7.4) — BELUM ada di
-///      internal/ride/handler.go (baru BookRide / AcceptOrder / UpdateStatus).
-///   2. Endpoint info driver (nama, rating, kendaraan) & lokasi driver real
-///      untuk marker bergerak di peta.
+///   1. Endpoint info driver (nama, rating, kendaraan) & lokasi driver real
+///      untuk marker bergerak di peta (GET /rides/{id} sudah ada — kolom
+///      driver hanya `driver_id`, lihat internal/ride/handler.go
+///      rideDetailResponse:211).
 /// Selama endpoint di atas belum tersedia, tracking memakai simulasi
 /// `RideMockSimulator` sehingga demo customer app tetap berjalan.
 const bool kUseMockRideData = false;
@@ -59,6 +59,32 @@ class RideService {
     return RideOrder.fromJson(data);
   }
 
+  /// GET /rides (API_CONTRACT 7.4) — riwayat ride customer dengan pagination.
+  /// Response: `{data:{orders:[...]}, meta:{page,page_size,total,total_pages}}`.
+  Future<RideHistoryPage> getHistory({
+    int page = 1,
+    int pageSize = 20,
+    String? status,
+  }) async {
+    final q = StringBuffer('/api/v1/rides?page=$page&page_size=$pageSize');
+    if (status != null && status.trim().isNotEmpty) {
+      q.write('&status=${Uri.encodeQueryComponent(status)}');
+    }
+    final res = await apiClient.get(q.toString());
+    final body = res.data is Map<String, dynamic> ? res.data as Map : const <dynamic, dynamic>{};
+    final data = body['data'] is Map ? body['data'] as Map : const <dynamic, dynamic>{};
+    final meta = body['meta'] is Map ? body['meta'] as Map : const <dynamic, dynamic>{};
+    final items = data['orders'] is List ? data['orders'] as List : const <dynamic>[];
+    final orders = items
+        .whereType<Map>()
+        .map((e) => RideOrder.fromJson(e.cast<String, dynamic>()))
+        .toList();
+    return RideHistoryPage(
+      orders: orders,
+      totalPages: (meta['total_pages'] is num ? meta['total_pages'] as num : 0).round(),
+    );
+  }
+
   /// PATCH /rides/{order_id}/status untuk membatalkan ride (reason
   /// default CUSTOMER_CANCEL sesuai state machine ROADMAP 02 bagian 2.4).
   Future<void> cancelRide(String orderId, {String reason = 'CUSTOMER_CANCEL'}) async {
@@ -67,6 +93,20 @@ class RideService {
       data: {'status': 'CANCELLED', 'reason': reason},
     );
   }
+}
+
+/// Hasil GET /rides list (customer history) — daftar order + jumlah total
+/// halaman dari meta.total_pages untuk menentukan hasMore pada pagination.
+class RideHistoryPage {
+  const RideHistoryPage({
+    required this.orders,
+    required this.totalPages,
+  });
+
+  final List<RideOrder> orders;
+  final int totalPages;
+
+  bool get isEmpty => orders.isEmpty;
 }
 
 /// Simulator untuk demo customer app selama endpoint tracking & lokasi

@@ -9,6 +9,8 @@ import '../screens/food/food_history_screen.dart';
 import '../screens/food/food_tracking_screen.dart';
 import '../screens/food/merchant_detail_screen.dart';
 import '../screens/ride/ride_booking_screen.dart';
+import '../screens/ride/ride_detail_screen.dart';
+import '../screens/ride/ride_history_screen.dart';
 import '../screens/ride/ride_tracking_screen.dart';
 import '../screens/send/send_history_screen.dart';
 import '../screens/send/send_package_form_screen.dart';
@@ -25,6 +27,8 @@ class AppRoutes {
 
   // Ride
   static const String rideTracking = '/ride-tracking';
+  static const String rideHistory = '/ride-history';
+  static const String rideDetail = '/ride-detail';
 
   // Food
   static const String foodCatalog = '/food-catalog';
@@ -50,6 +54,8 @@ class AppRouter {
         AppRoutes.register: (_) => const RegisterScreen(),
         AppRoutes.home: (_) => const RideBookingScreen(),
         AppRoutes.rideTracking: (_) => const RideTrackingScreen(),
+        AppRoutes.rideHistory: (_) => const RideHistoryScreen(),
+        AppRoutes.rideDetail: (_) => const RideDetailScreen(),
 
         AppRoutes.foodCatalog: (_) => const FoodCatalogScreen(),
         AppRoutes.foodMerchantDetail: (_) => const MerchantDetailScreen(),
