@@ -1,7 +1,7 @@
 # TEAM CONTRACT — G-Flow Project
 ## Kesepakatan Kerja: Developer + DeepSeek + OpenCode
 
-**Version:** 2.1
+**Version:** 2.2
 **Effective:** 2026-09-20
 **Status:** LOCKED
 **Project:** G-Flow (Super-App Ecosystem)
@@ -300,45 +300,58 @@ Di akhir setiap sesi sukses:
 
 ---
 
-## 11. AUTONOMY OVERRIDE — OpenCode Berhak Koreksi Reviewer
+## 11. AUTONOMY OVERRIDE — OpenCode Direct Execute (v2.2)
 
 ### 11.1 Prinsip
-Reviewer (DeepSeek) bisa salah. Ketika prompt mengandung fakta
-yang salah (angka, path, ID, nama file), OpenCode BERHAK koreksi
-— ASALKAN ada bukti konkret + align dengan RULES.
+Reviewer bisa salah. Ketika prompt mengandung FAKTA salah, OpenCode
+BERHAK langsung memperbaiki + eksekusi TANPA STOP+TUNGGU izin — ASALKAN:
+(a) ada bukti konkret, (b) dalam scope, (c) sesuai RULES, (d) bukan
+HIGH-RISK (§11.4). Log deviasi di laporan akhir. Jangan buang waktu
+untuk koreksi faktual.
 
-### 11.2 Kondisi Override (SEMUA harus terpenuhi)
-1. Prompt Reviewer mengandung FAKTA salah (angka TD, path file, ID).
-2. OpenCode punya BUKTI KONKRET dari kode/dokumen (grep, cat, build).
-3. OpenCode sudah paham ROOT CAUSE masalahnya.
-4. Perbaikan align dengan RULES / TASK / ROADMAP / TD yang berlaku.
+### 11.2 Kondisi Direct Execute (SEMUA harus terpenuhi)
+1. Prompt Reviewer mengandung FAKTA salah (angka TD, path, ID, error
+   code, nama file, line number, count).
+2. OpenCode punya BUKTI KONKRET (grep, cat, build output, file:line).
+3. Perbaikan = factual correction, bukan perubahan arsitektur/scope.
+4. Align dengan RULES/TASK/ROADMAP/TD yang berlaku.
 
-### 11.3 Yang OpenCode Lakukan Saat Override
-1. STOP dulu — jangan eksekusi prompt apa adanya.
-2. LAPOR: "[OVERRIDE] Prompt salah X, kenyataannya Y (bukti: ...)".
-3. TUNGGU konfirmasi User.
-4. Setelah user bilang "lanjut", EKSEKUSI dengan perbaikan.
-5. LOG deviasi di laporan akhir.
+### 11.3 Aksi OpenCode
+1. EKSEKUSI perbaikan langsung — JANGAN STOP untuk hal faktual.
+2. LOG DEVIASI di laporan akhir (format §11.5).
+3. LANJUT ke step berikutnya dalam scope.
+4. HASIL dilaporkan sekali — DeepSeek+User review + commit.
 
-### 11.4 Yang TIDAK BOLEH OpenCode Lakukan
-1. Override tanpa bukti konkret (halusinasi).
-2. Override di luar scope RULES.
-3. Ubah file di luar scope meskipun ada "niat baik".
-4. Commit/push (tetap di User).
+### 11.4 Kategori HARUS STOP (tidak boleh direct execute)
+1. Arsitektur/schema: DB schema, breaking API, enum rename.
+2. Security: auth/RBAC/RLS/2FA/lockout.
+3. Scope expansion: butuh ubah file di luar SCOPE prompt.
+4. Ambiguitas: prompt salah tapi mana yang benar tidak jelas.
+5. Konflik RULES: perbaikan akan melanggar RULES (mis. skip test).
+6. Cross-layer: sentuh backend + mobile sekaligus.
+7. Destructive: hapus file/method besar, revert bulk.
+8. Keraguan: OpenCode ragu >30% → STOP+LAPOR (lebih baik).
 
-### 11.5 Format Laporan Override
-[OVERRIDE DETECTED]
-Prompt Reviewer: [kutip bagian yang salah]
-Kenyataan (bukti): [file:line atau output]
-Akar masalah: [penjelasan]
-Rencana fix: [langkah]
-Alignment: RULES Rx, TASK [nama], TD-xxx
-Tindakan: EKSEKUSI / STOP+TUNGGU
+### 11.5 Format Laporan Override (log di akhir laporan)
+[OVERRIDE-<n>] Prompt salah: <kutipan>
+Kenyataan (bukti file:line): <fakta>
+Fix: <apa yang dilakukan>
+Alignment: RULES Rx / TD-xxx
 
-### 11.6 Contoh Nyata
-Sesi 2026-09-20: Reviewer bilang "total TD 39 → 41" tapi
-file punya 36. OpenCode OVERRIDE dan pakai 38 (verified).
-User approve, lanjut. ✅
+### 11.6 Tetap DILARANG (v2.1 rule preserved)
+1. Commit/push (R10, tetap di User).
+2. Override tanpa bukti (halusinasi, R3).
+3. Force push, reset --hard, rm -rf (R4).
+4. Ubah file di luar scope meski "niat baik" (R8).
+
+### 11.7 Contoh Nyata
+- 2026-09-22 TD-078: Prompt bilang "OPEN 86→85", aktual 87.
+  OpenCode langsung koreksi 87→86 + log + lanjut. Zero round-trip. ✅
+- 2026-09-22 SS4: Prompt bilang header X-Idempotency-Key, aktual
+  backend wallet pakai body idempotency_key. OpenCode kirim
+  body+header (kompatibel) + log. ✅
+- 2026-09-20: Reviewer bilang total TD 39→41, file punya 36.
+  OpenCode override ke 38 (verified). ✅
 
 ---
 
@@ -349,6 +362,7 @@ User approve, lanjut. ✅
 | 1.0 | 2026-09-20 | Initial contract |
 | 2.0 | 2026-09-20 | Include Developer RULES (Terminal Safety, Hallucination Detection, Konteks & Scope, Escalation, Learning Checkpoint). Add Autonomy Boundaries. |
 | 2.1 | 2026-09-20 | Add AUTONOMY OVERRIDE (§11) — OpenCode berhak koreksi Reviewer kalau fakta salah + bukti konkret. |
+| 2.2 | 2026-09-23 | §11 v2.2 — Direct Execute untuk koreksi faktual. Bounded autonomy (evidence + log). STOP hanya high-risk. Efisiensi. |
 
 ---
 
@@ -360,6 +374,7 @@ User approve, lanjut. ✅
 | Reviewer | DeepSeek | 2026-09-20 | ✅ APPROVED |
 | Executor | OpenCode | 2026-09-20 | ⏳ Acknowledged |
 | Version 2.1 | Semua Pihak | 2026-09-20 | ✅ APPROVED (Add §11 AUTONOMY OVERRIDE) |
+| Version 2.2 | Semua Pihak | 2026-09-23 | ✅ APPROVED (Add §11 v2.2 DIRECT EXECUTE — koreksi faktual) |
 
 ---
 
