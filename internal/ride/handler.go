@@ -192,13 +192,18 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
+	data := gin.H{
+		"order_id":          resp.OrderID,
+		"status":            resp.Status,
+		"status_updated_at": time.Now(),
+	}
+	if resp.CancellationFee != nil {
+		data["cancellation_fee"] = resp.CancellationFee
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"order_id":          resp.OrderID,
-			"status":            resp.Status,
-			"status_updated_at": time.Now(),
-		},
+		"data":    data,
 	})
 }
 
@@ -225,6 +230,7 @@ type rideDetailResponse struct {
 	DiscountAmount     *decimal.Decimal `json:"discount_amount"`
 	PaymentMethod      string           `json:"payment_method"`
 	CancellationReason *string          `json:"cancellation_reason"`
+	CancellationFee    *decimal.Decimal `json:"cancellation_fee"`
 	CreatedAt          time.Time        `json:"created_at"`
 	ExpiresAt          *time.Time       `json:"expires_at"`
 	AssignedAt         *time.Time       `json:"assigned_at"`
@@ -284,6 +290,7 @@ func (h *Handler) GetRide(c *gin.Context) {
 			DiscountAmount:     order.DiscountAmount,
 			PaymentMethod:      order.PaymentMethod,
 			CancellationReason: order.CancellationReason,
+			CancellationFee:    order.CancellationFee,
 			CreatedAt:          order.CreatedAt,
 			ExpiresAt:          order.ExpiresAt,
 			AssignedAt:         order.AssignedAt,

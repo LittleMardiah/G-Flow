@@ -132,8 +132,8 @@ func (m *mockRepo) GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, 
 	return args.Get(0).([]uuid.UUID), args.Error(1)
 }
 
-func (m *mockRepo) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string) (bool, error) {
-	args := m.Called(ctx, q, orderID, fromStatus, reason)
+func (m *mockRepo) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error) {
+	args := m.Called(ctx, q, orderID, fromStatus, reason, fee)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -169,12 +169,13 @@ func (m *mockLedger) CreateLedgerEntries(_ context.Context, _ pgx.Tx, entries []
 // ---- fixtures ----
 
 var (
-	svcCustomerID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	svcWalletID   = uuid.MustParse("22222222-2222-2222-2222-222222222222")
-	svcEscrowID   = uuid.MustParse("33333333-3333-3333-3333-333333333333")
-	svcPlatformID = uuid.MustParse("44444444-4444-4444-4444-444444444444")
-	svcDriverID   = uuid.MustParse("55555555-5555-5555-5555-555555555555")
-	svcOrderID    = uuid.MustParse("66666666-6666-6666-6666-666666666666")
+	svcCustomerID     = uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	svcWalletID       = uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	svcEscrowID       = uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	svcPlatformID     = uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	svcDriverID       = uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	svcOrderID        = uuid.MustParse("66666666-6666-6666-6666-666666666666")
+	svcDriverWalletID = uuid.MustParse("77777777-7777-7777-7777-777777777777")
 )
 
 func svcCustomer(order decimal.Decimal) *Customer {
@@ -213,6 +214,10 @@ func svcOrder(status string, paymentMethod string, driver *uuid.UUID) *RideOrder
 		EstimatedFare:    decimal.NewFromInt(50000),
 		Status:           status,
 	}
+}
+
+func svcDriverWallet(balance decimal.Decimal) *RideWallet {
+	return &RideWallet{ID: svcDriverWalletID, UserID: svcDriverID, Type: WalletTypeDriver, Balance: balance, Status: "ACTIVE"}
 }
 
 // bookRideCommon mengatur mock untuk seluruh alur BookRide yang sukses lalu
@@ -655,7 +660,7 @@ func TestAcceptOrder_Success(t *testing.T) {
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 
-mDB.ExpectBegin()
+	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
 		Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
@@ -742,7 +747,7 @@ func TestAcceptOrder_RaceCondition(t *testing.T) {
 
 	driver2 := uuid.MustParse("77777777-7777-7777-7777-777777777777")
 
-// Driver pertama sukses.
+	// Driver pertama sukses.
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
@@ -811,7 +816,7 @@ func TestAcceptOrder_AssignFailed(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
-repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
+	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
 	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
@@ -859,7 +864,7 @@ func TestCancelOrder_BeforeAssign(t *testing.T) {
 	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
-	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonCustomerCancel).Return(true, nil)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonCustomerCancel, decimal.Zero).Return(true, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -896,7 +901,8 @@ func TestCancelOrder_AfterAssign(t *testing.T) {
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 	// CASH → tidak ada refund escrow; driver dicancel (customer) → reset IDLE.
-	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonCustomerCancel).Return(true, nil)
+	// Fee 5.000 tetap dicatat di DB (cancellation_fee) tanpa ledger (cash offline).
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonCustomerCancel, decimal.NewFromInt(5000)).Return(true, nil)
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
@@ -930,7 +936,7 @@ func TestCancelOrder_DriverEmergency(t *testing.T) {
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 	// Driver asal cancancel tanpa reason → reason otomatis DRIVER_EMERGENCY.
-	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonDriverEmergency).Return(true, nil)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonDriverEmergency, decimal.Zero).Return(true, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
@@ -955,6 +961,220 @@ func TestCancelOrder_DriverEmergency(t *testing.T) {
 	assert.Equal(t, statusCancelled, resp.Status)
 	repo.AssertExpectations(t)
 	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestCancelOrder_FeeCalculationTable(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		reason  string
+		wantFee int64
+	}{
+		{name: "before assign", status: statusSearchingDriver, reason: reasonCustomerCancel, wantFee: 0},
+		{name: "created by customer", status: statusCreated, reason: reasonCustomerCancel, wantFee: 0},
+		{name: "assigned customer cancel", status: statusDriverAssigned, reason: reasonCustomerCancel, wantFee: 5000},
+		{name: "arrived customer cancel", status: statusDriverArrived, reason: reasonCustomerCancel, wantFee: 10000},
+		{name: "trip started cancel", status: statusTripStarted, reason: reasonCustomerCancel, wantFee: 10000},
+		{name: "no-show", status: statusDriverArrived, reason: reasonNoShow, wantFee: 10000},
+		{name: "driver emergency", status: statusDriverAssigned, reason: reasonDriverEmergency, wantFee: 0},
+		{name: "expired", status: statusSearchingDriver, reason: reasonExpired, wantFee: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cancellationFeeFor(tc.status, tc.reason)
+			assert.True(t, got.Equal(decimal.NewFromInt(tc.wantFee)),
+				"fee %s/%s = %v, expect %d", tc.status, tc.reason, got, tc.wantFee)
+		})
+	}
+}
+
+// setupCancelFeeTest membangun mock repo/ledger/db umum untuk cancel ber-fee
+// (WALLET): cancel sukses + refund fee + driver reset + audit event.
+func setupCancelFeeTest(est decimal.Decimal, status, reason string) (*mockRepo, *mockLedger, pgxmock.PgxPoolIface, *RideOrder) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	drv := svcDriverID
+	order := svcOrder(status, PaymentMethodWallet, &drv)
+	order.EstimatedFare = est
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).Return(svcDriverWallet(decimal.Zero), nil)
+	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
+	mDB.ExpectCommit()
+
+	return repo, lgr, mDB, order
+}
+
+// assertLedgerFee memverifikasi double-entry pada cancel ber-fee: escrow
+// di-DEBIT total estimated; CREDIT driver = fee; CREDIT customer = est - fee.
+func assertLedgerFee(t *testing.T, args mock.Arguments, est, fee int64) {
+	t.Helper()
+	entries, ok := args.Get(0).([]wallet.LedgerEntry)
+	assert.True(t, ok, "CreateLedgerEntries harus menerima []wallet.LedgerEntry")
+	assert.Len(t, entries, 4)
+
+	var debit, credit, driverCredit, customerCredit decimal.Decimal
+	expDriver := decimal.NewFromInt(fee)
+	expCustomer := decimal.NewFromInt(est - fee)
+	for _, e := range entries {
+		if e.EntryType == wallet.EntryDebit {
+			debit = debit.Add(e.Amount)
+		} else {
+			credit = credit.Add(e.Amount)
+			if e.WalletID == svcDriverWalletID {
+				driverCredit = driverCredit.Add(e.Amount)
+			}
+			if e.WalletID == svcWalletID {
+				customerCredit = customerCredit.Add(e.Amount)
+			}
+		}
+	}
+	assert.True(t, debit.Equal(credit), "ledger tidak seimbang: DEBIT=%v CREDIT=%v", debit, credit)
+	assert.True(t, debit.Equal(decimal.NewFromInt(est)), "DEBIT escrow harus = estimated %d, got %v", est, debit)
+	assert.True(t, driverCredit.Equal(expDriver), "driver harus dikredit %d, got %v", fee, driverCredit)
+	assert.True(t, customerCredit.Equal(expCustomer), "customer harus dikredit %d, got %v", est-fee, customerCredit)
+}
+
+// Cancel WALLET setelah DRIVER_ASSIGNED → fee 5.000 ke driver, refund
+// (estimated - 5.000) ke customer, ledger double-entry seimbang.
+func TestCancelOrder_FeeAssignedWallet(t *testing.T) {
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverAssigned, reasonCustomerCancel)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonCustomerCancel,
+		decimal.NewFromInt(5000)).Return(true, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertLedgerFee(t, args, 50000, 5000) }).Return(nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, statusCancelled, resp.Status)
+	assert.NotNil(t, resp.CancellationFee)
+	assert.Equal(t, int64(5000), resp.CancellationFee.IntPart())
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// Cancel WALLET setelah DRIVER_ARRIVED → fee 10.000 ke driver.
+func TestCancelOrder_FeeArrivedWallet(t *testing.T) {
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonCustomerCancel)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverArrived, reasonCustomerCancel,
+		decimal.NewFromInt(10000)).Return(true, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertLedgerFee(t, args, 50000, 10000) }).Return(nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, statusCancelled, resp.Status)
+	assert.NotNil(t, resp.CancellationFee)
+	assert.Equal(t, int64(10000), resp.CancellationFee.IntPart())
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TC-INT-RD-005 — No-Show: driver sudah DRIVER_ARRIVED, customer tidak muncul
+// → fee 10.000 dari customer, kompensasi penuh ke driver.
+func TestCancelOrder_NoShow(t *testing.T) {
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverArrived, reasonNoShow,
+		decimal.NewFromInt(10000)).Return(true, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertLedgerFee(t, args, 50000, 10000) }).Return(nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, statusCancelled, resp.Status)
+	assert.NotNil(t, resp.CancellationFee)
+	assert.Equal(t, int64(10000), resp.CancellationFee.IntPart())
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// NO_SHOW hanya boleh dari driver tertunjuk (customer dilarang memicu no-show).
+func TestCancelOrder_NoShowNotDriver(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	order := svcOrder(statusDriverArrived, PaymentMethodWallet, &svcDriverID)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonNoShow,
+	})
+	assert.ErrorIs(t, err, ErrNotAllowed)
+	repo.AssertNotCalled(t, "CancelOrder")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// NO_SHOW hanya valid saat status DRIVER_ARRIVED (driver menunggu di pickup).
+func TestCancelOrder_NoShowWrongStatus(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow,
+	})
+	assert.ErrorIs(t, err, ErrInvalidTransition)
+	repo.AssertNotCalled(t, "CancelOrder")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// Anti-bypass (security): customer yang mengirim reason DRIVER_EMERGENCY
+// tidak boleh lolos dari cancellation fee — guard aktor di cancelOrderTx.
+func TestCancelOrder_CustomerEmergencyBypass(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonDriverEmergency,
+	})
+	assert.ErrorIs(t, err, ErrNotAllowed)
+	repo.AssertNotCalled(t, "CancelOrder")
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
@@ -1174,7 +1394,7 @@ func TestAutoCancelExpiredOrders(t *testing.T) {
 	repo.On("GetExpiredSearchingOrders", mock.Anything).Return([]uuid.UUID{svcOrderID}, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil).Once()
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
-	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonExpired).Return(true, nil)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonExpired, decimal.Zero).Return(true, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -1455,7 +1675,7 @@ func TestCancelOrder_CancelFailed(t *testing.T) {
 	order := svcOrder(statusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
-	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonCustomerCancel).Return(false, nil)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonCustomerCancel, decimal.Zero).Return(false, nil)
 
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
@@ -1755,4 +1975,3 @@ func TestHoldEscrow_InsufficientAfterLock(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInsufficientBalance)
 	repo.AssertExpectations(t)
 }
-

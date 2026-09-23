@@ -74,17 +74,27 @@ const (
 	redisTTL       = 24 * time.Hour
 
 	// Wallet types (migration 001: wallet_type_enum).
-	WalletTypeDriver        = "DRIVER"
+	WalletTypeDriver         = "DRIVER"
 	WalletTypeSystemPlatform = "SYSTEM_PLATFORM"
 
 	// Reference type double-entry ledger untuk settlement & refund ride.
-	referenceTypeRideSettlement = "RIDE_SETTLEMENT"
-	referenceTypeRideRefund     = "RIDE_REFUND"
+	referenceTypeRideSettlement      = "RIDE_SETTLEMENT"
+	referenceTypeRideRefund          = "RIDE_REFUND"
+	referenceTypeRideCancellationFee = "RIDE_CANCELLATION_FEE"
 
-	// Cancellation reasons (ROADMAP_02 / API_CONTRACT 7.3).
+	// Cancellation reasons (ROADMAP_02 / API_CONTRACT 7.3 / TD-068).
 	reasonCustomerCancel  = "CUSTOMER_CANCEL"
 	reasonDriverEmergency = "DRIVER_EMERGENCY"
+	reasonNoShow          = "NO_SHOW"
 	reasonExpired         = "EXPIRED"
+
+	// Cancellation fee (LOGIC_FLOW 2.1 / ROADMAP 02 §2.4 / TD-068):
+	//   - cancel setelah DRIVER_ASSIGNED : Rp 5.000 ke driver
+	//   - cancel setelah DRIVER_ARRIVED  : Rp 10.000 ke driver
+	//   - no-show (driver tiba > 5 menit, customer tidak muncul) : Rp 10.000
+	//   - driver emergency cancel        : tanpa penalti (full refund)
+	CancellationFeeAssigned = 5000
+	CancellationFeeArrived  = 10000
 
 	// Ceiling saldo negatif driver (LOGIC_FLOW 5.5): jika balance driver
 	// < -Rp 50.000 setelah CASH settlement, akun driver di-SUSPENDED.
@@ -197,7 +207,7 @@ type Repo interface {
 	// Fase lanjutan F005/F006: transisi status, cancel, auto-cancel & settlement.
 	LockOrderForUpdate(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error)
 	GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, error)
-	CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string) (bool, error)
+	CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error)
 	CompleteOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus string, actualFare, driverEarning, platformCommission decimal.Decimal) (bool, error)
 	MarkSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
 	ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error
@@ -548,9 +558,11 @@ type UpdateRideStatusRequest struct {
 }
 
 // UpdateRideStatusResponse hasil update status order (API_CONTRACT 7.3).
+// CancellationFee diisi (informasi fee yang dipungut) saat status = CANCELLED.
 type UpdateRideStatusResponse struct {
-	OrderID uuid.UUID `json:"order_id"`
-	Status  string    `json:"status"`
+	OrderID         uuid.UUID        `json:"order_id"`
+	Status          string           `json:"status"`
+	CancellationFee *decimal.Decimal `json:"cancellation_fee"`
 }
 
 // UpdateRideStatus memproses PATCH /rides/:order_id/status:
@@ -637,9 +649,21 @@ func (s *Service) UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequ
 }
 
 // cancelOrderTx meng-cancel order dalam transaksi yang sudah mengunci baris
-// order: set status CANCELLED + cancellation_reason, refund escrow penuh
-// (WALLET), reset driver ke IDLE (jika sudah ditunjuk), dan mencatat audit
-// event dengan metadata {"reason": ...}.
+// order: set status CANCELLED + cancellation_reason + cancellation_fee.
+//
+// Skema fee (LOGIC_FLOW 2.1 / ROADMAP 02 §2.4 / TD-068):
+//   - cancel SEBELUM DRIVER_ASSIGNED : full refund, tanpa fee.
+//   - cancel setelah DRIVER_ASSIGNED  : fee Rp 5.000 → driver, refund
+//     (estimated - 5.000) → customer (WALLET).
+//   - cancel setelah DRIVER_ARRIVED   : fee Rp 10.000 → driver, refund
+//     (estimated - 10.000) → customer (WALLET).
+//   - no-show (reason NO_SHOW)       : fee Rp 10.000 → driver. Hanya driver
+//     tertunjuk yang sudah DRIVER_ARRIVED.
+//   - driver emergency (DRIVER_EMERGENCY): full refund, tanpa penalti.
+//
+// Guard reason anti-bypass: NO_SHOW & DRIVER_EMERGENCY wajib dari driver
+// tertunjuk (mencegah customer memalsukan reason untuk menghindari fee).
+// Driver lepas dari order → kembali IDLE. Audit event + metadata reason.
 func (s *Service) cancelOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error) {
 	reason := req.Reason
 	if reason == "" {
@@ -650,7 +674,24 @@ func (s *Service) cancelOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder
 		}
 	}
 
-	ok, err := s.repo.CancelOrder(ctx, tx, order.ID, order.Status, reason)
+	// Guard reason khusus (re-validasi di bawah lock).
+	switch reason {
+	case reasonNoShow:
+		if order.DriverID == nil || *order.DriverID != req.UserID {
+			return nil, ErrNotAllowed
+		}
+		if order.Status != statusDriverArrived {
+			return nil, ErrInvalidTransition
+		}
+	case reasonDriverEmergency:
+		if order.DriverID == nil || *order.DriverID != req.UserID {
+			return nil, ErrNotAllowed
+		}
+	}
+
+	fee := cancellationFeeFor(order.Status, reason)
+
+	ok, err := s.repo.CancelOrder(ctx, tx, order.ID, order.Status, reason, fee)
 	if err != nil {
 		return nil, err
 	}
@@ -658,10 +699,17 @@ func (s *Service) cancelOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder
 		return nil, ErrInvalidTransition
 	}
 
-	// Refund escrow penuh (tanpa penalti) jika masih memegang dana customer.
+	// WALLET: refund escrow (dengan fee jika ada; tanpa fee = full refund).
+	// CASH: tidak ada escrow yang ditahan — fee hanya dicatat di DB.
 	if order.PaymentMethod == PaymentMethodWallet {
-		if err := s.refundEscrow(ctx, tx, order); err != nil {
-			return nil, err
+		if fee.IsPositive() {
+			if err := s.refundCancellationFee(ctx, tx, order, fee); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := s.refundEscrow(ctx, tx, order); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -690,7 +738,31 @@ func (s *Service) cancelOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &UpdateRideStatusResponse{OrderID: order.ID, Status: statusCancelled}, nil
+	return &UpdateRideStatusResponse{OrderID: order.ID, Status: statusCancelled, CancellationFee: &fee}, nil
+}
+
+// cancellationFeeFor menghitung cancellation fee berdasar status order &
+// reason (LOGIC_FLOW 2.1 / ROADMAP 02 §2.4):
+//   - DRIVER_EMERGENCY        -> 0 (full refund, tanpa penalti)
+//   - NO_SHOW                 -> Rp 10.000 (driver sudah menunggu di pickup)
+//   - DRIVER_ASSIGNED         -> Rp 5.000 (cancel customer)
+//   - DRIVER_ARRIVED/TRIP_STARTED -> Rp 10.000 (cancel customer)
+//   - sebelum driver ditunjuk -> 0 (full refund)
+func cancellationFeeFor(orderStatus, reason string) decimal.Decimal {
+	switch reason {
+	case reasonNoShow:
+		return decimal.NewFromInt(CancellationFeeArrived)
+	case reasonDriverEmergency:
+		return decimal.Zero
+	}
+	switch orderStatus {
+	case statusDriverAssigned:
+		return decimal.NewFromInt(CancellationFeeAssigned)
+	case statusDriverArrived, statusTripStarted:
+		return decimal.NewFromInt(CancellationFeeArrived)
+	default:
+		return decimal.Zero
+	}
 }
 
 // completeOrderTx menandai order COMPLETED lalu memicu settlement otomatis
@@ -887,6 +959,72 @@ func (s *Service) refundEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder)
 	})
 }
 
+// refundCancellationFee melepas escrow saat cancel yang memungut fee (WALLET):
+// escrow di-DEBIT total estimated, CREDIT driver = cancellation fee
+// (reference RIDE_CANCELLATION_FEE), CREDIT customer = estimated - fee
+// (reference RIDE_REFUND). Double-entry tetap seimbang per reference_id
+// (trigger validate_ledger_balance) karena SUM DEBIT = SUM CREDIT.
+func (s *Service) refundCancellationFee(ctx context.Context, tx pgx.Tx, order *RideOrder, fee decimal.Decimal) error {
+	if order.CustomerWalletID == nil {
+		return ErrWalletNotFound
+	}
+	if order.DriverID == nil {
+		return ErrDriverNotFound
+	}
+	escrowID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemEscrow)
+	if err != nil {
+		return err
+	}
+	driverWallet, err := s.repo.GetWalletByUserAndType(ctx, *order.DriverID, WalletTypeDriver)
+	if err != nil {
+		return err
+	}
+
+	// Defensive: fee tidak boleh melebihi estimated sehingga refund >= 0.
+	if fee.GreaterThan(order.EstimatedFare) {
+		fee = order.EstimatedFare
+	}
+	customerRefund := order.EstimatedFare.Sub(fee)
+
+	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID, driverWallet.ID); err != nil {
+		return err
+	}
+	return s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+		{
+			WalletID:      escrowID,
+			EntryType:     wallet.EntryDebit,
+			Amount:        fee,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideCancellationFee,
+			Description:   "RIDE_CANCELLATION_FEE - DEBIT escrow (fee to driver)",
+		},
+		{
+			WalletID:      driverWallet.ID,
+			EntryType:     wallet.EntryCredit,
+			Amount:        fee,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideCancellationFee,
+			Description:   "RIDE_CANCELLATION_FEE - CREDIT driver wallet",
+		},
+		{
+			WalletID:      escrowID,
+			EntryType:     wallet.EntryDebit,
+			Amount:        customerRefund,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideRefund,
+			Description:   "RIDE_REFUND - escrow release (balance after cancellation fee)",
+		},
+		{
+			WalletID:      *order.CustomerWalletID,
+			EntryType:     wallet.EntryCredit,
+			Amount:        customerRefund,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideRefund,
+			Description:   "RIDE_REFUND - refund customer minus cancellation fee",
+		},
+	})
+}
+
 // AutoCancelExpiredOrders (Auto-Cancel Worker) membatalkan order yang masih
 // SEARCHING_DRIVER dan sudah melewati expires_at (TTL 15 menit). Setiap order
 // ditangani dalam transaksi terpisah (lock FOR UPDATE → CANCELLED reason
@@ -925,7 +1063,7 @@ func (s *Service) AutoCancelExpiredOrders(ctx context.Context) (int, error) {
 			if locked.Status != statusSearchingDriver {
 				return ErrInvalidTransition
 			}
-			ok, err := s.repo.CancelOrder(ctx, tx, id, statusSearchingDriver, reasonExpired)
+			ok, err := s.repo.CancelOrder(ctx, tx, id, statusSearchingDriver, reasonExpired, decimal.Zero)
 			if err != nil {
 				return err
 			}

@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	repoOrderID   = uuid.MustParse("81111111-1111-1111-1111-111111111111")
-	repoCustID    = uuid.MustParse("82222222-2222-2222-2222-222222222222")
-	repoDriverID  = uuid.MustParse("83333333-3333-3333-3333-333333333333")
-	repoWalletID  = uuid.MustParse("84444444-4444-4444-4444-444444444444")
-	repoEscrowID  = uuid.MustParse("85555555-5555-5555-5555-555555555555")
+	repoOrderID  = uuid.MustParse("81111111-1111-1111-1111-111111111111")
+	repoCustID   = uuid.MustParse("82222222-2222-2222-2222-222222222222")
+	repoDriverID = uuid.MustParse("83333333-3333-3333-3333-333333333333")
+	repoWalletID = uuid.MustParse("84444444-4444-4444-4444-444444444444")
+	repoEscrowID = uuid.MustParse("85555555-5555-5555-5555-555555555555")
 )
 
 // orderRowSet membangun pgxmock rows untuk kolom lengkap ride_orders.
@@ -339,11 +339,26 @@ func TestRepository_CancelOrder_True(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 	mDB.ExpectExec("UPDATE ride_orders").
-		WithArgs(repoOrderID, statusSearchingDriver, reasonExpired).
+		WithArgs(repoOrderID, statusSearchingDriver, reasonExpired, decimal.Zero).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	repo := NewRepository(mDB)
-	ok, err := repo.CancelOrder(context.Background(), mDB, repoOrderID, statusSearchingDriver, reasonExpired)
+	ok, err := repo.CancelOrder(context.Background(), mDB, repoOrderID, statusSearchingDriver, reasonExpired, decimal.Zero)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepository_CancelOrder_WithFee(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	fee := decimal.NewFromInt(5000)
+	mDB.ExpectExec("UPDATE ride_orders").
+		WithArgs(repoOrderID, statusDriverAssigned, reasonCustomerCancel, fee).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	repo := NewRepository(mDB)
+	ok, err := repo.CancelOrder(context.Background(), mDB, repoOrderID, statusDriverAssigned, reasonCustomerCancel, fee)
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NoError(t, mDB.ExpectationsWereMet())

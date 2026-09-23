@@ -258,11 +258,11 @@ func bookRide(t *testing.T, e *testEnv, token, paymentMethod string) (uuid.UUID,
 func bookRideCoords(t *testing.T, e *testEnv, token, paymentMethod string, pLat, pLng, dLat, dLng float64) (uuid.UUID, decimal.Decimal) {
 	t.Helper()
 	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/book", gin.H{
-		"pickup_lat":     pLat,
-		"pickup_lng":     pLng,
-		"pickup_address": "Jl. Test A",
-		"dropoff_lat":    dLat,
-		"dropoff_lng":    dLng,
+		"pickup_lat":      pLat,
+		"pickup_lng":      pLng,
+		"pickup_address":  "Jl. Test A",
+		"dropoff_lat":     dLat,
+		"dropoff_lng":     dLng,
 		"dropoff_address": "Jl. Test B",
 		"payment_method":  paymentMethod,
 	}, token, uuid.New().String())
@@ -270,8 +270,8 @@ func bookRideCoords(t *testing.T, e *testEnv, token, paymentMethod string, pLat,
 
 	out := mustResp(t, w)
 	var data struct {
-		OrderID       uuid.UUID `json:"order_id"`
-		Status        string    `json:"status"`
+		OrderID       uuid.UUID       `json:"order_id"`
+		Status        string          `json:"status"`
 		EstimatedFare decimal.Decimal `json:"estimated_fare"`
 	}
 	require.NoError(t, json.Unmarshal(out.Data, &data))
@@ -614,6 +614,10 @@ func TestIntegrationRide_CustomerCancelFullRefund(t *testing.T) {
 	require.NotNil(t, order.CancellationReason)
 	require.Equal(t, "CUSTOMER_CANCEL", *order.CancellationReason)
 
+	// Cancel SEBELUM driver ditunjuk → full refund, TANPA fee (LOGIC_FLOW 2.1).
+	require.NotNil(t, order.CancellationFee)
+	require.True(t, order.CancellationFee.IsZero(), "cancel sebelum assign harus 0 fee, got %v", order.CancellationFee)
+
 	// Refund penuh: saldo customer kembali 100.000 & escrow kembali ke
 	// nilai sebelum booking (0 setelah reset run).
 	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(100000)))
@@ -621,6 +625,175 @@ func TestIntegrationRide_CustomerCancelFullRefund(t *testing.T) {
 
 	assertLedgerBalanced(t, e, ctx, orderID)
 	assertCancelEvent(t, e, ctx, orderID, "CUSTOMER_CANCEL")
+}
+
+// TC-INT-RD-004 — Cancel setalah DRIVER_ASSIGNED: fee 5.000 dari customer
+// → credit driver; refund (estimated - 5.000) ke customer; escrow kembali 0.
+func TestIntegrationRide_CustomerCancelAfterAssigned(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	dToken, _, driverWallet := newDriver(t, e, decimal.NewFromInt(100000))
+
+	escrowBeforeBook := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+	orderID, estimated := bookRide(t, e, custToken, "WALLET")
+
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+
+	w = updateRideStatus(t, e, custToken, orderID, "CANCELLED", "CUSTOMER_CANCEL")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "CANCELLED", updatedStatus(t, w))
+
+	order := getOrder(t, e, ctx, orderID)
+	require.Equal(t, "CANCELLED", order.Status)
+	require.NotNil(t, order.CancellationReason)
+	require.Equal(t, "CUSTOMER_CANCEL", *order.CancellationReason)
+	require.NotNil(t, order.CancellationFee)
+	require.True(t, order.CancellationFee.Equal(decimal.NewFromInt(5000)), "fee harus 5.000, got %v", order.CancellationFee)
+
+	// Customer: 100.000 - fee 5.000 = 95.000. Driver: 100.000 + 5.000.
+	// Escrow kembali ke nilai sebelum booking.
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(95000)),
+		"customer balance: %v", e.getBalance(t, ctx, custWallet))
+	require.True(t, e.getBalance(t, ctx, driverWallet).Equal(decimal.NewFromInt(105000)),
+		"driver balance: %v", e.getBalance(t, ctx, driverWallet))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBeforeBook))
+	require.True(t, estimated.Sub(decimal.NewFromInt(5000)).IsPositive(), "estimasi harus > fee")
+
+	assertLedgerBalanced(t, e, ctx, orderID)
+	assertCancelEvent(t, e, ctx, orderID, "CUSTOMER_CANCEL")
+}
+
+// Cancel setelah DRIVER_ARRIVED: fee 10.000 dari customer → credit driver;
+// refund (estimated - 10.000) ke customer.
+func TestIntegrationRide_CustomerCancelAfterArrived(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	dToken, _, driverWallet := newDriver(t, e, decimal.NewFromInt(100000))
+
+	escrowBeforeBook := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+	orderID, estimated := bookRide(t, e, custToken, "WALLET")
+
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+	w = updateRideStatus(t, e, dToken, orderID, "DRIVER_ARRIVED", "")
+	require.Equal(t, http.StatusOK, w.Code, "arrived: %s", w.Body.String())
+	require.Equal(t, "DRIVER_ARRIVED", updatedStatus(t, w))
+
+	w = updateRideStatus(t, e, custToken, orderID, "CANCELLED", "CUSTOMER_CANCEL")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	order := getOrder(t, e, ctx, orderID)
+	require.Equal(t, "CANCELLED", order.Status)
+	require.NotNil(t, order.CancellationReason)
+	require.Equal(t, "CUSTOMER_CANCEL", *order.CancellationReason)
+	require.NotNil(t, order.CancellationFee)
+	require.True(t, order.CancellationFee.Equal(decimal.NewFromInt(10000)), "fee harus 10.000, got %v", order.CancellationFee)
+
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(90000)),
+		"customer balance: %v", e.getBalance(t, ctx, custWallet))
+	require.True(t, e.getBalance(t, ctx, driverWallet).Equal(decimal.NewFromInt(110000)),
+		"driver balance: %v", e.getBalance(t, ctx, driverWallet))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBeforeBook))
+	require.True(t, estimated.Sub(decimal.NewFromInt(10000)).IsPositive(), "estimasi harus > fee")
+
+	assertLedgerBalanced(t, e, ctx, orderID)
+	assertCancelEvent(t, e, ctx, orderID, "CUSTOMER_CANCEL")
+}
+
+// TC-INT-RD-005 — No-Show: driver tiba (DRIVER_ARRIVED), customer tidak
+// muncul, driver cancel reason NO_SHOW → fee 10.000 dari customer → driver.
+func TestIntegrationRide_NoShowCancel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	dToken, dID, driverWallet := newDriver(t, e, decimal.NewFromInt(100000))
+
+	escrowBeforeBook := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+	orderID, estimated := bookRide(t, e, custToken, "WALLET")
+
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+	w = updateRideStatus(t, e, dToken, orderID, "DRIVER_ARRIVED", "")
+	require.Equal(t, http.StatusOK, w.Code, "arrived: %s", w.Body.String())
+
+	// Driver membatalkan karena customer no-show (sudah menunggu > 5 menit).
+	w = updateRideStatus(t, e, dToken, orderID, "CANCELLED", "NO_SHOW")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	order := getOrder(t, e, ctx, orderID)
+	require.Equal(t, "CANCELLED", order.Status)
+	require.NotNil(t, order.CancellationReason)
+	require.Equal(t, "NO_SHOW", *order.CancellationReason)
+	require.NotNil(t, order.CancellationFee)
+	require.True(t, order.CancellationFee.Equal(decimal.NewFromInt(10000)), "no-show fee harus 10.000, got %v", order.CancellationFee)
+
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(90000)),
+		"customer balance: %v", e.getBalance(t, ctx, custWallet))
+	require.True(t, e.getBalance(t, ctx, driverWallet).Equal(decimal.NewFromInt(110000)),
+		"driver balance: %v", e.getBalance(t, ctx, driverWallet))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBeforeBook))
+	require.True(t, estimated.Sub(decimal.NewFromInt(10000)).IsPositive(), "estimasi harus > fee")
+
+	// Driver kembali IDLE setelah cancel.
+	var ws string
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT working_status FROM users WHERE id = $1`, dID).Scan(&ws))
+	require.Equal(t, "IDLE", ws)
+
+	assertLedgerBalanced(t, e, ctx, orderID)
+	assertCancelEvent(t, e, ctx, orderID, "NO_SHOW")
+}
+
+// Anti-bypass (security): customer TIDAK bisa memicu NO_SHOW (fee) — hanya
+// driver tertunjuk yang boleh, walau status sudah DRIVER_ARRIVED.
+func TestIntegrationRide_CustomerNoShowForbidden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+	dToken, _, _ := newDriver(t, e, decimal.NewFromInt(100000))
+
+	orderID, _ := bookRide(t, e, custToken, "WALLET")
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+	w = updateRideStatus(t, e, dToken, orderID, "DRIVER_ARRIVED", "")
+	require.Equal(t, http.StatusOK, w.Code, "arrived: %s", w.Body.String())
+
+	w = updateRideStatus(t, e, custToken, orderID, "CANCELLED", "NO_SHOW")
+	require.Equal(t, http.StatusForbidden, w.Code, "customer tidak boleh NO_SHOW: %s", w.Body.String())
+
+	// Order tetap DRIVER_ARRIVED — transaksi gagal dan di-rollback.
+	order := getOrder(t, e, ctx, orderID)
+	require.Equal(t, "DRIVER_ARRIVED", order.Status)
 }
 
 // TC-INT-RD-006 — Driver Emergency Cancel (setelah assign) → refund penuh,

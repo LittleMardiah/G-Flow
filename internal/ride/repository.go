@@ -369,13 +369,14 @@ func (r *Repository) GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID
 }
 
 // CancelOrder menandai order CANCELLED + cancellation_reason secara atomik
-// (CAS) dengan guard status. Return true jika baris berubah.
-func (r *Repository) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string) (bool, error) {
+// (CAS) dengan guard status, sekaligus mencatat cancellation_fee yang
+// dipungut (0 jika tanpa penalti). Return true jika baris berubah.
+func (r *Repository) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error) {
 	tag, err := q.Exec(ctx, `
 		UPDATE ride_orders
-		SET status = 'CANCELLED', cancellation_reason = $3
+		SET status = 'CANCELLED', cancellation_reason = $3, cancellation_fee = $4
 		WHERE id = $1 AND status = $2
-	`, orderID, fromStatus, reason)
+	`, orderID, fromStatus, reason, fee)
 	if err != nil {
 		return false, err
 	}

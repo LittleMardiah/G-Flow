@@ -744,7 +744,11 @@ Solusi     : Implementasi cancellation fee + no-show + emergency path + audit
             admin_actions + test.
 Estimasi   : 4-6 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : FIXED (TD-068 2026-09-23 — cancellation fee di internal/ride:
+            cancel AFTER_ASSIGNED=5k, AFTER_ARRIVED/NO_SHOW=10k, emergency=full
+            refund; leder RIDE_CANCELLATION_FEE; guard actor NO_SHOW/EMERGENCY;
+            service+handler+repository+integration tests. GOAL: no-show timer
+            >5 menit di-enforce driver-side, belum ada kolom arrived_at.)
 Referensi  : audit_r02.log (deviasi cancel/penalti)
 
 ID         : TD-069
@@ -1538,19 +1542,56 @@ Prioritas  : TINGGI
 Status     : OPEN
 Referensi  : TD-074 (temuan OpenCode)
 
-===============================================================================
+ID         : TD-129
+Kategori   : BACKEND / FITUR
+Judul      : No-show rule (> 5 menit di DRIVER_ARRIVED) belum di-enforce.
+             Tidak ada kolom arrived_at; driver cukup kirim reason NO_SHOW
+             saat status DRIVER_ARRIVED tanpa validasi waktu tunggu.
+Dampak     : Driver bisa abuse no-show (cancel cepat tanpa tunggu customer
+             5 menit) → customer charged fee tidak adil.
+Solusi     : Tambah kolom arrived_at (migration), set saat PATCH status
+             DRIVER_ARRIVED, validasi NO_SHOW hanya jika now - arrived_at > 5 min.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-068 (temuan OpenCode)
+
+ID         : TD-130
+Kategori   : BACKEND / FITUR
+Judul      : Cancel fee untuk CASH order hanya tercatat di DB (cancellation_fee
+             column) tanpa ledger entry — no escrow untuk debit.
+Dampak     : Fee CASH tidak masuk wallet driver via ledger; konsisten
+             dengan sistem "cash offline" tapi tidak audit-able.
+Solusi     : Keputusan bisnis — debit wallet customer langsung, ATAU
+             catat sebagai overdue_debt, ATAU keep offline dengan dokumentasi.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-068 (temuan OpenCode)
+
+ID         : TD-131
+Kategori   : MOBILE
+Judul      : Field cancellation_fee (response PATCH /rides/:id/status)
+             belum di-expose di customer_app/driver_app screen.
+Dampak     : User tidak lihat berapa fee yang dikenakan saat cancel —
+             UX kurang transparan.
+Solusi     : Update customer/driver screen cancel confirmation dialog untuk
+             tampilkan cancellation_fee dari response.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-068 (temuan OpenCode)
+
+================================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 122 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 125 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 48 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127)
+- TINGGI  : 34 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-069, TD-070, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
+- SEDANG  : 51 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131)
 - RENDAH  : 26 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119)
 
-STATUS: 32 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 89 item OPEN (24 item lama + 65 item baru dari SECTION F, TD-058 s/d TD-128).
+STATUS: 33 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 91 item OPEN (24 item lama + 67 item baru dari SECTION F, TD-058 s/d TD-131).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1576,11 +1617,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-23):
-   - Total hutang teridentifikasi      : 122 item (TD-051 di-reserve/skip; +70 dari SECTION F/follow-up, TD-058 s/d TD-128).
-   - Sudah FIXED/CLOSED                : 32 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074).
+   - Total hutang teridentifikasi      : 125 item (TD-051 di-reserve/skip; +73 dari SECTION F/follow-up, TD-058 s/d TD-131).
+   - Sudah FIXED/CLOSED                : 33 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                         : 89 item (24 item lama + 65 item baru,
-                                          TD-058 s/d TD-128).
+- ❌ OPEN                         : 91 item (24 item lama + 67 item baru,
+                                          TD-058 s/d TD-131).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -1773,6 +1814,19 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       OpenCode (referensi TD-074). Prioritas TINGGI, STATUS OPEN. Total
       register naik dari 121 → 122 item (TINGGI 34 → 35; OPEN 88 → 89;
       KRITIS 8 / SEDANG 48 / RENDAH 26 / FIXED 32 / DEFERRED 1 tetap).
+    - TD-068 FOLLOW-UP (2026-09-23): menambahkan 3 gap follow-up TD-068
+      (semuanya SEDANG, OPEN, referensi TD-068 temuan OpenCode):
+      TD-129 (BACKEND/FITUR): no-show rule (>5 menit di DRIVER_ARRIVED)
+      belum di-enforce — tidak ada kolom arrived_at, driver bisa kirim
+      NO_SHOW tanpa validasi waktu tunggu → abuse fee tidak adil.
+      TD-130 (BACKEND/FITUR): cancel fee CASH hanya tercatat di kolom
+      cancellation_fee tanpa ledger entry — tidak audit-able; butuh
+      keputusan bisnis (debit langsung / overdue_debt / keep offline).
+      TD-131 (MOBILE): field cancellation_fee response PATCH
+      /rides/:id/status belum di-expose di screen customer/driver_app.
+      Total register naik dari 122 → 125 item (SEDANG 48 → 51; OPEN
+      88 → 91; KRITIS 8 / TINGGI 35 / RENDAH 26 / FIXED 32 / DEFERRED 1
+      tetap). Range SECTION F: TD-058 s/d TD-128 → TD-058 s/d TD-131.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
