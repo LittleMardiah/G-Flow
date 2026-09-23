@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ type SendService interface {
 	UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error)
 	AcceptSendOrder(ctx context.Context, req AcceptSendOrderRequest) (*AcceptSendOrderResponse, error)
 	UpdateSendOrderStop(ctx context.Context, req UpdateSendOrderStopRequest) (*UpdateSendOrderStopResponse, error)
+	GetSendOrderHistory(ctx context.Context, senderID uuid.UUID, page, pageSize int) ([]*SendOrder, int, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -141,6 +143,53 @@ func (h *Handler) GetSendOrder(c *gin.Context) {
 		"data": gin.H{
 			"order": detail.Order,
 			"stops": detail.Stops,
+		},
+	})
+}
+
+// GetSendOrderHistory GET /api/v1/send-orders?page=&page_size=
+// Auth: customer (RBAC di route). Riwayat send order sender dengan pagination
+// (default page=1, page_size=20, maks 50; `limit` alias dari `page_size`),
+// urut created_at DESC. Query invalid → 400 INVALID_REQUEST.
+func (h *Handler) GetSendOrderHistory(c *gin.Context) {
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page")
+		return
+	}
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", c.DefaultQuery("limit", "20")))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page_size")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	orders, total, err := h.svc.GetSendOrderHistory(c.Request.Context(), userID, page, pageSize)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"orders": orders,
+			"meta": gin.H{
+				"page":        page,
+				"page_size":   pageSize,
+				"total":       total,
+				"total_pages": totalPages,
+			},
 		},
 	})
 }

@@ -51,6 +51,7 @@ type FoodService interface {
 	GetFoodOrder(ctx context.Context, orderID, userID uuid.UUID) (*FoodOrder, error)
 	GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error)
 	GetFoodOrderHistory(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]*FoodOrder, int, error)
+	GetMerchantOrders(ctx context.Context, userID, merchantID uuid.UUID, status string, page, pageSize int) ([]*FoodOrder, int, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -780,6 +781,64 @@ func (h *Handler) GetFoodOrderHistory(c *gin.Context) {
 				"page":      page,
 				"page_size": pageSize,
 				"total":     total,
+			},
+		},
+	})
+}
+
+// GetMerchantOrders GET /api/v1/merchants/:id/orders
+// Auth: merchant (RBAC di route). Daftar food order milik merchant dengan
+// pagination (default page=1, page_size=20, maks 50; `limit` alias dari
+// `page_size`), urut created_at DESC. Filter status opsional (merchant_status
+// ATAU status order). Hanya merchant pemilik yang bisa mengakses — ownership
+// divalidasi di Service (GetMerchantByUserID + cocokkan ID merch).
+// Error: 400 invalid page/page_size, 403 bukan pemilik, 404 merchant tidak ada.
+func (h *Handler) GetMerchantOrders(c *gin.Context) {
+	merchantID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_MERCHANT_ID", "invalid merchant id")
+		return
+	}
+
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page")
+		return
+	}
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", c.DefaultQuery("limit", "20")))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page_size")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	status := strings.ToUpper(c.Query("status"))
+
+	orders, total, err := h.svc.GetMerchantOrders(c.Request.Context(), userID, merchantID, status, page, pageSize)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"orders": orders,
+			"meta": gin.H{
+				"page":        page,
+				"page_size":   pageSize,
+				"total":       total,
+				"total_pages": totalPages,
 			},
 		},
 	})

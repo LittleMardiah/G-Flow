@@ -231,6 +231,19 @@ func (m *mockRepo) CountFoodOrdersByCustomer(ctx context.Context, customerID uui
 	return args.Int(0), args.Error(1)
 }
 
+func (m *mockRepo) GetFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string, limit, offset int) ([]*FoodOrder, error) {
+	args := m.Called(ctx, merchantID, status, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*FoodOrder), args.Error(1)
+}
+
+func (m *mockRepo) CountFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string) (int, error) {
+	args := m.Called(ctx, merchantID, status)
+	return args.Int(0), args.Error(1)
+}
+
 func (m *mockRepo) SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error) {
 	args := m.Called(ctx, q, walletType)
 	return args.Get(0).(uuid.UUID), args.Error(1)
@@ -1216,6 +1229,61 @@ func TestGetFoodOrderHistory_Paging(t *testing.T) {
 	repo.On("GetFoodOrdersByCustomer", mock.Anything, fCustID, 20, 40).Return([]*FoodOrder{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
 	orders, total, err := svc.GetFoodOrderHistory(context.Background(), fCustID, 3, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Empty(t, orders)
+}
+
+func TestGetMerchantOrders_OwnerOK(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(fMerchant(), nil)
+	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "WAITING").Return(1, nil)
+	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "WAITING", 20, 0).
+		Return([]*FoodOrder{fFoodOrder(foodStatusCreated, PaymentMethodWallet, nil)}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "WAITING", 1, 20)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, orders, 1)
+	repo.AssertExpectations(t)
+}
+
+func TestGetMerchantOrders_NotOwner(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("GetMerchantByUserID", mock.Anything, fCustID).
+		Return(&Merchant{ID: uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), UserID: fCustID}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	_, _, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "", 1, 20)
+	assert.ErrorIs(t, err, ErrNotMerchantOwner)
+}
+
+func TestGetMerchantOrders_MerchantNotFound(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(nil, ErrMerchantNotFound)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	_, _, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "", 1, 20)
+	assert.ErrorIs(t, err, ErrMerchantNotFound)
+}
+
+func TestGetMerchantOrders_Empty(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(fMerchant(), nil)
+	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "").Return(0, nil)
+	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "", 20, 0).Return([]*FoodOrder{}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "", 1, 20)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, total)
+	assert.Empty(t, orders)
+}
+
+func TestGetMerchantOrders_Paging(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(fMerchant(), nil)
+	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "DELIVERED").Return(1, nil)
+	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "DELIVERED", 20, 40).Return([]*FoodOrder{}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "DELIVERED", 3, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Empty(t, orders)

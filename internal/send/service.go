@@ -171,6 +171,8 @@ type Repo interface {
 	UpdateSendOrderStatus(ctx context.Context, q Querier, orderID uuid.UUID,
 		fromStatus, toStatus string) (bool, error)
 	GetSendOrderStops(ctx context.Context, orderID uuid.UUID) ([]*SendOrderStop, error)
+	GetSendOrdersBySender(ctx context.Context, senderID uuid.UUID, limit, offset int) ([]*SendOrder, error)
+	CountSendOrdersBySender(ctx context.Context, senderID uuid.UUID) (int, error)
 
 	// Task 3.6 — accept order, status machine lanjutan & settlement.
 	GetDriver(ctx context.Context, driverID uuid.UUID) (*SendDriver, error)
@@ -896,6 +898,26 @@ func (s *Service) GetSendOrder(ctx context.Context, orderID, userID uuid.UUID) (
 		return nil, err
 	}
 	return &SendOrderDetail{Order: order, Stops: stops}, nil
+}
+
+// GetSendOrderHistory mengembalikan riwayat send order milik sender dengan
+// pagination (page mulai 1, page_size 1..50, default 20), urut created_at DESC.
+func (s *Service) GetSendOrderHistory(ctx context.Context, senderID uuid.UUID, page, pageSize int) ([]*SendOrder, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 20
+	}
+	total, err := s.repo.CountSendOrdersBySender(ctx, senderID)
+	if err != nil {
+		return nil, 0, err
+	}
+	orders, err := s.repo.GetSendOrdersBySender(ctx, senderID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
 }
 
 // Actor kinds pada send order.

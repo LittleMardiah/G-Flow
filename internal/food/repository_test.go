@@ -570,3 +570,28 @@ func TestRepo_CountFoodOrdersByCustomer(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+func TestRepo_GetFoodOrdersByMerchant(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	cols := foodOrderCols
+	mDB.ExpectQuery("FROM food_orders WHERE merchant_id").
+		WithArgs(fMerchID, "WAITING", 20, 0).
+		WillReturnRows(pgxmock.NewRows(cols).
+			AddRow(foodOrderRowValues(fOrderID, fCustID, fMerchID, nil)...).
+			AddRow(foodOrderRowValues(uuid.New(), fCustID, fMerchID, nil)...))
+	orders, err := r.GetFoodOrdersByMerchant(context.Background(), fMerchID, "WAITING", 20, 0)
+	assert.NoError(t, err)
+	assert.Len(t, orders, 2)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_CountFoodOrdersByMerchant(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectQuery("SELECT COUNT").
+		WithArgs(fMerchID, "DELIVERED").
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(3))
+	count, err := r.CountFoodOrdersByMerchant(context.Background(), fMerchID, "DELIVERED")
+	assert.NoError(t, err)
+	assert.Equal(t, 3, count)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+

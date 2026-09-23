@@ -189,6 +189,8 @@ type Repo interface {
 	GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error)
 	GetFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID, limit, offset int) ([]*FoodOrder, error)
 	CountFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID) (int, error)
+	GetFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string, limit, offset int) ([]*FoodOrder, error)
+	CountFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string) (int, error)
 	SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error)
 
 	// Task 3.4 — Settlement & status machine.
@@ -1628,6 +1630,36 @@ func (s *Service) GetFoodOrderHistory(ctx context.Context, userID uuid.UUID, pag
 		return nil, 0, err
 	}
 	orders, err := s.repo.GetFoodOrdersByCustomer(ctx, userID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+// GetMerchantOrders mengembalikan daftar food order milik merchant dengan
+// pagination (page mulai 1, page_size 1..50, default 20) dan filter status
+// opsional (status order ATAU merchant_status). Hanya merchant pemilik yang
+// bisa mengakses: merchant di-resolve dari userID (GetMerchantByUserID), lalu
+// merchantID di URL harus cocok — selain itu ErrNotMerchantOwner (403).
+func (s *Service) GetMerchantOrders(ctx context.Context, userID, merchantID uuid.UUID, status string, page, pageSize int) ([]*FoodOrder, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 20
+	}
+	merchant, err := s.repo.GetMerchantByUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if merchant.ID != merchantID {
+		return nil, 0, ErrNotMerchantOwner
+	}
+	total, err := s.repo.CountFoodOrdersByMerchant(ctx, merchantID, status)
+	if err != nil {
+		return nil, 0, err
+	}
+	orders, err := s.repo.GetFoodOrdersByMerchant(ctx, merchantID, status, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, err
 	}

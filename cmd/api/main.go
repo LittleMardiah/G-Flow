@@ -241,6 +241,7 @@ func main() {
 		merchants.POST("/:id/items", foodHandler.CreateItem)
 		merchants.PATCH("/:id/items/:item_id", foodHandler.UpdateItem)
 		merchants.DELETE("/:id/items/:item_id", foodHandler.DeleteItem)
+		merchants.GET("/:id/orders", foodHandler.GetMerchantOrders)
 	}
 
 	// G-Food: food orders (Task 3.3). Auth wajib; RBAC: POST & GET "" hanya
@@ -254,12 +255,13 @@ func main() {
 		foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)
 	}
 
-	// G-Send: send orders (Task 3.5). Auth wajib; POST hanya customer.
-	// Detail/status bisa diakses sender (pemilik) atau driver tertunjuk
-	// (ownership divalidasi di Service). GET history ditunda ke Task 3.6.
+	// G-Send: send orders (Task 3.5). Auth wajib; POST & GET history hanya
+	// customer. Detail/status bisa diakses sender (pemilik) atau driver
+	// tertunjuk (ownership divalidasi di Service).
 	sendOrders := r.Group("/api/v1/send-orders", middleware.AuthMiddleware(jwtService, blacklistService))
 	{
 		sendOrders.POST("", auth.RBACMiddleware("customer"), sendHandler.CreateSendOrder)
+		sendOrders.GET("", auth.RBACMiddleware("customer"), sendHandler.GetSendOrderHistory)
 		sendOrders.GET("/:id", sendHandler.GetSendOrder)
 		sendOrders.PATCH("/:id", sendHandler.UpdateSendOrderStatus)
 		sendOrders.POST("/:id/accept", auth.RBACMiddleware("driver"), sendHandler.AcceptSendOrder)

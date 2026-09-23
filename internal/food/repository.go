@@ -856,6 +856,46 @@ func (r *Repository) CountFoodOrdersByCustomer(ctx context.Context, customerID u
 	return count, err
 }
 
+// GetFoodOrdersByMerchant mengambil daftar food order milik merchant
+// (pagination, urut terbaru). Filter status opsional: mencocokkan status order
+// ATAU merchant_status (mis. WAITING/CONFIRMED/PREPARING/READY untuk proses
+// merchant, DELIVERED untuk order yang sudah selesai). Dipakai GET
+// /merchants/:id/orders.
+func (r *Repository) GetFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string, limit, offset int) ([]*FoodOrder, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+foodOrderColumns+`
+		FROM food_orders
+		WHERE merchant_id = $1 AND ($2 = '' OR status::text = $2 OR merchant_status::text = $2)
+		ORDER BY created_at DESC
+		LIMIT $3 OFFSET $4
+	`, merchantID, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	orders := make([]*FoodOrder, 0)
+	for rows.Next() {
+		o, err := scanFoodOrderRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	return orders, rows.Err()
+}
+
+// CountFoodOrdersByMerchant menghitung total food order milik merchant dengan
+// filter status opsional (sama seperti GetFoodOrdersByMerchant).
+func (r *Repository) CountFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM food_orders
+		WHERE merchant_id = $1 AND ($2 = '' OR status::text = $2 OR merchant_status::text = $2)
+	`, merchantID, status).Scan(&count)
+	return count, err
+}
+
 // --- scanner food orders ---
 
 func scanFoodOrderRow(row pgx.Row) (*FoodOrder, error) {

@@ -59,6 +59,14 @@ func (m *mockSendService) UpdateSendOrderStop(ctx context.Context, req UpdateSen
 	return args.Get(0).(*UpdateSendOrderStopResponse), args.Error(1)
 }
 
+func (m *mockSendService) GetSendOrderHistory(ctx context.Context, senderID uuid.UUID, page, pageSize int) ([]*SendOrder, int, error) {
+	args := m.Called(ctx, senderID, page, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Int(1), args.Error(2)
+	}
+	return args.Get(0).([]*SendOrder), args.Int(1), args.Error(2)
+}
+
 func newSendHandlerCtx(t *testing.T, method, target, body string, params ...gin.Param) (*mockSendService, *gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -166,6 +174,50 @@ func TestHandler_GetSendOrder(t *testing.T) {
 	h5 := NewHandler(svc5)
 	h5.GetSendOrder(c5)
 	assert.Equal(t, http.StatusNotFound, w5.Code)
+}
+
+func TestHandler_GetSendOrderHistory(t *testing.T) {
+	svc, c, w := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page=1&limit=10", "")
+	c.Set("user_id", fCustID.String())
+	svc.On("GetSendOrderHistory", mock.Anything, fCustID, 1, 10).
+		Return([]*SendOrder{fSendOrder(sendStatusDelivered, PaymentMethodWallet, nil)}, 1, nil)
+	h := NewHandler(svc)
+	h.GetSendOrderHistory(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+
+	svc2, c2, w2 := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page=2&page_size=5", "")
+	c2.Set("user_id", fCustID.String())
+	svc2.On("GetSendOrderHistory", mock.Anything, fCustID, 2, 5).Return([]*SendOrder{}, 0, nil)
+	h2 := NewHandler(svc2)
+	h2.GetSendOrderHistory(c2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+}
+
+func TestHandler_GetSendOrderHistory_Errors(t *testing.T) {
+	_, c, w := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page=1&page_size=10", "")
+	h := NewHandler(new(mockSendService))
+	h.GetSendOrderHistory(c)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	svc2, c2, w2 := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page=abc", "")
+	c2.Set("user_id", fCustID.String())
+	h2 := NewHandler(svc2)
+	h2.GetSendOrderHistory(c2)
+	assert.Equal(t, http.StatusBadRequest, w2.Code)
+
+	svc3, c3, w3 := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page_size=abc", "")
+	c3.Set("user_id", fCustID.String())
+	h3 := NewHandler(svc3)
+	h3.GetSendOrderHistory(c3)
+	assert.Equal(t, http.StatusBadRequest, w3.Code)
+
+	svc4, c4, w4 := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page=1&page_size=10", "")
+	c4.Set("user_id", fCustID.String())
+	svc4.On("GetSendOrderHistory", mock.Anything, fCustID, 1, 10).Return(nil, 0, ErrSendOrderNotFound)
+	h4 := NewHandler(svc4)
+	h4.GetSendOrderHistory(c4)
+	assert.Equal(t, http.StatusNotFound, w4.Code)
 }
 
 func TestHandler_UpdateSendOrderStatus(t *testing.T) {

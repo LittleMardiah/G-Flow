@@ -159,6 +159,14 @@ func (m *mockFoodService) GetFoodOrderHistory(ctx context.Context, userID uuid.U
 	return args.Get(0).([]*FoodOrder), args.Int(1), args.Error(2)
 }
 
+func (m *mockFoodService) GetMerchantOrders(ctx context.Context, userID, merchantID uuid.UUID, status string, page, pageSize int) ([]*FoodOrder, int, error) {
+	args := m.Called(ctx, userID, merchantID, status, page, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Int(1), args.Error(2)
+	}
+	return args.Get(0).([]*FoodOrder), args.Int(1), args.Error(2)
+}
+
 func newFoodHandlerCtx(t *testing.T, method, target, body string, params ...gin.Param) (*mockFoodService, *gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -489,6 +497,65 @@ func TestHandler_GetFoodOrderHistory(t *testing.T) {
 	h2 := NewHandler(svc2)
 	h2.GetFoodOrderHistory(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
+}
+
+func TestHandler_GetMerchantOrders(t *testing.T) {
+	svc, c, w := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders?page=1&limit=10&status=waiting", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	c.Set("user_id", fCustID.String())
+	svc.On("GetMerchantOrders", mock.Anything, fCustID, fMerchID, "WAITING", 1, 10).
+		Return([]*FoodOrder{{ID: fOrderID, MerchantID: fMerchID, Status: foodStatusCreated}}, 1, nil)
+	h := NewHandler(svc)
+	h.GetMerchantOrders(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+
+	svc2, c2, w2 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	c2.Set("user_id", fCustID.String())
+	svc2.On("GetMerchantOrders", mock.Anything, fCustID, fMerchID, "", 1, 20).
+		Return([]*FoodOrder{}, 0, nil)
+	h2 := NewHandler(svc2)
+	h2.GetMerchantOrders(c2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+}
+
+func TestHandler_GetMerchantOrders_Errors(t *testing.T) {
+	_, c, w := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	h := NewHandler(new(mockFoodService))
+	h.GetMerchantOrders(c)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	svc2, c2, w2 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders?page=abc", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	c2.Set("user_id", fCustID.String())
+	h2 := NewHandler(svc2)
+	h2.GetMerchantOrders(c2)
+	assert.Equal(t, http.StatusBadRequest, w2.Code)
+
+	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders?page_size=abc", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	c3.Set("user_id", fCustID.String())
+	h3 := NewHandler(svc3)
+	h3.GetMerchantOrders(c3)
+	assert.Equal(t, http.StatusBadRequest, w3.Code)
+
+	svc4, c4, w4 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	c4.Set("user_id", fCustID.String())
+	svc4.On("GetMerchantOrders", mock.Anything, fCustID, fMerchID, "", 1, 20).Return(nil, 0, ErrNotMerchantOwner)
+	h4 := NewHandler(svc4)
+	h4.GetMerchantOrders(c4)
+	assert.Equal(t, http.StatusForbidden, w4.Code)
+
+	svc5, c5, w5 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders", "",
+		gin.Param{Key: "id", Value: fMerchID.String()})
+	c5.Set("user_id", fCustID.String())
+	svc5.On("GetMerchantOrders", mock.Anything, fCustID, fMerchID, "", 1, 20).Return(nil, 0, ErrMerchantNotFound)
+	h5 := NewHandler(svc5)
+	h5.GetMerchantOrders(c5)
+	assert.Equal(t, http.StatusNotFound, w5.Code)
 }
 
 func TestHandler_StatusForError(t *testing.T) {

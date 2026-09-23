@@ -508,3 +508,27 @@ func TestRepo_GetSendOrderStops(t *testing.T) {
 	_, err = r.GetSendOrderStops(context.Background(), fOrderID)
 	assert.Error(t, err)
 }
+
+func TestRepo_GetSendOrdersBySender(t *testing.T) {
+	r, mDB := newSendRepo(t)
+	mDB.ExpectQuery("FROM send_orders WHERE sender_id").
+		WithArgs(fCustID, 20, 0).
+		WillReturnRows(pgxmock.NewRows(sendOrderCols).
+			AddRow(sendOrderRowValues(fOrderID, fCustID, nil)...).
+			AddRow(sendOrderRowValues(uuid.New(), fCustID, nil)...))
+	orders, err := r.GetSendOrdersBySender(context.Background(), fCustID, 20, 0)
+	assert.NoError(t, err)
+	assert.Len(t, orders, 2)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_CountSendOrdersBySender(t *testing.T) {
+	r, mDB := newSendRepo(t)
+	mDB.ExpectQuery("SELECT COUNT").
+		WithArgs(fCustID).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(4))
+	count, err := r.CountSendOrdersBySender(context.Background(), fCustID)
+	assert.NoError(t, err)
+	assert.Equal(t, 4, count)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}

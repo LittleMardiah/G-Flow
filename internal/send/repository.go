@@ -559,6 +559,42 @@ func (r *Repository) GetSendOrderStops(ctx context.Context, orderID uuid.UUID) (
 	return stops, rows.Err()
 }
 
+// GetSendOrdersBySender mengambil riwayat send order milik sender (pagination,
+// urut terbaru). Dipakai GET /send-orders.
+func (r *Repository) GetSendOrdersBySender(ctx context.Context, senderID uuid.UUID, limit, offset int) ([]*SendOrder, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+sendOrderColumns+`
+		FROM send_orders
+		WHERE sender_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, senderID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	orders := make([]*SendOrder, 0)
+	for rows.Next() {
+		o, err := scanSendOrderRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	return orders, rows.Err()
+}
+
+// CountSendOrdersBySender menghitung total send order milik sender (untuk
+// pagination meta).
+func (r *Repository) CountSendOrdersBySender(ctx context.Context, senderID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM send_orders WHERE sender_id = $1
+	`, senderID).Scan(&count)
+	return count, err
+}
+
 // --- scanner send orders ---
 
 func scanSendOrderRow(row pgx.Row) (*SendOrder, error) {

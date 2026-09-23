@@ -92,6 +92,19 @@ func (m *mockRepo) GetSendOrderStops(ctx context.Context, orderID uuid.UUID) ([]
 	return args.Get(0).([]*SendOrderStop), args.Error(1)
 }
 
+func (m *mockRepo) GetSendOrdersBySender(ctx context.Context, senderID uuid.UUID, limit, offset int) ([]*SendOrder, error) {
+	args := m.Called(ctx, senderID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*SendOrder), args.Error(1)
+}
+
+func (m *mockRepo) CountSendOrdersBySender(ctx context.Context, senderID uuid.UUID) (int, error) {
+	args := m.Called(ctx, senderID)
+	return args.Int(0), args.Error(1)
+}
+
 func (m *mockRepo) GetDriver(ctx context.Context, driverID uuid.UUID) (*SendDriver, error) {
 	args := m.Called(ctx, driverID)
 	if args.Get(0) == nil {
@@ -1316,6 +1329,43 @@ func TestGetSendOrder_Success(t *testing.T) {
 	assert.NoError(t, err)
 	require.NotNil(t, detail)
 	assert.Len(t, detail.Stops, 1)
+}
+
+// ---- GetSendOrderHistory ----
+
+func TestGetSendOrderHistory(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("CountSendOrdersBySender", mock.Anything, fCustID).Return(2, nil)
+	repo.On("GetSendOrdersBySender", mock.Anything, fCustID, 20, 0).
+		Return([]*SendOrder{fSendOrder(sendStatusDelivered, PaymentMethodWallet, nil)}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 0, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Len(t, orders, 1)
+	repo.AssertExpectations(t)
+}
+
+func TestGetSendOrderHistory_Empty(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("CountSendOrdersBySender", mock.Anything, fCustID).Return(0, nil)
+	repo.On("GetSendOrdersBySender", mock.Anything, fCustID, 20, 0).Return([]*SendOrder{}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 1, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, total)
+	assert.Empty(t, orders)
+}
+
+func TestGetSendOrderHistory_Paging(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("CountSendOrdersBySender", mock.Anything, fCustID).Return(1, nil)
+	repo.On("GetSendOrdersBySender", mock.Anything, fCustID, 20, 40).Return([]*SendOrder{}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 3, 0)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Empty(t, orders)
 }
 
 // ---- AcceptSendOrder ----
