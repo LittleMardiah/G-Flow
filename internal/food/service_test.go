@@ -264,6 +264,42 @@ func (m *mockRepo) ResetDriverIdle(ctx context.Context, q Querier, driverID uuid
 	return args.Error(0)
 }
 
+func (m *mockRepo) GetFoodDriver(ctx context.Context, driverID uuid.UUID) (*FoodDriver, error) {
+	args := m.Called(ctx, driverID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*FoodDriver), args.Error(1)
+}
+
+func (m *mockRepo) GetFoodDriverActiveFoodOrdersCount(ctx context.Context, driverID uuid.UUID) (int, error) {
+	args := m.Called(ctx, driverID)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *mockRepo) LockFoodDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) error {
+	args := m.Called(ctx, q, driverID)
+	return args.Error(0)
+}
+
+func (m *mockRepo) LockFoodOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) (*FoodOrder, error) {
+	args := m.Called(ctx, q, orderID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*FoodOrder), args.Error(1)
+}
+
+func (m *mockRepo) AssignDriverToFoodOrder(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, q, orderID, driverID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockRepo) UpdateFoodDriverWorkingStatus(ctx context.Context, q Querier, driverID uuid.UUID, workingStatus string) error {
+	args := m.Called(ctx, q, driverID, workingStatus)
+	return args.Error(0)
+}
+
 type mockLedger struct {
 	mock.Mock
 }
@@ -359,6 +395,18 @@ func setupFoodDB(mDB pgxmock.PgxPoolIface, idemKey string, owner uuid.UUID) {
 	mDB.ExpectExec("SET LOCAL statement_timeout").
 		WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
+}
+
+// foodIdemProceed menyiapkan hanya jalan idempotency L2 (SELECT miss → INSERT
+// PROCESSING → proceed) tanpa BEGIN/SET — dipakai test yang berhenti sebelum
+// transaksi dibuka.
+func foodIdemProceed(mDB pgxmock.PgxPoolIface, idemKey string, owner uuid.UUID) {
+	mDB.ExpectQuery("SELECT state, response_body, debounce_at").
+		WithArgs(idemKey, owner).
+		WillReturnError(pgx.ErrNoRows)
+	mDB.ExpectExec("INSERT INTO idempotency_cache").
+		WithArgs(idemKey, owner).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 }
 
 // RegisterMerchant
@@ -1435,4 +1483,302 @@ func Test_refundFoodEscrow_NoWallet(t *testing.T) {
 	o.CustomerWalletID = nil
 	err := svc.refundFoodEscrow(context.Background(), nil, o)
 	assert.ErrorIs(t, err, ErrWalletNotFound)
+}
+
+// ---- AcceptFoodOrder (TD-078) ----
+
+func fDriver() *FoodDriver {
+	return &FoodDriver{ID: fDriverID, UserType: userTypeDriver, Status: statusActive, WorkingStatus: workingStatusIdle}
+}
+
+func TestAcceptFoodOrder_IdempotencyKeyRequired(t *testing.T) {
+	svc := NewService(new(mockRepo), nil, nil, new(mockLedger))
+	_, err := svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID})
+	assert.ErrorIs(t, err, ErrIdempotencyKeyRequired)
+}
+
+func TestAcceptFoodOrder_DriverErrors(t *testing.T) {
+	repo := new(mockRepo)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(nil, ErrUserNotFound)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	_, err := svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrUserNotFound)
+
+	repo2 := new(mockRepo)
+	d2 := fDriver()
+	d2.UserType = userTypeCustomer
+	repo2.On("GetFoodDriver", mock.Anything, fDriverID).Return(d2, nil)
+	svc2 := NewService(repo2, nil, nil, new(mockLedger))
+	_, err = svc2.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrNotDriver)
+
+	repo3 := new(mockRepo)
+	d3 := fDriver()
+	d3.Status = "SUSPENDED"
+	repo3.On("GetFoodDriver", mock.Anything, fDriverID).Return(d3, nil)
+	svc3 := NewService(repo3, nil, nil, new(mockLedger))
+	_, err = svc3.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrDriverInactive)
+
+	repo4 := new(mockRepo)
+	d4 := fDriver()
+	d4.WorkingStatus = workingStatusBusy
+	repo4.On("GetFoodDriver", mock.Anything, fDriverID).Return(d4, nil)
+	svc4 := NewService(repo4, nil, nil, new(mockLedger))
+	_, err = svc4.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrDriverBusy)
+}
+
+func TestAcceptFoodOrder_CountError(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	foodIdemProceed(mDB, "k", fDriverID)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, pgx.ErrNoRows)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_CapacityExceeded(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	foodIdemProceed(mDB, "k", fDriverID)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(driverMaxActiveFoodOrders, nil)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrDriverCapacityExceeded)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_IdempotencyInProgress(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	future := time.Now().Add(5 * time.Minute)
+	mDB.ExpectQuery("SELECT state, response_body, debounce_at").
+		WithArgs("k", fDriverID).
+		WillReturnRows(pgxmock.NewRows([]string{"state", "response_body", "debounce_at"}).
+			AddRow(pgProcessing, "{}", &future))
+
+	repo := new(mockRepo)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrIdempotencyInProgress)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_LockOrderTimeout(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(nil, &pgconn.PgError{Code: "55P03"})
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrLockTimeout)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_LockOrderLostRace(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(nil, ErrFoodOrderNotFound)
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(fFoodOrder(foodStatusPreparing, PaymentMethodCash, nil), nil)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrOrderNotReadyForAccept)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_AssignNotOK(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(false, nil)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrOrderNotReadyForAccept)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_AssignError(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(false, pgx.ErrNoRows)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_WorkingStatusError(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(true, nil)
+	repo.On("UpdateFoodDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusBusy).
+		Return(pgx.ErrNoRows)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_EventError(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(true, nil)
+	repo.On("UpdateFoodDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusBusy).Return(nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_CommitError(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(true, nil)
+	repo.On("UpdateFoodDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusBusy).Return(nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mDB.ExpectCommit().WillReturnError(pgx.ErrTxClosed)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, pgx.ErrTxClosed)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_CacheError(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(true, nil)
+	repo.On("UpdateFoodDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusBusy).Return(nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs("k", fDriverID, pgxmock.AnyArg()).
+		WillReturnError(pgx.ErrNoRows)
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_Success(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	repo.On("GetFoodDriver", mock.Anything, fDriverID).Return(fDriver(), nil)
+	repo.On("GetFoodDriverActiveFoodOrdersCount", mock.Anything, fDriverID).Return(0, nil)
+	setupFoodDB(mDB, "k", fDriverID)
+	repo.On("LockFoodDriverUserForAccept", mock.Anything, mock.Anything, fDriverID).Return(nil)
+	repo.On("LockFoodOrderForAccept", mock.Anything, mock.Anything, fOrderID).
+		Return(fFoodOrder(foodStatusReadyForPickup, PaymentMethodCash, nil), nil)
+	repo.On("AssignDriverToFoodOrder", mock.Anything, mock.Anything, fOrderID, fDriverID).Return(true, nil)
+	repo.On("UpdateFoodDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusBusy).Return(nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs("k", fDriverID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	resp, err := svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, fOrderID, resp.ID)
+	assert.Equal(t, fDriverID, resp.DriverID)
+	assert.Equal(t, foodStatusReadyForPickup, resp.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestAcceptFoodOrder_IdempotentRedis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	cached := AcceptFoodOrderResponse{ID: fOrderID, DriverID: fDriverID, Status: foodStatusReadyForPickup}
+	cachedJSON, _ := json.Marshal(cached)
+	redisVal, _ := json.Marshal(redisCache{State: redisCompleted, Response: cachedJSON})
+	assert.NoError(t, mr.Set(redisKey(fDriverID, "k"), string(redisVal)))
+
+	svc := NewService(new(mockRepo), nil, rdb, new(mockLedger))
+	resp, err := svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.NoError(t, err)
+	assert.Equal(t, foodStatusReadyForPickup, resp.Status)
+}
+
+func TestAcceptFoodOrder_RedisInvalidCached(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	redisVal, _ := json.Marshal(redisCache{State: redisCompleted, Response: json.RawMessage(`"bad"`)})
+	assert.NoError(t, mr.Set(redisKey(fDriverID, "k"), string(redisVal)))
+
+	svc := NewService(new(mockRepo), nil, rdb, new(mockLedger))
+	_, err := svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
+	assert.ErrorIs(t, err, ErrInvalidCachedResponse)
 }

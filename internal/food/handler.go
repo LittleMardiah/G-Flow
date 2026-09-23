@@ -52,6 +52,9 @@ type FoodService interface {
 	GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error)
 	GetFoodOrderHistory(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]*FoodOrder, int, error)
 	GetMerchantOrders(ctx context.Context, userID, merchantID uuid.UUID, status string, page, pageSize int) ([]*FoodOrder, int, error)
+
+	// Task 3.5.4 — Food driver accept (TD-078).
+	AcceptFoodOrder(ctx context.Context, req AcceptFoodOrderRequest) (*AcceptFoodOrderResponse, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -844,6 +847,43 @@ func (h *Handler) GetMerchantOrders(c *gin.Context) {
 	})
 }
 
+// AcceptFoodOrder POST /api/v1/food-orders/:food_order_id/accept
+// Auth: driver. Idempotency key wajib di header X-Idempotency-Key (TD-078,
+// Task 3.5.4). Capacity check + lock FOR UPDATE NOWAIT + CAS assign driver:
+// status READY_FOR_PICKUP + driver_id IS NULL → driver_id diset (status order
+// tetap READY_FOR_PICKUP).
+func (h *Handler) AcceptFoodOrder(c *gin.Context) {
+	key := c.GetHeader("X-Idempotency-Key")
+	if key == "" {
+		writeError(c, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "X-Idempotency-Key header is required")
+		return
+	}
+
+	orderID, err := uuid.Parse(c.Param("food_order_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid food order id")
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	resp, err := h.svc.AcceptFoodOrder(c.Request.Context(), AcceptFoodOrderRequest{
+		OrderID:        orderID,
+		DriverID:       userID,
+		IdempotencyKey: key,
+	})
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
 // --- helpers ---
 
 // userIDFromContext mengambil user_id dari Gin context (diset oleh
@@ -873,17 +913,22 @@ func statusForError(err error) int {
 		errors.Is(err, ErrItemNotFound),
 		errors.Is(err, ErrFoodOrderNotFound),
 		errors.Is(err, ErrDriverNotFound),
+		errors.Is(err, ErrUserNotFound),
 		errors.Is(err, ErrWalletNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrNotMerchant),
 		errors.Is(err, ErrNotMerchantOwner),
 		errors.Is(err, ErrNotAllowed),
-		errors.Is(err, ErrNotCustomer):
+		errors.Is(err, ErrNotCustomer),
+		errors.Is(err, ErrNotDriver),
+		errors.Is(err, ErrDriverInactive):
 		return http.StatusForbidden
 	case errors.Is(err, ErrMerchantAlreadyExists),
 		errors.Is(err, ErrIdempotencyInProgress),
 		errors.Is(err, ErrInvalidCachedResponse),
 		errors.Is(err, ErrInvalidTransition),
+		errors.Is(err, ErrDriverBusy),
+		errors.Is(err, ErrOrderNotReadyForAccept),
 		errors.Is(err, ErrLockTimeout):
 		return http.StatusConflict
 	case errors.Is(err, ErrInvalidStatus):
@@ -903,7 +948,8 @@ func statusForError(err error) int {
 		errors.Is(err, ErrInvalidItem),
 		errors.Is(err, ErrInsufficientStock),
 		errors.Is(err, ErrEmptyItems),
-		errors.Is(err, ErrInvalidDeliveryAddress):
+		errors.Is(err, ErrInvalidDeliveryAddress),
+		errors.Is(err, ErrDriverCapacityExceeded):
 		return http.StatusUnprocessableEntity
 	default:
 		return http.StatusInternalServerError
@@ -923,6 +969,8 @@ func codeForError(err error) string {
 		return "FOOD_ORDER_NOT_FOUND"
 	case errors.Is(err, ErrDriverNotFound):
 		return "DRIVER_NOT_FOUND"
+	case errors.Is(err, ErrUserNotFound):
+		return "USER_NOT_FOUND"
 	case errors.Is(err, ErrWalletNotFound):
 		return "WALLET_NOT_FOUND"
 	case errors.Is(err, ErrNotMerchant):
@@ -933,6 +981,10 @@ func codeForError(err error) string {
 		return "FORBIDDEN"
 	case errors.Is(err, ErrNotCustomer):
 		return "NOT_CUSTOMER"
+	case errors.Is(err, ErrNotDriver):
+		return "NOT_DRIVER"
+	case errors.Is(err, ErrDriverInactive):
+		return "DRIVER_INACTIVE"
 	case errors.Is(err, ErrMerchantInactive):
 		return "MERCHANT_INACTIVE"
 	case errors.Is(err, ErrMerchantAlreadyExists):
@@ -977,6 +1029,12 @@ func codeForError(err error) string {
 		return "INVALID_TRANSITION"
 	case errors.Is(err, ErrLockTimeout):
 		return "LOCK_TIMEOUT"
+	case errors.Is(err, ErrDriverBusy):
+		return "DRIVER_BUSY"
+	case errors.Is(err, ErrDriverCapacityExceeded):
+		return "DRIVER_CAPACITY_EXCEEDED"
+	case errors.Is(err, ErrOrderNotReadyForAccept):
+		return "ORDER_NOT_READY_FOR_ACCEPT"
 	default:
 		return "INTERNAL_SERVER_ERROR"
 	}

@@ -167,6 +167,14 @@ func (m *mockFoodService) GetMerchantOrders(ctx context.Context, userID, merchan
 	return args.Get(0).([]*FoodOrder), args.Int(1), args.Error(2)
 }
 
+func (m *mockFoodService) AcceptFoodOrder(ctx context.Context, req AcceptFoodOrderRequest) (*AcceptFoodOrderResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*AcceptFoodOrderResponse), args.Error(1)
+}
+
 func newFoodHandlerCtx(t *testing.T, method, target, body string, params ...gin.Param) (*mockFoodService, *gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -596,6 +604,106 @@ func TestHandler_CodeForError(t *testing.T) {
 	assert.Equal(t, "IDEMPOTENCY_KEY_REQUIRED", codeForError(ErrIdempotencyKeyRequired))
 	assert.Equal(t, "LOCK_TIMEOUT", codeForError(ErrLockTimeout))
 	assert.Equal(t, "INTERNAL_SERVER_ERROR", codeForError(errors.New("other")))
+}
+
+// ---- AcceptFoodOrder (TD-078) ----
+
+func acceptOrderCtx(t *testing.T, orderID string) (*mockFoodService, *gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	svc, c, w := newFoodHandlerCtx(t, http.MethodPost, "/api/v1/food-orders/"+orderID+"/accept", "")
+	c.Request.Header.Set("X-Idempotency-Key", "k")
+	c.Params = gin.Params{{Key: "food_order_id", Value: orderID}}
+	return svc, c, w
+}
+
+func TestHandler_AcceptFoodOrder(t *testing.T) {
+	svc, c, w := acceptOrderCtx(t, fOrderID.String())
+	c.Set("user_id", fDriverID.String())
+	svc.On("AcceptFoodOrder", mock.Anything, mock.MatchedBy(func(r AcceptFoodOrderRequest) bool {
+		return r.OrderID == fOrderID && r.DriverID == fDriverID && r.IdempotencyKey == "k"
+	})).Return(&AcceptFoodOrderResponse{ID: fOrderID, DriverID: fDriverID, Status: foodStatusReadyForPickup}, nil)
+
+	h := NewHandler(svc)
+	h.AcceptFoodOrder(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_AcceptFoodOrder_MissingKey(t *testing.T) {
+	svc, c, w := newFoodHandlerCtx(t, http.MethodPost, "/api/v1/food-orders/"+fOrderID.String()+"/accept", "")
+	c.Set("user_id", fDriverID.String())
+	c.Params = gin.Params{{Key: "food_order_id", Value: fOrderID.String()}}
+
+	h := NewHandler(svc)
+	h.AcceptFoodOrder(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_AcceptFoodOrder_InvalidOrderID(t *testing.T) {
+	svc, c, w := acceptOrderCtx(t, "not-a-uuid")
+	c.Set("user_id", fDriverID.String())
+
+	h := NewHandler(svc)
+	h.AcceptFoodOrder(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_AcceptFoodOrder_Unauthorized(t *testing.T) {
+	svc, c, w := acceptOrderCtx(t, fOrderID.String())
+
+	h := NewHandler(svc)
+	h.AcceptFoodOrder(c)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	svc.AssertNotCalled(t, "AcceptFoodOrder", mock.Anything, mock.Anything)
+}
+
+func TestHandler_AcceptFoodOrder_Errors(t *testing.T) {
+	cases := []struct {
+		err  error
+		code int
+	}{
+		{ErrNotDriver, http.StatusForbidden},
+		{ErrDriverInactive, http.StatusForbidden},
+		{ErrDriverBusy, http.StatusConflict},
+		{ErrOrderNotReadyForAccept, http.StatusConflict},
+		{ErrDriverCapacityExceeded, http.StatusUnprocessableEntity},
+		{ErrUserNotFound, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		svc, c, w := acceptOrderCtx(t, fOrderID.String())
+		c.Set("user_id", fDriverID.String())
+		svc.On("AcceptFoodOrder", mock.Anything, mock.Anything).Return(nil, tc.err)
+
+		h := NewHandler(svc)
+		h.AcceptFoodOrder(c)
+		assert.Equal(t, tc.code, w.Code, tc.err)
+	}
+}
+
+func TestHandler_AcceptFoodOrder_StatusForError(t *testing.T) {
+	cases := []struct {
+		err  error
+		code int
+	}{
+		{ErrNotDriver, http.StatusForbidden},
+		{ErrDriverInactive, http.StatusForbidden},
+		{ErrDriverBusy, http.StatusConflict},
+		{ErrOrderNotReadyForAccept, http.StatusConflict},
+		{ErrDriverCapacityExceeded, http.StatusUnprocessableEntity},
+		{ErrUserNotFound, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.code, statusForError(tc.err))
+	}
+}
+
+func TestHandler_AcceptFoodOrder_CodeForError(t *testing.T) {
+	assert.Equal(t, "NOT_DRIVER", codeForError(ErrNotDriver))
+	assert.Equal(t, "DRIVER_INACTIVE", codeForError(ErrDriverInactive))
+	assert.Equal(t, "DRIVER_BUSY", codeForError(ErrDriverBusy))
+	assert.Equal(t, "DRIVER_CAPACITY_EXCEEDED", codeForError(ErrDriverCapacityExceeded))
+	assert.Equal(t, "ORDER_NOT_READY_FOR_ACCEPT", codeForError(ErrOrderNotReadyForAccept))
+	assert.Equal(t, "USER_NOT_FOUND", codeForError(ErrUserNotFound))
 }
 
 

@@ -66,6 +66,21 @@ const (
 
 	userTypeCustomer = "customer"
 
+	// Task 3.5.4 — Food driver accept (TD-078). user_type & working_status
+	// driver food, mirror internal/send (Task 3.6 / TD-069).
+	userTypeDriver    = "driver"
+	workingStatusIdle = "IDLE"
+	workingStatusBusy = "BUSY"
+	driverUserType    = "driver"
+
+	// driverMaxActiveFoodOrders membatasi jumlah food order aktif (status
+	// READY_FOR_PICKUP/PICKED_UP/IN_TRANSIT) yang boleh dipegang satu driver
+	// (Task 3.5.4 langkah 2; mirror send driverMaxActiveSendOrders=3).
+	driverMaxActiveFoodOrders = 3
+
+	// Task 3.5.4 — Food driver accept (TD-078). Masih dalam modul makanan;
+	// kolom users.working_status hanya dipakai driver (mirror internal/send
+
 	// Status food order (food_order_status_enum, ROADMAP 3.3/3.4).
 	foodStatusCreated        = "CREATED"
 	foodStatusConfirmed      = "CONFIRMED"
@@ -143,6 +158,14 @@ var (
 	ErrInvalidTransition      = errors.New("invalid status transition for current order state")
 	ErrNotAllowed             = errors.New("user is not allowed to access this order")
 	ErrDriverNotFound         = errors.New("driver not found or has no DRIVER wallet")
+
+	// Task 3.5.4 — Food driver accept (TD-078). Error validasi driver food
+	// jalur READY_FOR_PICKUP (mirror internal/send Task 3.6):
+	ErrNotDriver              = errors.New("user is not a driver")
+	ErrDriverInactive         = errors.New("driver is not ACTIVE")
+	ErrDriverBusy             = errors.New("driver working_status is not IDLE")
+	ErrDriverCapacityExceeded = errors.New("driver has reached the maximum of 3 active food orders")
+	ErrOrderNotReadyForAccept = errors.New("food order is not READY_FOR_PICKUP or already has a driver")
 )
 
 // Repo adalah kontrak repository yang dibutuhkan Service. Dipenuhi oleh
@@ -197,6 +220,17 @@ type Repo interface {
 	MarkFoodOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
 	MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error
 	ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error
+
+	// Task 3.5.4 — Food driver accept (TD-078). Mirror internal/send Task 3.6.
+	GetFoodDriver(ctx context.Context, driverID uuid.UUID) (*FoodDriver, error)
+	GetFoodDriverActiveFoodOrdersCount(ctx context.Context, driverID uuid.UUID) (int, error)
+	// Mirror internal/send LockDriverUserForAccept (Task 3.6 langkah 3) —
+	// SELECT FOR UPDATE NOWAIT + guard ACTIVE + working_status IDLE.
+	// Mengembalikan driver yang sukses di-lock (dipakai audit response).
+	LockFoodDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) error
+	LockFoodOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) (*FoodOrder, error)
+	AssignDriverToFoodOrder(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error)
+	UpdateFoodDriverWorkingStatus(ctx context.Context, q Querier, driverID uuid.UUID, workingStatus string) error
 }
 
 // Ledger adalah kontrak double-entry ledger yang dibutuhkan Service.
@@ -1589,6 +1623,169 @@ func validateFoodTransition(order *FoodOrder, actor int, target string) error {
 		return ErrNotAllowed
 	}
 	return ErrInvalidTransition
+}
+
+// ---- Task 3.3: Retrieval & History ----
+
+// AcceptFoodOrderRequest — request driver food accept (TD-078 / Task 3.5.4 &
+// 3.6.4). OrderID order yang di-accept, DriverID driver tertunjuk, dan
+// IdempotencyKey wajib di header X-Idempotency-Key (L1 redis + L2 gateway).
+// Mirror internal/send AcceptSendOrderRequest (Task 3.6 / TD-069).
+type AcceptFoodOrderRequest struct {
+	OrderID        uuid.UUID
+	DriverID       uuid.UUID
+	IdempotencyKey string
+}
+
+// AcceptFoodOrderResponse — hasil setelah driver ditetapkan. Status tetap
+// READY_FOR_PICKUP (tidak ada DRIVER_ASSIGNED pada enum food_order_status);
+// assignment hanya menyetel driver_id + driver_wallet_id + updated_at.
+// Mirror internal/send AcceptSendOrderResponse (Task 3.6 / TD-069).
+type AcceptFoodOrderResponse struct {
+	ID       uuid.UUID `json:"id"`
+	DriverID uuid.UUID `json:"driver_id"`
+	Status   string    `json:"status"`
+}
+
+// AcceptFoodOrder menerima (assign) food driver ke food order berstatus
+// READY_FOR_PICKUP (TD-078, Task 3.5.4). Membutuhkan X-Idempotency-Key yang
+// wajib; alur idempotency L2 + lock FOR UPDATE NOWAIT + CAS assign mirrored
+// dari internal/send AcceptSendOrder (Task 3.6, TD-069).
+//
+// State machine food (migration 005/009) TIDAK punya status DRIVER_ASSIGNED —
+// assignment hanya menyetel driver_id, driver_wallet_id, updated_at=NOW()
+// tanpa mengubah status order (tetap READY_FOR_PICKUP; dokumen: food order
+// tanpa transisi status ketika driver accept). Driver yang sudah BUSY / punya
+// ≥ driverMaxActiveFoodOrders order aktif tidak boleh accept.
+func (s *Service) AcceptFoodOrder(ctx context.Context, req AcceptFoodOrderRequest) (*AcceptFoodOrderResponse, error) {
+	if req.IdempotencyKey == "" {
+		return nil, ErrIdempotencyKeyRequired
+	}
+
+	// L1: cache respon idempotency per driver (redisGetCachedResp pengembalian
+	// dari response cache hasil accept sebelumnya).
+	if cached, ok := s.redisGetCachedResp(ctx, req.DriverID, req.IdempotencyKey); ok {
+		var out AcceptFoodOrderResponse
+		if err := json.Unmarshal(cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Validasi driver food (user_type=driver, status=ACTIVE, working_status=IDLE).
+	driver, err := s.repo.GetFoodDriver(ctx, req.DriverID)
+	if err != nil {
+		return nil, err
+	}
+	if driver.UserType != userTypeDriver {
+		return nil, ErrNotDriver
+	}
+	if driver.Status != statusActive {
+		return nil, ErrDriverInactive
+	}
+	if driver.WorkingStatus != workingStatusIdle {
+		return nil, ErrDriverBusy
+	}
+
+	// L2: idempotency gateway — cegah duplikat accept saat request sama masuk.
+	res, err := s.idemAcquire(ctx, req.DriverID, req.IdempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	if !res.proceed {
+		s.redisSet(ctx, req.DriverID, req.IdempotencyKey, redisCompleted, res.cached)
+		var out AcceptFoodOrderResponse
+		if err := json.Unmarshal(res.cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Kapasitas aktif driver: jumlah food order aktif (READY_FOR_PICKUP /
+	// PICKED_UP / IN_TRANSIT) milik driver harus < driverMaxActiveFoodOrders.
+	active, err := s.repo.GetFoodDriverActiveFoodOrdersCount(ctx, req.DriverID)
+	if err != nil {
+		return nil, err
+	}
+	if active >= driverMaxActiveFoodOrders {
+		return nil, ErrDriverCapacityExceeded
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		return nil, err
+	}
+
+	// Lock driver user (guard working_status IDLE) lalu lock food order
+	// FOR UPDATE NOWAIT + guard READY_FOR_PICKUP + driver_id IS NULL.
+	if err := s.repo.LockFoodDriverUserForAccept(ctx, tx, req.DriverID); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.LockFoodOrderForAccept(ctx, tx, req.OrderID); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return nil, ErrLockTimeout
+		}
+		if errors.Is(err, ErrFoodOrderNotFound) {
+			found, gErr := s.repo.GetFoodOrderByID(ctx, req.OrderID)
+			if gErr != nil {
+				return nil, gErr
+			}
+			if found.Status != foodStatusReadyForPickup || found.DriverID != nil {
+				return nil, ErrOrderNotReadyForAccept
+			}
+			return nil, ErrFoodOrderNotFound
+		}
+		return nil, err
+	}
+
+	// CAS assign driver: UPDATE ... WHERE status='READY_FOR_PICKUP' AND
+	// driver_id IS NULL. False → order sudah terassign / bukan READY lagi.
+	ok, err := s.repo.AssignDriverToFoodOrder(ctx, tx, req.OrderID, req.DriverID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrOrderNotReadyForAccept
+	}
+
+	// Driver working_status → BUSY (Task 3.5.4 langkah 4).
+	if err := s.repo.UpdateFoodDriverWorkingStatus(ctx, tx, req.DriverID, workingStatusBusy); err != nil {
+		return nil, err
+	}
+
+	// Audit trail: order status tetap READY_FOR_PICKUP, merekam penugasan
+	// driver lewat food_order_events (from=to=READY_FOR_PICKUP).
+	from := foodStatusReadyForPickup
+	if err := s.repo.InsertFoodOrderEvent(ctx, tx, FoodOrderEvent{
+		OrderID:     req.OrderID,
+		FromStatus:  &from,
+		ToStatus:    foodStatusReadyForPickup,
+		TriggeredBy: &req.DriverID,
+		Metadata:    json.RawMessage(`{"action":"driver_accept"}`),
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	resp := &AcceptFoodOrderResponse{
+		ID:       req.OrderID,
+		DriverID: req.DriverID,
+		Status:   foodStatusReadyForPickup,
+	}
+
+	if err := s.cacheResponse(ctx, req.DriverID, req.IdempotencyKey, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // ---- Task 3.3: Retrieval & History ----

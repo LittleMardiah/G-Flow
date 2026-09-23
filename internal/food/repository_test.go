@@ -595,3 +595,106 @@ func TestRepo_CountFoodOrdersByMerchant(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// ---- Task 3.5.4 — Food driver accept (TD-078) ----
+
+func TestRepo_GetFoodDriver(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectQuery("SELECT id, user_type, status, working_status").
+		WithArgs(fDriverID).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "user_type", "status", "working_status"}).
+			AddRow(fDriverID, "driver", "ACTIVE", "IDLE"))
+	d, err := r.GetFoodDriver(context.Background(), fDriverID)
+	assert.NoError(t, err)
+	assert.Equal(t, "driver", d.UserType)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	mDB.ExpectQuery("SELECT id, user_type, status, working_status").WithArgs(fDriverID).WillReturnError(pgx.ErrNoRows)
+	_, err = r.GetFoodDriver(context.Background(), fDriverID)
+	assert.ErrorIs(t, err, ErrUserNotFound)
+}
+
+func TestRepo_GetFoodDriverActiveFoodOrdersCount(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectQuery("SELECT COUNT").
+		WithArgs(fDriverID).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(2))
+	count, err := r.GetFoodDriverActiveFoodOrdersCount(context.Background(), fDriverID)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, count)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	mDB.ExpectQuery("SELECT COUNT").WithArgs(fDriverID).WillReturnError(pgx.ErrNoRows)
+	_, err = r.GetFoodDriverActiveFoodOrdersCount(context.Background(), fDriverID)
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+}
+
+func TestRepo_LockFoodDriverUserForAccept(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectQuery("SELECT id FROM users").
+		WithArgs(fDriverID).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(fDriverID))
+	err := r.LockFoodDriverUserForAccept(context.Background(), mDB, fDriverID)
+	assert.NoError(t, err)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	mDB.ExpectQuery("SELECT id FROM users").WithArgs(fDriverID).WillReturnError(pgx.ErrNoRows)
+	err = r.LockFoodDriverUserForAccept(context.Background(), mDB, fDriverID)
+	assert.ErrorIs(t, err, ErrUserNotFound)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_LockFoodOrderForAccept(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectQuery("SELECT id, customer_id, merchant_id, driver_id").
+		WithArgs(fOrderID).
+		WillReturnRows(pgxmock.NewRows(foodOrderCols).
+			AddRow(foodOrderRowValues(fOrderID, fCustID, fMerchID, nil)...))
+	o, err := r.LockFoodOrderForAccept(context.Background(), mDB, fOrderID)
+	assert.NoError(t, err)
+	assert.Equal(t, fOrderID, o.ID)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	mDB.ExpectQuery("SELECT id, customer_id, merchant_id, driver_id").
+		WithArgs(fOrderID).
+		WillReturnError(pgx.ErrNoRows)
+	_, err = r.LockFoodOrderForAccept(context.Background(), mDB, fOrderID)
+	assert.ErrorIs(t, err, ErrFoodOrderNotFound)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_AssignDriverToFoodOrder(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectExec("UPDATE food_orders").
+		WithArgs(fOrderID, fDriverID).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	ok, err := r.AssignDriverToFoodOrder(context.Background(), mDB, fOrderID, fDriverID)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	mDB.ExpectExec("UPDATE food_orders").
+		WithArgs(fOrderID, fDriverID).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+	ok, err = r.AssignDriverToFoodOrder(context.Background(), mDB, fOrderID, fDriverID)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_UpdateFoodDriverWorkingStatus(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectExec("UPDATE users").
+		WithArgs(fDriverID, workingStatusBusy).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	err := r.UpdateFoodDriverWorkingStatus(context.Background(), mDB, fDriverID, workingStatusBusy)
+	assert.NoError(t, err)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	mDB.ExpectExec("UPDATE users").
+		WithArgs(fDriverID, workingStatusBusy).
+		WillReturnError(pgx.ErrNoRows)
+	err = r.UpdateFoodDriverWorkingStatus(context.Background(), mDB, fDriverID, workingStatusBusy)
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+

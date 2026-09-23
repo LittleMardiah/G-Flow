@@ -918,3 +918,128 @@ func scanFoodOrderRow(row pgx.Row) (*FoodOrder, error) {
 	}
 	return &o, nil
 }
+
+// ---- STEP A (TD-078): Food driver accept — mirror internal/send (Task 3.6) ----
+
+// FoodDriver adalah subset baris users untuk driver food (Task 3.5.4): kolom
+// user_type, status, working_status yang dipakai validasi accept food order.
+type FoodDriver struct {
+	ID            uuid.UUID
+	UserType      string
+	Status        string
+	WorkingStatus string
+}
+
+// GetFoodDriver mengambil data driver food untuk validasi accept (Task 3.5.4
+// langkah 3): user_type=driver, status=ACTIVE, working_status=IDLE. Mengembalikan
+// ErrUserNotFound jika user tidak ada.
+func (r *Repository) GetFoodDriver(ctx context.Context, driverID uuid.UUID) (*FoodDriver, error) {
+	var d FoodDriver
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_type, status, working_status
+		FROM users
+		WHERE id = $1
+	`, driverID).Scan(&d.ID, &d.UserType, &d.Status, &d.WorkingStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// GetFoodDriverActiveFoodOrdersCount menghitung jumlah food order aktif seorang
+// driver (Task 3.5.4 capacity check): status yang belum diselesaikan
+// (READY_FOR_PICKUP, PICKED_UP, IN_TRANSIT). Order DELIVERED/CANCELLED/SETTLED
+// tidak lagi dihitung sehingga slot kapasitas driver terisi kembali.
+func (r *Repository) GetFoodDriverActiveFoodOrdersCount(ctx context.Context, driverID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM food_orders
+		WHERE driver_id = $1
+		  AND status IN ('READY_FOR_PICKUP', 'PICKED_UP', 'IN_TRANSIT')
+	`, driverID).Scan(&count)
+	return count, err
+}
+
+// LockFoodDriverUserForAccept mengunci baris users driver dengan SELECT FOR
+// UPDATE NOWAIT + guard status='ACTIVE' AND working_status='IDLE' (Task 3.5.4
+// langkah 3 — mirror internal/send LockDriverUserForAccept Task 3.6). NOWAIT
+// → pgconn 55P03 bila baris terkunci user lain; guard gagal → ErrUserNotFound.
+func (r *Repository) LockFoodDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) error {
+	var id uuid.UUID
+	err := q.QueryRow(ctx, `
+		SELECT id FROM users
+		WHERE id = $1 AND status = 'ACTIVE' AND working_status = 'IDLE'
+		FOR UPDATE NOWAIT
+	`, driverID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	return err
+}
+
+// LockFoodOrderForAccept mengunci baris food_orders dengan SELECT FOR UPDATE
+// NOWAIT sekaligus guard status='READY_FOR_PICKUP' + driver_id IS NULL
+// (Task 3.5.4 langkah 3 — CAS double-check). Mengembalikan ErrFoodOrderNotFound
+// bila order tidak ada / bukan READY_FOR_PICKUP / sudah punya driver. Note:
+// status food TIDAK berubah ke DRIVER_ASSIGNED (bukan anggota enum food) —
+// assignment driver hanya menyetel driver_id + driver_wallet_id + updated_at
+// (migration 009 menghapus assigned_at; dipakai updated_at).
+func (r *Repository) LockFoodOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) (*FoodOrder, error) {
+	var o FoodOrder
+	err := q.QueryRow(ctx, `
+		SELECT `+foodOrderColumns+`
+		FROM food_orders
+		WHERE id = $1 AND status = 'READY_FOR_PICKUP' AND driver_id IS NULL
+		FOR UPDATE NOWAIT
+	`, orderID).Scan(&o.ID, &o.CustomerID, &o.MerchantID, &o.DriverID,
+		&o.CustomerWalletID, &o.MerchantWalletID, &o.DriverWalletID,
+		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng, &o.SpecialInstructions,
+		&o.ItemSubtotal, &o.DeliveryFee, &o.PlatformCommission, &o.DriverEarning,
+		&o.DiscountAmount, &o.VoucherID, &o.PaymentMethod, &o.CutleryIncluded, &o.TotalAmount,
+		&o.Status, &o.MerchantStatus, &o.MerchantNotes,
+		&o.CreatedAt, &o.ConfirmedAt, &o.PickupAt, &o.DeliveredAt, &o.SettledAt,
+		&o.IsSettled, &o.IsRefunded)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrFoodOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+// AssignDriverToFoodOrder menetapkan driver ke food order (Task 3.5.4 langkah
+// 4): driver_id, driver_wallet_id (wallet DRIVER), updated_at = NOW(). Status
+// order tetap READY_FOR_PICKUP. Return false jika order tidak dalam state
+// READY_FOR_PICKUP tanpa driver (guard CAS double-check setelah lock).
+func (r *Repository) AssignDriverToFoodOrder(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE food_orders
+		SET driver_id = $2,
+		    driver_wallet_id = (
+				SELECT id FROM wallets
+				WHERE user_id = $2 AND wallet_type = 'DRIVER'
+				LIMIT 1
+			),
+		    updated_at = NOW()
+		WHERE id = $1 AND status = 'READY_FOR_PICKUP' AND driver_id IS NULL
+	`, orderID, driverID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UpdateFoodDriverWorkingStatus menyetel working_status driver food (Task
+// 3.5.4 langkah 4): BUSY saat accept. Mirip UpdateDriverWorkingStatus send.
+func (r *Repository) UpdateFoodDriverWorkingStatus(ctx context.Context, q Querier, driverID uuid.UUID, status string) error {
+	_, err := q.Exec(ctx, `
+		UPDATE users
+		SET working_status = $2, updated_at = NOW()
+		WHERE id = $1
+	`, driverID, status)
+	return err
+}

@@ -253,6 +253,8 @@ func main() {
 		foodOrders.GET("", auth.RBACMiddleware("customer"), foodHandler.GetFoodOrderHistory)
 		foodOrders.GET("/:id", foodHandler.GetFoodOrder)
 		foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)
+		// Task 3.5.4 — Food driver accept (TD-078). Mirror /send-orders/:id/accept.
+		foodOrders.POST("/:food_order_id/accept", auth.RBACMiddleware("driver"), foodHandler.AcceptFoodOrder)
 	}
 
 	// G-Send: send orders (Task 3.5). Auth wajib; POST & GET history hanya

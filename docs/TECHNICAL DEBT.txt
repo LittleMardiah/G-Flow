@@ -881,7 +881,18 @@ Solusi     : Endpoint POST /food-orders/{id}/accept + capacity check + idempoten
             FOR UPDATE NOWAIT + settlement + TC.
 Estimasi   : 3-5 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-23, commit TD-078)
+Progress   : 2026-09-23 — service.go + repository.go production code (accept
+            flow: GetFoodDriver validasi ACTIVE/IDLE, capacity Count ≤ 2,
+            LockFoodDriverUserForAccept + LockFoodOrderForAccept FOR UPDATE
+            NOWAIT, CAS AssignDriverToFoodOrder, working_status→BUSY, event
+            driver_accept, idempotency L1 redis + L2 gateway). Handler
+            AcceptFoodOrder + route POST /food-orders/:food_order_id/accept
+            (RBAC driver, X-Idempotency-Key wajib). Unit test: repo 6 method
+            baru (15 case), service 16 test (success, driver errors, capacity,
+            lock timeout, lost race, assign, status, event, commit, cache,
+            idempotent redis), handler 10 test — food coverage 89.5%, semua
+            PASS + go vet bersih. Commit oleh User (R10).
 Referensi  : audit_r03.log (GAP-4; usulan TD-061)
 
 ID         : TD-079
@@ -1433,19 +1444,33 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : Food Dispatch CEK (OpenCode)
 
+ID         : TD-123
+Kategori   : KODE
+Judul      : LockFoodDriverUserForAccept error 55P03 (lock not
+             available) TIDAK di-map ke ErrLockTimeout di service
+             AcceptFoodOrder — beda dari send (LockDriverUserForAccept
+             → ErrLockTimeout).
+Dampak     : Client terima HTTP 500 (raw PG error) saat lock timeout,
+             bukan 409/503 LOCK_TIMEOUT. Inkonsistensi antar modul.
+Solusi     : Map pgconn 55P03 di LockFoodDriverUserForAccept call site
+             (service AcceptFoodOrder) → ErrLockTimeout (mirror send).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-078 (temuan OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 116 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 117 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114)
-- SEDANG  : 44 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122)
+- TINGGI  : 34 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114)
+- SEDANG  : 45 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123)
 - RENDAH  : 26 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119)
 
-STATUS: 28 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 87 item OPEN (25 item lama + 62 item baru dari SECTION F, TD-058 s/d TD-122).
+STATUS: 29 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 87 item OPEN (24 item lama + 63 item baru dari SECTION F, TD-058 s/d TD-123).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1471,11 +1496,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-22):
-   - Total hutang teridentifikasi      : 116 item (TD-051 di-reserve/skip; +63 dari SECTION F, TD-122).
-   - Sudah FIXED/CLOSED                : 28 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072).
+   - Total hutang teridentifikasi      : 117 item (TD-051 di-reserve/skip; +63 dari SECTION F, TD-123).
+   - Sudah FIXED/CLOSED                : 29 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072, TD-078).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                           : 87 item (25 item lama + 62 item baru,
-                                          TD-058 s/d TD-122).
+- ❌ OPEN                         : 87 item (25 item lama + 62 item baru,
+                                          TD-058 s/d TD-123).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
