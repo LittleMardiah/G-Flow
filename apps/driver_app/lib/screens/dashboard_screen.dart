@@ -11,6 +11,7 @@ import '../providers/auth_provider.dart';
 import '../providers/earnings_provider.dart';
 import '../providers/location_provider.dart';
 import '../providers/order_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../widgets/kpi_card.dart';
 import '../widgets/order_type_badge.dart';
 import '../widgets/status_badge.dart';
@@ -47,6 +48,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
     final loc = ref.read(driverLocationProvider.notifier);
     await loc.updateNow();
+    ref.read(myWalletProvider.notifier).load();
     if (!mounted) return;
     _fitCamera();
   }
@@ -66,6 +68,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final location = ref.watch(driverLocationProvider);
     final active = ref.watch(activeOrdersProvider);
     final earnings = ref.watch(earningsProvider);
+    final wallet = ref.watch(myWalletProvider);
 
     final types = <OrderType, List<DriverOrder>>{};
     for (final o in active.orders) {
@@ -78,6 +81,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         actions: [
           if (active.orders.any((o) => o.isMock)) const DemoBadge(tooltip: 'Order aktif DEMO: endpoint daftar order driver belum ada di backend.'),
           IconButton(
+            tooltip: 'Profil',
+            icon: const Icon(Icons.account_circle_outlined),
+            onPressed: () => context.push(AppRoutes.driverProfile),
+          ),
+          IconButton(
             tooltip: 'Logout',
             icon: const Icon(Icons.logout),
             onPressed: () => ref.read(authProvider.notifier).logout(),
@@ -87,6 +95,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       body: RefreshIndicator(
         onRefresh: () async {
           ref.read(activeOrdersProvider.notifier).fetch();
+          ref.read(myWalletProvider.notifier).load();
           final id = await ref.read(currentDriverIdProvider.future);
           if (id != null && id.isNotEmpty) {
             ref.read(earningsProvider.notifier).fetch(id);
@@ -128,6 +137,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            _WalletBalanceCard(wallet: wallet),
             const SizedBox(height: 12),
             _CapacityCard(
               activeCount: active.activeCount,
@@ -172,6 +183,80 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         onPressed: () => context.go(AppRoutes.availableOrders),
         icon: const Icon(Icons.add),
         label: const Text('Pesanan Tersedia'),
+      ),
+    );
+  }
+}
+
+/// Kartu saldo wallet driver (TD-074). Sumber GET /wallets/me?type=DRIVER
+/// (TD-120). Loading/error → placeholder graceful, tidak menutup dashboard.
+class _WalletBalanceCard extends ConsumerWidget {
+  const _WalletBalanceCard({required this.wallet});
+
+  final WalletBalanceState wallet;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final w = wallet.wallet;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.account_balance_wallet_outlined,
+              color: theme.colorScheme.primary, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Saldo Wallet',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer)),
+                const SizedBox(height: 2),
+                if (wallet.isLoading && w == null)
+                  Text('Memuat saldo…',
+                      style: theme.textTheme.titleSmall?.copyWith(color: Colors.grey))
+                else if (w == null)
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text('Saldo tidak tersedia',
+                            style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      ),
+                      IconButton(
+                        tooltip: 'Muat ulang saldo',
+                        icon: const Icon(Icons.refresh, size: 18),
+                        onPressed: () => ref.read(myWalletProvider.notifier).load(),
+                      ),
+                    ],
+                  )
+                else
+                  Text(
+                    formatRupiah(w.balance),
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (w != null && w.status != null && w.status!.isNotEmpty)
+            Text(
+              w.status!,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: Colors.grey,
+                letterSpacing: 0.6,
+              ),
+            ),
+        ],
       ),
     );
   }

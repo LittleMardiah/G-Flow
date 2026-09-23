@@ -819,7 +819,15 @@ Dampak     : Driver tidak bisa kelola profil; tidak melihat saldo earning.
 Solusi     : Bangun profile_screen + tampilkan saldo wallet di dashboard.
 Estimasi   : 3-4 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-23, commit TD-074)
+Progress   : DriverProfileScreen (lib/screens/profile/driver_profile_screen.dart
+            + route /driver-profile) menampilkan nama/email/phone (masked)/
+            vehicle dari data LOKAL (persist saat login/register) + status
+            driver (diturunkan dari login, backend tolak non-ACTIVE); rating &
+            total rides placeholder '—'. Dashboard menampilkan kartu saldo dari
+            GET /api/v1/wallets/me?type=DRIVER (TD-120, endpoint ADA) dengan
+            placeholder graceful saat loading/error. Data profil via API belum
+            ada → dilacak di TD-127.
 Referensi  : audit_r02.log (driver app: tidak ada profile_screen, dashboard tanpa saldo)
 
 ID         : TD-075
@@ -1498,19 +1506,51 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : Send chain fix (temuan OpenCode)
 
+ID         : TD-127
+Kategori   : BACKEND / FITUR
+Judul      : Tidak ada endpoint profil driver (GET /drivers/me). Login/register
+            hanya return {access_token, user_id, user_type}; tidak ada
+            GET /users/{id} / GET /drivers/{id} untuk driver (hanya rute admin
+            /api/v1/admin/users/:id).
+Dampak     : DriverProfileScreen (TD-074) hanya bisa tampilkan nama/email/phone/
+            vehicle dari storage LOKAL (persist saat login/register di
+            perangkat tsb); rating, total rides, dan status real-time tidak
+            tersedia; edit profile mustahil tanpa endpoint.
+Solusi     : GET /api/v1/drivers/me (JWT) → {name, email, phone, vehicle_type,
+            vehicle_plate, status, rating, total_rides} + PATCH untuk edit
+            profile; driver_app switch driverProfileLocalProvider ke endpoint.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-074 (profil driver), temuan OpenCode 2026-09-23
+
+ID         : TD-128
+Kategori   : BACKEND / FITUR
+Judul      : Register driver hanya membuat wallet CUSTOMER (auth/handler.go
+             :226), tidak wallet DRIVER. Akibatnya GET /wallets/me?type=
+             DRIVER → 404 untuk driver baru.
+Dampak     : Driver tidak bisa lihat saldo earning, withdrawal blocked
+             sampai wallet DRIVER terbuat (via settlement order pertama).
+             Onboarding driver baru broken UX.
+Solusi     : Register driver (user_type=driver) buat 2 wallet: CUSTOMER +
+             DRIVER dalam 1 transaksi. Atau /wallets/me auto-create kalau
+             belum ada (kalau memang desainnya begitu).
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : TD-074 (temuan OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 120 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 122 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125)
-- SEDANG  : 47 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126)
+- TINGGI  : 35 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-068, TD-069, TD-070, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
+- SEDANG  : 48 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127)
 - RENDAH  : 26 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119)
 
-STATUS: 31 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 88 item OPEN (24 item lama + 64 item baru dari SECTION F, TD-058 s/d TD-126).
+STATUS: 32 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 89 item OPEN (24 item lama + 65 item baru dari SECTION F, TD-058 s/d TD-128).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1536,11 +1576,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-23):
-   - Total hutang teridentifikasi      : 120 item (TD-051 di-reserve/skip; +69 dari SECTION F/follow-up, TD-058 s/d TD-126).
-   - Sudah FIXED/CLOSED                : 31 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125).
+   - Total hutang teridentifikasi      : 122 item (TD-051 di-reserve/skip; +70 dari SECTION F/follow-up, TD-058 s/d TD-128).
+   - Sudah FIXED/CLOSED                : 32 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                         : 88 item (24 item lama + 64 item baru,
-                                          TD-058 s/d TD-126).
+- ❌ OPEN                         : 89 item (24 item lama + 65 item baru,
+                                          TD-058 s/d TD-128).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -1722,6 +1762,17 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       fetchSendDetail). Total register naik dari 117 → 119 item
       (KRITIS 8 / TINGGI 35 / SEDANG 46 / RENDAH 26; OPEN 87,
       FIXED 31, DEFERRED 1).
+    - TD-074 + TD-127 (2026-09-23): driver_app profile screen + saldo
+      wallet di dashboard dibangun (TD-074 → ✅ FIXED, commit TD-074).
+      Menambahkan TD-127 (BACKEND / FITUR, SEDANG, OPEN): tidak ada endpoint
+      profil driver (GET /drivers/me) → profile screen pakai data
+      lokal. Total register naik dari 119 → 120 item, TD-074 FIXED
+      (FIXED 31 → 32; TINGGI 35 → 34; OPEN 88 tetap).
+    - TD-128 (2026-09-23): Register driver (user_type=driver) hanya membuat
+      wallet CUSTOMER (auth/handler.go:226), tidak wallet DRIVER. Temuan
+      OpenCode (referensi TD-074). Prioritas TINGGI, STATUS OPEN. Total
+      register naik dari 121 → 122 item (TINGGI 34 → 35; OPEN 88 → 89;
+      KRITIS 8 / SEDANG 48 / RENDAH 26 / FIXED 32 / DEFERRED 1 tetap).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

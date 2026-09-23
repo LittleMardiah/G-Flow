@@ -208,14 +208,34 @@ void main() {
     });
   });
 
-  group('EarningsService mock path', () {
-    test('fetchEarnings returns mock earning', () async {
-      final service = EarningsService(ApiClient(dio: Dio(BaseOptions())));
+  group('EarningsService parsing', () {
+    // kUseMockEarnings=false (endpoint GET /drivers/earnings sudah diganti
+    // ke real path, lihat earnings_service.dart). Test ini memverifikasi
+    // parsing payload backend, BUKAN mock path yang sudah non-aktif.
+    test('fetchEarnings parses real response', () async {
+      final dio = Dio(BaseOptions(baseUrl: 'http://test'));
+      interceptOkJson(dio, {
+        'success': true,
+        'data': {
+          'today_total': 285000,
+          'today_order_count': 12,
+          'week_total': 1675000,
+          'ride_count': 6,
+          'food_count': 5,
+          'send_count': 1,
+          'daily': [
+            {'label': '10.00', 'amount': 35000},
+            {'label': '12.00', 'amount': 48000},
+          ],
+          'weekly': [
+            {'label': 'Sen', 'amount': 180000, 'order_count': 8},
+          ],
+        },
+      });
+      final service = EarningsService(ApiClient(dio: dio));
       final e = await service.fetchEarnings('driver-1');
       expect(e, isA<DriverEarning>());
-      expect(e.isMock, isTrue);
-      expect(e.daily, isNotEmpty);
-      expect(e.weekly.length, 7);
+      expect(e.isMock, isFalse);
       expect(e.todayTotal, 285000);
       expect(e.todayOrderCount, 12);
       expect(e.weekTotal, 1675000);
@@ -223,6 +243,8 @@ void main() {
       expect(e.foodCount, 5);
       expect(e.sendCount, 1);
       expect(e.totalOrderCount, 12);
+      expect(e.daily, hasLength(2));
+      expect(e.weekly, hasLength(1));
     });
   });
 }

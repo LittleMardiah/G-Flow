@@ -8,6 +8,11 @@ import '../services/order_service.dart';
 
 const String kDriverIdKey = 'driver_id';
 const String kUserTypeKey = 'user_type';
+const String kDriverEmailKey = 'driver_email';
+const String kDriverNameKey = 'driver_name';
+const String kDriverPhoneKey = 'driver_phone';
+const String kDriverVehicleTypeKey = 'driver_vehicle_type';
+const String kDriverVehiclePlateKey = 'driver_vehicle_plate';
 
 final storageProvider = Provider<FlutterSecureStorage>((ref) => const FlutterSecureStorage());
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
@@ -21,6 +26,43 @@ final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
 
 final currentDriverIdProvider = FutureProvider<String?>((ref) async {
   return ref.watch(storageProvider).read(key: kDriverIdKey);
+});
+
+class DriverProfileLocal {
+  const DriverProfileLocal({
+    this.email,
+    this.name,
+    this.phone,
+    this.vehicleType,
+    this.vehiclePlate,
+  });
+
+  final String? email;
+  final String? name;
+  final String? phone;
+  final String? vehicleType;
+  final String? vehiclePlate;
+
+  bool get hasVehicleInfo => (vehicleType != null && vehicleType!.isNotEmpty) || (vehiclePlate != null && vehiclePlate!.isNotEmpty);
+}
+
+/// Data profil minimal yang tersedia LOKAL (persist saat login/register).
+/// Backend belum punya endpoint profil driver (TD-127) → nama/phone/vehicle
+/// hanya ada bila driver pernah register di perangkat ini.
+final driverProfileLocalProvider = FutureProvider<DriverProfileLocal>((ref) async {
+  final s = ref.watch(storageProvider);
+  final email = await s.read(key: kDriverEmailKey);
+  final name = await s.read(key: kDriverNameKey);
+  final phone = await s.read(key: kDriverPhoneKey);
+  final vehicleType = await s.read(key: kDriverVehicleTypeKey);
+  final vehiclePlate = await s.read(key: kDriverVehiclePlateKey);
+  return DriverProfileLocal(
+    email: email,
+    name: name,
+    phone: phone,
+    vehicleType: vehicleType,
+    vehiclePlate: vehiclePlate,
+  );
 });
 
 class AuthState {
@@ -72,6 +114,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       await storage.write(key: 'refresh_token', value: data['refresh_token']);
       await storage.write(key: kUserTypeKey, value: userType);
       await storage.write(key: kDriverIdKey, value: userId);
+      await storage.write(key: kDriverEmailKey, value: email.trim());
       state = state.copyWith(isLoading: false, user: data, isAuthenticated: true);
       return true;
     } catch (e) {
@@ -99,6 +142,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
         if (vehiclePlate.isNotEmpty) 'vehicle_type': vehicleType,
         if (vehiclePlate.isNotEmpty) 'vehicle_plate': vehiclePlate,
       });
+      await storage.write(key: kDriverEmailKey, value: email.trim());
+      await storage.write(key: kDriverNameKey, value: name.trim());
+      await storage.write(key: kDriverPhoneKey, value: phone.trim());
+      await storage.write(key: kDriverVehicleTypeKey, value: vehicleType);
+      await storage.write(key: kDriverVehiclePlateKey, value: vehiclePlate.trim());
       state = state.copyWith(isLoading: false);
       return true;
     } catch (e) {
@@ -116,6 +164,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await storage.delete(key: 'access_token');
     await storage.delete(key: 'refresh_token');
     await storage.delete(key: kDriverIdKey);
+    await storage.delete(key: kUserTypeKey);
+    await storage.delete(key: kDriverEmailKey);
+    await storage.delete(key: kDriverNameKey);
+    await storage.delete(key: kDriverPhoneKey);
+    await storage.delete(key: kDriverVehicleTypeKey);
+    await storage.delete(key: kDriverVehiclePlateKey);
     state = const AuthState();
   }
 }

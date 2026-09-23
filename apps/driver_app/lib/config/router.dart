@@ -11,6 +11,7 @@ import '../screens/available_orders_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/earnings_screen.dart';
 import '../screens/multi_stop_delivery_screen.dart';
+import '../screens/profile/driver_profile_screen.dart';
 
 class AppRoutes {
   AppRoutes._();
@@ -19,6 +20,7 @@ class AppRoutes {
   static const String register = '/register';
   static const String dashboard = '/dashboard';
   static const String availableOrders = '/available-orders';
+  static const String driverProfile = '/driver-profile';
   static const String earnings = '/earnings';
 
   static String orderDetail(String orderId) => '/order/$orderId';
@@ -43,6 +45,11 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: AppRoutes.login, name: 'login', builder: (context, state) => const LoginScreen()),
       GoRoute(path: AppRoutes.register, name: 'register', builder: (context, state) => const RegisterScreen()),
       GoRoute(path: AppRoutes.dashboard, name: 'dashboard', builder: (context, state) => const DashboardScreen()),
+      GoRoute(
+        path: AppRoutes.driverProfile,
+        name: 'driver-profile',
+        builder: (context, state) => const DriverProfileScreen(),
+      ),
       GoRoute(
         path: AppRoutes.availableOrders,
         name: 'available-orders',
