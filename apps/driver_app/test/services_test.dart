@@ -160,9 +160,31 @@ void main() {
       expect(orders.last.deliveryAddress, 'Jl. R');
     });
 
-    test('acceptFood returns true after delay', () async {
-      final service = OrderService(ApiClient(dio: Dio(BaseOptions())));
-      expect(await service.acceptFood('food-1'), isTrue);
+    test('acceptFood posts to /food-orders/{id}/accept with idempotency key', () async {
+      final dio = Dio(BaseOptions(baseUrl: 'http://test'));
+      String? path;
+      Object? idemKey;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            path = options.path;
+            idemKey = options.headers['X-Idempotency-Key'];
+            handler.resolve(Response(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'success': true,
+                'data': {'order_id': 'food-1', 'status': 'READY_FOR_PICKUP'},
+              },
+            ));
+          },
+        ),
+      );
+      final service = OrderService(ApiClient(dio: dio));
+      final result = await service.acceptFood('food-1');
+      expect(path, '/api/v1/food-orders/food-1/accept');
+      expect(idemKey, isNotNull);
+      expect(result['status'], 'READY_FOR_PICKUP');
     });
   });
 

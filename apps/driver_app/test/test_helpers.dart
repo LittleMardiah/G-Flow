@@ -49,9 +49,9 @@ class FakeOrderService extends OrderService {
   }
 
   @override
-  Future<bool> acceptFood(String orderId) async {
+  Future<Map<String, dynamic>> acceptFood(String orderId) async {
     if (failAccept) throw Exception('accept fail');
-    return true;
+    return const {};
   }
 
   @override

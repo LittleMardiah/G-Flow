@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:uuid/uuid.dart';
 
 import '../config/constants.dart';
 import '../models/driver_order.dart';
@@ -32,6 +33,8 @@ class OrderService {
   const OrderService(this.apiClient);
 
   final ApiClient apiClient;
+
+  static const _uuid = Uuid();
 
   /// GET /drivers/available-orders — semua order tersedia (ride + food + send)
   /// dalam radius driver + status kapasitas. Satu panggilan unified (TD-009)
@@ -139,12 +142,14 @@ class OrderService {
     return unwrapData(res.data) ?? const <String, dynamic>{};
   }
 
-  /// "Accept" order food. Backend food belum punya endpoint accept driver;
-  /// untuk MVP, accept ditandai lokal (isMock=true) lalu driver menuju
-  /// merchant dan memakai PATCH status READY_FOR_PICKUP → PICKED_UP.
-  Future<bool> acceptFood(String orderId) async {
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    return true;
+  /// POST /food-orders/{order_id}/accept — accept order food (real backend).
+  /// Header X-Idempotency-Key (UUID v4) wajib backend (TD-078, 3.5.4).
+  Future<Map<String, dynamic>> acceptFood(String orderId) async {
+    final res = await apiClient.post(
+      '/api/v1/food-orders/$orderId/accept',
+      headers: {'X-Idempotency-Key': _uuid.v4()},
+    );
+    return unwrapData(res.data) ?? const <String, dynamic>{};
   }
 
   /// PATCH /rides/{order_id}/status — DRIVER_ARRIVED → TRIP_STARTED → COMPLETED.
