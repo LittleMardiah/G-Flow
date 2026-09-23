@@ -245,6 +245,63 @@ func TestHandler_UpdateStatus_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+func TestHandler_UpdateStatus_WithActualFare(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
+		bytes.NewBufferString(`{"status":"COMPLETED","actual_fare":60000}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcDriverID.String())
+
+	svc := new(mockRideService)
+	svc.On("UpdateRideStatus", mock.Anything, mock.MatchedBy(func(req UpdateRideStatusRequest) bool {
+		return req.ActualFare != nil && req.ActualFare.Equal(decimal.NewFromInt(60000))
+	})).Return(&UpdateRideStatusResponse{OrderID: svcOrderID, Status: statusSettled}, nil)
+
+	h := NewHandler(svc)
+	h.UpdateStatus(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_UpdateStatus_WithoutActualFare(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
+		bytes.NewBufferString(`{"status":"COMPLETED"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcDriverID.String())
+
+	svc := new(mockRideService)
+	svc.On("UpdateRideStatus", mock.Anything, mock.MatchedBy(func(req UpdateRideStatusRequest) bool {
+		return req.Status == "COMPLETED" && req.ActualFare == nil
+	})).Return(&UpdateRideStatusResponse{OrderID: svcOrderID, Status: statusSettled}, nil)
+
+	h := NewHandler(svc)
+	h.UpdateStatus(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestHandler_UpdateStatus_ActualFareZeroIgnored(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
+		bytes.NewBufferString(`{"status":"COMPLETED","actual_fare":0}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcDriverID.String())
+
+	svc := new(mockRideService)
+	svc.On("UpdateRideStatus", mock.Anything, mock.MatchedBy(func(req UpdateRideStatusRequest) bool {
+		return req.ActualFare == nil
+	})).Return(&UpdateRideStatusResponse{OrderID: svcOrderID, Status: statusSettled}, nil)
+
+	h := NewHandler(svc)
+	h.UpdateStatus(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
 func TestHandler_UpdateStatus_InvalidOrderID(t *testing.T) {
 	_, c, w := setupGin()
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/xyz/status",

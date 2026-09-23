@@ -82,6 +82,9 @@ const (
 	referenceTypeRideRefund          = "RIDE_REFUND"
 	referenceTypeRideCancellationFee = "RIDE_CANCELLATION_FEE"
 
+	// Reference type untuk selisih fare (shortfall/surplus, TD-069).
+	referenceTypeRideFareAdjustment = "RIDE_FARE_ADJUSTMENT"
+
 	// Cancellation reasons (ROADMAP_02 / API_CONTRACT 7.3 / TD-068).
 	reasonCustomerCancel  = "CUSTOMER_CANCEL"
 	reasonDriverEmergency = "DRIVER_EMERGENCY"
@@ -210,6 +213,7 @@ type Repo interface {
 	CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error)
 	CompleteOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus string, actualFare, driverEarning, platformCommission decimal.Decimal) (bool, error)
 	MarkSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
+	IncrementOverdueDebt(ctx context.Context, q Querier, customerID uuid.UUID, amount decimal.Decimal) error
 	ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error
 	MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error
 }
@@ -550,11 +554,14 @@ func (s *Service) AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID u
 }
 
 // UpdateRideStatusRequest input untuk PATCH /rides/:order_id/status.
+// ActualFare opsional (TD-069): fare aktual dari driver saat COMPLETED; jika
+// nil/nol → pakai estimated_fare (backward compat).
 type UpdateRideStatusRequest struct {
-	OrderID uuid.UUID
-	UserID  uuid.UUID
-	Status  string
-	Reason  string
+	OrderID    uuid.UUID
+	UserID     uuid.UUID
+	Status     string
+	Reason     string
+	ActualFare *decimal.Decimal
 }
 
 // UpdateRideStatusResponse hasil update status order (API_CONTRACT 7.3).
@@ -768,11 +775,29 @@ func cancellationFeeFor(orderStatus, reason string) decimal.Decimal {
 // completeOrderTx menandai order COMPLETED lalu memicu settlement otomatis
 // dalam transaksi yang sama (COMPLETED → SETTLED). Hanya driver yang sudah
 // melewati TRIP_STARTED boleh menyelesaikan order.
+//
+// TD-069 (delta fare): driver boleh mengirim actual_fare opsional. Jika
+// kosong/nol → pakai estimated_fare (backward compat). Jika ada:
+//   - Shortfall (actual > estimated): debit customer delta; jika saldo
+//     customer kurang, kekurangan dari subsidi SYSTEM_PLATFORM (wallet
+//     SYSTEM_PLATFORM_SUBSIDY belum ada, TD-132) + record overdue_debt.
+//   - Surplus (actual < estimated): credit customer delta, debit escrow.
+//
+// Settlement selalu memakai actual_fare (driver 80%, platform 20%).
 func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error) {
-	commission := order.EstimatedFare.Mul(platformShareRate).Round(2)
-	earning := order.EstimatedFare.Sub(commission)
+	actualFare := order.EstimatedFare
+	if req.ActualFare != nil && req.ActualFare.IsPositive() {
+		actualFare = req.ActualFare.Round(2)
+	}
 
-	ok, err := s.repo.CompleteOrder(ctx, tx, order.ID, order.Status, order.EstimatedFare, earning, commission)
+	if err := s.applyFareDelta(ctx, tx, order, actualFare); err != nil {
+		return nil, err
+	}
+
+	commission := actualFare.Mul(platformShareRate).Round(2)
+	earning := actualFare.Sub(commission)
+
+	ok, err := s.repo.CompleteOrder(ctx, tx, order.ID, order.Status, actualFare, earning, commission)
 	if err != nil {
 		return nil, err
 	}
@@ -790,7 +815,7 @@ func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrd
 		return nil, err
 	}
 
-	if err := s.settleOrderTx(ctx, tx, order, earning, commission); err != nil {
+	if err := s.settleOrderTx(ctx, tx, order, actualFare, earning, commission); err != nil {
 		return nil, err
 	}
 
@@ -800,16 +825,146 @@ func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrd
 	return &UpdateRideStatusResponse{OrderID: order.ID, Status: statusSettled}, nil
 }
 
+// applyFareDelta menerapkan selisih actual vs estimated fare (LOGIC_FLOW 2.2
+// §2 / TD-069). Hanya berlaku untuk payment WALLET (ada escrow):
+//   - Shortfall (actual > estimated): menahan delta ke escrow — DEBIT customer
+//     selisih; jika saldo customer kurang, kekurangan ditutup subsidi
+//     SYSTEM_PLATFORM + dicatat overdue_debt.
+//   - Surplus (actual < estimated): refund — DEBIT escrow, CREDIT customer.
+func (s *Service) applyFareDelta(ctx context.Context, tx pgx.Tx, order *RideOrder, actualFare decimal.Decimal) error {
+	delta := actualFare.Sub(order.EstimatedFare).Round(2)
+	if delta.IsZero() || order.PaymentMethod != PaymentMethodWallet {
+		return nil
+	}
+	if order.CustomerWalletID == nil {
+		return ErrWalletNotFound
+	}
+	escrowID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemEscrow)
+	if err != nil {
+		return err
+	}
+	if delta.IsNegative() {
+		return s.refundSurplusDelta(ctx, tx, order, escrowID, delta.Neg())
+	}
+	return s.collectShortfallDelta(ctx, tx, order, escrowID, delta)
+}
+
+// refundSurplusDelta mengembalikan surplus (estimated − actual) ke customer:
+// DEBIT escrow → CREDIT customer wallet.
+func (s *Service) refundSurplusDelta(ctx context.Context, tx pgx.Tx, order *RideOrder, escrowID uuid.UUID, surplus decimal.Decimal) error {
+	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID); err != nil {
+		return err
+	}
+	return s.ledger.CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+		{
+			WalletID:      escrowID,
+			EntryType:     wallet.EntryDebit,
+			Amount:        surplus,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideFareAdjustment,
+			Description:   "RIDE_FARE_ADJUSTMENT - DEBIT escrow (surplus delta fare)",
+		},
+		{
+			WalletID:      *order.CustomerWalletID,
+			EntryType:     wallet.EntryCredit,
+			Amount:        surplus,
+			ReferenceID:   order.ID,
+			ReferenceType: referenceTypeRideFareAdjustment,
+			Description:   "RIDE_FARE_ADJUSTMENT - CREDIT customer (surplus delta fare)",
+		},
+	})
+}
+
+// collectShortfallDelta menahan selisih shortfall (actual − estimated) ke
+// escrow. Debit sebesar saldo customer (maksimal delta); kekurangan ditutup
+// subsidi SYSTEM_PLATFORM (fallback sementara, TD-132) dan dicatat sebagai
+// overdue_debt customer (LOGIC_FLOW 2.2 §2).
+func (s *Service) collectShortfallDelta(ctx context.Context, tx pgx.Tx, order *RideOrder, escrowID uuid.UUID, delta decimal.Decimal) error {
+	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID); err != nil {
+		return err
+	}
+	balance, err := getWalletBalanceTx(ctx, tx, *order.CustomerWalletID)
+	if err != nil {
+		return err
+	}
+	fromCustomer := delta
+	if balance.LessThan(delta) {
+		fromCustomer = balance.Round(2)
+	}
+	shortfall := delta.Sub(fromCustomer)
+
+	entries := make([]wallet.LedgerEntry, 0, 4)
+	if fromCustomer.IsPositive() {
+		entries = append(entries,
+			wallet.LedgerEntry{
+				WalletID:      *order.CustomerWalletID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        fromCustomer,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeRideFareAdjustment,
+				Description:   "RIDE_FARE_ADJUSTMENT - DEBIT customer (shortfall delta)",
+			},
+			wallet.LedgerEntry{
+				WalletID:      escrowID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        fromCustomer,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeRideFareAdjustment,
+				Description:   "RIDE_FARE_ADJUSTMENT - CREDIT escrow (shortfall delta)",
+			},
+		)
+	}
+	if shortfall.IsPositive() {
+		// Wallet SYSTEM_PLATFORM_SUBSIDY belum ada (TD-132) — fallback sementara
+		// memakai SYSTEM_PLATFORM sebagai sumber subsidi shortfall.
+		subsidyID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemPlatform)
+		if err != nil {
+			return err
+		}
+		if err := lockWalletsAsc(ctx, tx, subsidyID); err != nil {
+			return err
+		}
+		entries = append(entries,
+			wallet.LedgerEntry{
+				WalletID:      subsidyID,
+				EntryType:     wallet.EntryDebit,
+				Amount:        shortfall,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeRideFareAdjustment,
+				Description:   "RIDE_FARE_ADJUSTMENT - DEBIT SYSTEM_PLATFORM (subsidy shortfall)",
+			},
+			wallet.LedgerEntry{
+				WalletID:      escrowID,
+				EntryType:     wallet.EntryCredit,
+				Amount:        shortfall,
+				ReferenceID:   order.ID,
+				ReferenceType: referenceTypeRideFareAdjustment,
+				Description:   "RIDE_FARE_ADJUSTMENT - CREDIT escrow (shortfall covered by subsidy)",
+			},
+		)
+		if err := s.repo.IncrementOverdueDebt(ctx, tx, order.CustomerID, shortfall); err != nil {
+			return err
+		}
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return s.ledger.CreateLedgerEntries(ctx, tx, entries)
+}
+
 // settleOrderTx melakukan settlement double-entry ledger (API_CONTRACT 7.3):
 //
-//	WALLET: DEBIT SYSTEM_ESCROW (fare) → CREDIT driver (80%) + CREDIT
+//	WALLET: DEBIT SYSTEM_ESCROW (actual_fare) → CREDIT driver (80%) + CREDIT
 //	        SYSTEM_PLATFORM (20%).
-//	CASH  : DEBIT driver wallet (komisi 20%) → CREDIT SYSTEM_PLATFORM.
-//	        Saldo driver boleh negatif (COD) dengan ceiling -Rp 50.000;
-//	        jika balance < ceiling, driver di-SUSPENDED.
+//	CASH  : DEBIT driver wallet (komisi 20% dari actual_fare) → CREDIT
+//	        SYSTEM_PLATFORM. Saldo driver boleh negatif (COD) dengan ceiling
+//	        -Rp 50.000; jika balance < ceiling, driver di-SUSPENDED.
+//
+// TD-069: escrow dilepas sebesar actual_fare (bukan estimated), sesuai
+// delta yang sudah ditahan/direfund oleh applyFareDelta.
 //
 // Lalu menandai order SETTLED + audit event COMPLETED → SETTLED.
-func (s *Service) settleOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder, earning, commission decimal.Decimal) error {
+func (s *Service) settleOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder, actualFare, earning, commission decimal.Decimal) error {
 	var driverWallet *RideWallet
 	if order.DriverID != nil {
 		w, err := s.repo.GetWalletByUserAndType(ctx, *order.DriverID, WalletTypeDriver)
@@ -879,7 +1034,7 @@ func (s *Service) settleOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder
 			{
 				WalletID:      escrowID,
 				EntryType:     wallet.EntryDebit,
-				Amount:        order.EstimatedFare,
+				Amount:        actualFare,
 				ReferenceID:   order.ID,
 				ReferenceType: referenceTypeRideSettlement,
 				Description:   "RIDE_SETTLEMENT - release escrow",

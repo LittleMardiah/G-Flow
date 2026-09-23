@@ -147,6 +147,11 @@ func (m *mockRepo) MarkSettled(ctx context.Context, q Querier, orderID uuid.UUID
 	return args.Error(0)
 }
 
+func (m *mockRepo) IncrementOverdueDebt(ctx context.Context, q Querier, customerID uuid.UUID, amount decimal.Decimal) error {
+	args := m.Called(ctx, q, customerID, amount)
+	return args.Error(0)
+}
+
 func (m *mockRepo) ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error {
 	args := m.Called(ctx, q, driverID)
 	return args.Error(0)
@@ -238,6 +243,12 @@ func setupBookRideDB(mDB pgxmock.PgxPoolIface, idemKey string) {
 func timeNowFuture() *time.Time {
 	t := time.Now().Add(5 * time.Minute)
 	return &t
+}
+
+// decMatch mencocokkan decimal.Decimal berdasar nilai (bukan representasi):
+// shopspring bisa menyimpan nilai sama dengan exponent berbeda (exp 0 vs -2).
+func decMatch(want decimal.Decimal) any {
+	return mock.MatchedBy(func(d decimal.Decimal) bool { return d.Equal(want) })
 }
 
 // BookRide
@@ -1287,6 +1298,199 @@ func TestSettlement_WalletPayment(t *testing.T) {
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
 		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, statusSettled, resp.Status)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestSettlement_NoDelta_ActualEqualEstimated(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	drv := svcDriverID
+	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("CompleteOrder", mock.Anything, mock.Anything, svcOrderID, statusTripStarted,
+		decMatch(decimal.NewFromInt(50000)), mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).
+		Return(&RideWallet{ID: uuid.New(), UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
+	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
+	mDB.ExpectCommit()
+
+	actual := decimal.NewFromInt(50000)
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, statusSettled, resp.Status)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestSettlement_SurplusDelta_Refund(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	drv := svcDriverID
+	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("CompleteOrder", mock.Anything, mock.Anything, svcOrderID, statusTripStarted,
+		decMatch(decimal.NewFromInt(40000)), mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).
+		Return(&RideWallet{ID: uuid.New(), UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
+	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	// Delta surplus: lock customer+escrow.
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	// Settlement: lock escrow+driver+platform.
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
+	mDB.ExpectCommit()
+
+	actual := decimal.NewFromInt(40000)
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, statusSettled, resp.Status)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestSettlement_ShortfallDelta_CoveredFromWallet(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	drv := svcDriverID
+	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("CompleteOrder", mock.Anything, mock.Anything, svcOrderID, statusTripStarted,
+		decMatch(decimal.NewFromInt(60000)), mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).
+		Return(&RideWallet{ID: uuid.New(), UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
+	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	// Delta shortfall: lock customer+escrow lalu baca balance.
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectQuery("SELECT balance FROM wallets").WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(80000)))
+	// Settlement: lock escrow+driver+platform.
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
+	mDB.ExpectCommit()
+
+	actual := decimal.NewFromInt(60000)
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, statusSettled, resp.Status)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestSettlement_ShortfallDelta_Insufficient_SubsidyOverdue(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	drv := svcDriverID
+	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("CompleteOrder", mock.Anything, mock.Anything, svcOrderID, statusTripStarted,
+		decMatch(decimal.NewFromInt(60000)), mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).
+		Return(&RideWallet{ID: uuid.New(), UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
+	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	// Delta shortfall: lock customer+escrow → balance 0 (tidak cukup).
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectQuery("SELECT balance FROM wallets").WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.Zero))
+	// Subsidi: lock SYSTEM_PLATFORM (fallback TD-132).
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))
+	repo.On("IncrementOverdueDebt", mock.Anything, mock.Anything, svcCustomerID,
+		decMatch(decimal.NewFromInt(10000))).Return(nil)
+	// Settlement: lock escrow+driver+platform.
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
+	mDB.ExpectCommit()
+
+	actual := decimal.NewFromInt(60000)
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
 	})
 
 	assert.NoError(t, err)

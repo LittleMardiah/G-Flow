@@ -392,6 +392,20 @@ func TestRepository_MarkSettled(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+func TestRepository_IncrementOverdueDebt(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	amount := decimal.NewFromInt(10000)
+	mDB.ExpectExec("UPDATE users SET overdue_debt").
+		WithArgs(repoCustID, amount).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	repo := NewRepository(mDB)
+	err = repo.IncrementOverdueDebt(context.Background(), mDB, repoCustID, amount)
+	assert.NoError(t, err)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 func TestRepository_ResetDriverIdle(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)

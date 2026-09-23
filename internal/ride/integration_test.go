@@ -286,6 +286,15 @@ func updateRideStatus(t *testing.T, e *testEnv, token string, orderID uuid.UUID,
 		gin.H{"status": status, "reason": reason}, token, "")
 }
 
+// updateRideStatusWithFare mirror updateRideStatus tapi menambahkan
+// actual_fare pada body (TD-069): dipakai driver saat COMPLETED untuk
+// mengirim fare aktual.
+func updateRideStatusWithFare(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status string, actualFare int64) *httptest.ResponseRecorder {
+	t.Helper()
+	return doJSON(e.r, http.MethodPatch, "/api/v1/rides/"+orderID.String()+"/status",
+		gin.H{"status": status, "actual_fare": actualFare}, token, "")
+}
+
 // updatedStatus membaca field data.status dari respons PATCH /status.
 func updatedStatus(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
@@ -974,6 +983,208 @@ func TestIntegrationRide_CashSettlement(t *testing.T) {
 			`SELECT status, working_status FROM users WHERE id = $1`, dID).Scan(&status, &ws))
 		require.Equal(t, "SUSPENDED", status)
 		require.Equal(t, "IDLE", ws)
+
+		assertLedgerBalanced(t, e, ctx, orderID)
+	})
+}
+
+// TC-INT-RD-009 — TD-069 SURPLUS: actual_fare < estimated_fare. Customer
+// di-refund delta (surplus), escrow dilepas sebesar actual_fare, settlement
+// memakai actual (driver 80%, platform 20%). Double-entry seimbang.
+func TestIntegrationRide_DeltaFareSurplus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	escrowBefore := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+	platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+
+	orderID, estimated := bookRide(t, e, custToken, "WALLET")
+	const actualFare = 30000
+	require.True(t, estimated.GreaterThan(decimal.NewFromInt(actualFare)),
+		"estimasi %v harus > actual 30000 agar terjadi surplus", estimated)
+
+	dToken, _, drvWallet := newDriver(t, e, decimal.Zero)
+
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+
+	for _, st := range []string{"DRIVER_ARRIVED", "TRIP_STARTED"} {
+		w = updateRideStatus(t, e, dToken, orderID, st, "")
+		require.Equal(t, http.StatusOK, w.Code, "status %s: %s", st, w.Body.String())
+	}
+
+	w = updateRideStatusWithFare(t, e, dToken, orderID, "COMPLETED", actualFare)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "SETTLED", updatedStatus(t, w))
+
+	surplus := estimated.Sub(decimal.NewFromInt(actualFare)).Round(2)
+	commission := decimal.NewFromInt(actualFare).Mul(decimal.RequireFromString("0.20")).Round(2)
+	earning := decimal.NewFromInt(actualFare).Sub(commission)
+
+	order := getOrder(t, e, ctx, orderID)
+	require.Equal(t, "SETTLED", order.Status)
+	require.NotNil(t, order.ActualFare)
+	require.True(t, order.ActualFare.Equal(decimal.NewFromInt(actualFare)), "actual=%v", order.ActualFare)
+	require.NotNil(t, order.DriverEarning)
+	require.True(t, order.DriverEarning.Equal(earning), "earning=%v want %v", order.DriverEarning, earning)
+	require.NotNil(t, order.PlatformCommission)
+	require.True(t, order.PlatformCommission.Equal(commission), "commission=%v want %v", order.PlatformCommission, commission)
+
+	// Surplus di-refund → customer net hanya membayar actual (100.000 - 30.000)
+	// bukan estimated; escrow dilepas sebesar surplus + actual = estimated.
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(100000-actualFare)),
+		"customer balance=%v want %v", e.getBalance(t, ctx, custWallet), decimal.NewFromInt(100000-actualFare))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBefore),
+		"escrow=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW"), escrowBefore)
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore.Add(commission)),
+		"platform=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"), platformBefore.Add(commission))
+	require.True(t, e.getBalance(t, ctx, drvWallet).Equal(earning), "driver=%v want %v", e.getBalance(t, ctx, drvWallet), earning)
+	require.True(t, surplus.IsPositive(), "surplus harus positif, got %v", surplus)
+
+	assertLedgerBalanced(t, e, ctx, orderID)
+}
+
+// TC-INT-RD-010 — TD-069 SHORTFALL: actual_fare > estimated_fare.
+// Subtest A: customer saldo CUKUP → delta di-debit penuh dari customer,
+// tanpa subsidi & tanpa overdue_debt.
+// Subtest B: customer saldo KURANG → kekurangan ditutup subsidi
+// SYSTEM_PLATFORM (fallback sementara, TD-132) + dicatat overdue_debt.
+func TestIntegrationRide_DeltaFareShortfall(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	t.Run("customer_balance_covers_delta", func(t *testing.T) {
+		ctx := context.Background()
+		e := newTestEnv(t)
+
+		custToken, custID := registerAndLogin(t, e.r, "customer")
+		custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+		topupCustomer(t, e, custToken, custWallet, "500000")
+
+		escrowBefore := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+		platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+
+		orderID, estimated := bookRide(t, e, custToken, "WALLET")
+		const actualFare = 60000
+		require.True(t, estimated.LessThan(decimal.NewFromInt(actualFare)),
+			"estimasi %v harus < actual 60000 agar terjadi shortfall", estimated)
+
+		dToken, _, drvWallet := newDriver(t, e, decimal.Zero)
+
+		w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+		require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+
+		for _, st := range []string{"DRIVER_ARRIVED", "TRIP_STARTED"} {
+			w = updateRideStatus(t, e, dToken, orderID, st, "")
+			require.Equal(t, http.StatusOK, w.Code, "status %s: %s", st, w.Body.String())
+		}
+
+		w = updateRideStatusWithFare(t, e, dToken, orderID, "COMPLETED", actualFare)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, "SETTLED", updatedStatus(t, w))
+
+		delta := decimal.NewFromInt(actualFare).Sub(estimated).Round(2)
+		commission := decimal.NewFromInt(actualFare).Mul(decimal.RequireFromString("0.20")).Round(2)
+		earning := decimal.NewFromInt(actualFare).Sub(commission)
+
+		order := getOrder(t, e, ctx, orderID)
+		require.Equal(t, "SETTLED", order.Status)
+		require.NotNil(t, order.ActualFare)
+		require.True(t, order.ActualFare.Equal(decimal.NewFromInt(actualFare)), "actual=%v", order.ActualFare)
+		require.True(t, order.DriverEarning.Equal(earning), "earning=%v want %v", order.DriverEarning, earning)
+		require.True(t, order.PlatformCommission.Equal(commission), "commission=%v want %v", order.PlatformCommission, commission)
+
+		// Saldo cukup → delta penuh di-debit customer: net 500.000 - 60.000.
+		require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(500000-actualFare)),
+			"customer balance=%v want %v", e.getBalance(t, ctx, custWallet), decimal.NewFromInt(500000-actualFare))
+		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBefore),
+			"escrow=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW"), escrowBefore)
+		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore.Add(commission)),
+			"platform=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"), platformBefore.Add(commission))
+		require.True(t, e.getBalance(t, ctx, drvWallet).Equal(earning), "driver=%v want %v", e.getBalance(t, ctx, drvWallet), earning)
+		require.True(t, delta.IsPositive(), "delta harus positif, got %v", delta)
+
+		// Tanpa subsidi → overdue_debt tetap 0.
+		var debt decimal.Decimal
+		require.NoError(t, e.pool.QueryRow(ctx,
+			`SELECT COALESCE(overdue_debt, 0) FROM users WHERE id = $1`, custID).Scan(&debt))
+		require.True(t, debt.IsZero(), "overdue_debt harus 0, got %v", debt)
+
+		assertLedgerBalanced(t, e, ctx, orderID)
+	})
+
+	t.Run("customer_balance_insufficient_subsidy", func(t *testing.T) {
+		ctx := context.Background()
+		e := newTestEnv(t)
+
+		custToken, custID := registerAndLogin(t, e.r, "customer")
+		custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+		// Top-up minimal: setelah escrow dipegang, saldo tak cukup menutup
+		// delta → sisa shortfall ditutup subsidi + dicatat overdue_debt.
+		topupCustomer(t, e, custToken, custWallet, "40000")
+
+		escrowBefore := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+		platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+
+		orderID, estimated := bookRide(t, e, custToken, "WALLET")
+		const actualFare = 60000
+		require.True(t, estimated.LessThan(decimal.NewFromInt(actualFare)),
+			"estimasi %v harus < actual 60000 agar terjadi shortfall", estimated)
+
+		dToken, _, drvWallet := newDriver(t, e, decimal.Zero)
+
+		w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+		require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+
+		for _, st := range []string{"DRIVER_ARRIVED", "TRIP_STARTED"} {
+			w = updateRideStatus(t, e, dToken, orderID, st, "")
+			require.Equal(t, http.StatusOK, w.Code, "status %s: %s", st, w.Body.String())
+		}
+
+		balanceAfterEscrow := e.getBalance(t, ctx, custWallet)
+
+		w = updateRideStatusWithFare(t, e, dToken, orderID, "COMPLETED", actualFare)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, "SETTLED", updatedStatus(t, w))
+
+		delta := decimal.NewFromInt(actualFare).Sub(estimated).Round(2)
+		require.True(t, delta.IsPositive(), "delta harus positif, got %v", delta)
+		require.True(t, balanceAfterEscrow.LessThan(delta),
+			"saldo customer %v harus < delta %v agar terjadi shortfall", balanceAfterEscrow, delta)
+		shortfall := delta.Sub(balanceAfterEscrow).Round(2)
+
+		commission := decimal.NewFromInt(actualFare).Mul(decimal.RequireFromString("0.20")).Round(2)
+		earning := decimal.NewFromInt(actualFare).Sub(commission)
+
+		order := getOrder(t, e, ctx, orderID)
+		require.Equal(t, "SETTLED", order.Status)
+		require.NotNil(t, order.ActualFare)
+		require.True(t, order.ActualFare.Equal(decimal.NewFromInt(actualFare)), "actual=%v", order.ActualFare)
+		require.True(t, order.DriverEarning.Equal(earning), "earning=%v want %v", order.DriverEarning, earning)
+		require.True(t, order.PlatformCommission.Equal(commission), "commission=%v want %v", order.PlatformCommission, commission)
+
+		// Saldo customer habis dipakai menutup delta; kekurangan ditutup subsidi.
+		require.True(t, e.getBalance(t, ctx, custWallet).IsZero(),
+			"customer balance=%v want 0", e.getBalance(t, ctx, custWallet))
+		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBefore),
+			"escrow=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW"), escrowBefore)
+		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore.Add(commission).Sub(shortfall)),
+			"platform=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"), platformBefore.Add(commission).Sub(shortfall))
+		require.True(t, e.getBalance(t, ctx, drvWallet).Equal(earning), "driver=%v want %v", e.getBalance(t, ctx, drvWallet), earning)
+
+		// Kekurangan yang ditutup subsidi dicatat sebagai overdue_debt customer.
+		var debt decimal.Decimal
+		require.NoError(t, e.pool.QueryRow(ctx,
+			`SELECT COALESCE(overdue_debt, 0) FROM users WHERE id = $1`, custID).Scan(&debt))
+		require.True(t, debt.Equal(shortfall), "overdue_debt=%v want %v", debt, shortfall)
 
 		assertLedgerBalanced(t, e, ctx, orderID)
 	})

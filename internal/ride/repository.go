@@ -408,6 +408,17 @@ func (r *Repository) MarkSettled(ctx context.Context, q Querier, orderID uuid.UU
 	return err
 }
 
+// IncrementOverdueDebt menambahkan overdue_debt customer (LOGIC_FLOW 2.2 §2 /
+// TD-069): kekurangan delta fare shortfall yang ditutup subsidi SYSTEM_PLATFORM
+// dicatat sebagai hutang yang akan didahulukan dari top-up berikutnya.
+func (r *Repository) IncrementOverdueDebt(ctx context.Context, q Querier, customerID uuid.UUID, amount decimal.Decimal) error {
+	_, err := q.Exec(ctx, `
+		UPDATE users SET overdue_debt = overdue_debt + $2, updated_at = NOW()
+		WHERE id = $1
+	`, customerID, amount)
+	return err
+}
+
 // ResetDriverIdle menyetel working_status driver kembali ke IDLE (habis
 // selesai bertugas atau cancel).
 func (r *Repository) ResetDriverIdle(ctx context.Context, q Querier, driverID uuid.UUID) error {

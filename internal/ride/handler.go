@@ -151,9 +151,12 @@ func (h *Handler) AcceptOrder(c *gin.Context) {
 
 // updateStatusRequestBody input JSON dari PATCH /rides/:order_id/status
 // (API_CONTRACT 7.3): status target + reason (wajib untuk CANCELLED).
+// ActualFare opsional (TD-069): fare aktual dari driver saat COMPLETED
+// (dalam rupiah bilangan bulat); nil/no-request → pakai estimated_fare.
 type updateStatusRequestBody struct {
-	Status string `json:"status"`
-	Reason string `json:"reason"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	ActualFare *int64 `json:"actual_fare"`
 }
 
 // UpdateStatus PATCH /api/v1/rides/:order_id/status
@@ -181,11 +184,19 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
+	// ActualFare dimasukkan ke service sebagai *decimal (nil → estimated).
+	var actualFare *decimal.Decimal
+	if body.ActualFare != nil && *body.ActualFare > 0 {
+		v := decimal.NewFromInt(*body.ActualFare)
+		actualFare = &v
+	}
+
 	resp, err := h.svc.UpdateRideStatus(c.Request.Context(), UpdateRideStatusRequest{
-		OrderID: orderID,
-		UserID:  userID,
-		Status:  body.Status,
-		Reason:  body.Reason,
+		OrderID:    orderID,
+		UserID:     userID,
+		Status:     body.Status,
+		Reason:     body.Reason,
+		ActualFare: actualFare,
 	})
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())

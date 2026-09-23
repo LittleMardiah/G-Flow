@@ -761,8 +761,13 @@ Solusi     : Tambah actual_fare/delta_fare (schema+model), input driver saat COM
             debit/credit path settlement + test.
 Estimasi   : 3-5 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-23, commit TD-069)
 Referensi  : audit_r02.log (deviasi settlement delta fare)
+Note       : Delta fare diimplementasikan: actual_fare opsional di PATCH
+           /rides/:id/status (handler → service → repo), completeOrderTx
+           pakai actual_fare (surplus refund customer / shortfall debit +
+           overdue_debt), settlement rilis escrow + split 80/20 berdasar
+           actual_fare. Test: integration TD-069 + handler backward compat.
 
 ID         : TD-070
 Kategori   : BACKEND / FITUR
@@ -1579,19 +1584,47 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-068 (temuan OpenCode)
 
-================================================================================
+ID         : TD-132
+Kategori   : BACKEND / FITUR
+Judul      : Wallet SYSTEM_PLATFORM_SUBSIDY TIDAK ada di kode/migration —
+             hanya di LOGIC_FLOW.txt:351. Shortfall delta fare (TD-069)
+             ditutup pakai wallet SYSTEM_PLATFORM (fallback sementara di
+             collectShortfallDelta, service.go:917-925).
+Dampak     : Dana subsidi shortfall tercampur dengan saldo platform & komisi;
+             audit/isomorfisme dana subsidi tidak transparan; konsisten
+             dengan LOGIC_FLOW §2.2 yang menyebut SYSTEM_PLATFORM_SUBSIDY.
+Solusi     : Seed wallet sistem SYSTEM_PLATFORM_SUBSIDY (migration) & alihkan
+             fallback shortfall ke wallet tersebut, bukan SYSTEM_PLATFORM.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : LOGIC_FLOW.txt:351, TD-069 (temuan OpenCode 2026-09-23)
+
+ID         : TD-133
+Kategori   : KODE
+Judul      : Handler UpdateStatus: ActualFare di-Round(2) setelah
+             cek IsPositive() — nilai fraksional kecil (mis. 0.004)
+             lolos cek tapi round ke 0 → jatuh ke perilaku estimated.
+Dampak     : Edge case nyaris nol, tapi secara kontrak: user kirim
+             actual_fare=1 (satuan rupiah) mungkin round ke 0 lalu
+             diabaikan. Low impact untuk IDR (integer), tapi bug logika.
+Solusi     : Urutan seharusnya: Round(2) dulu → IsPositive() baru.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-069 (temuan OpenCode)
+
+===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 125 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 127 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 34 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-069, TD-070, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 51 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131)
+- TINGGI  : 33 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-070, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
+- SEDANG  : 53 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133)
 - RENDAH  : 26 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119)
 
-STATUS: 33 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 91 item OPEN (24 item lama + 67 item baru dari SECTION F, TD-058 s/d TD-131).
+STATUS: 34 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 92 item OPEN (24 item lama + 68 item baru dari SECTION F, TD-058 s/d TD-133).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1617,11 +1650,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-23):
-   - Total hutang teridentifikasi      : 125 item (TD-051 di-reserve/skip; +73 dari SECTION F/follow-up, TD-058 s/d TD-131).
-   - Sudah FIXED/CLOSED                : 33 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074).
+   - Total hutang teridentifikasi      : 127 item (TD-051 di-reserve/skip; +75 dari SECTION F/follow-up, TD-058 s/d TD-133).
+   - Sudah FIXED/CLOSED                : 34 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-069, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                         : 91 item (24 item lama + 67 item baru,
-                                          TD-058 s/d TD-131).
+- ❌ OPEN                         : 92 item (24 item lama + 68 item baru,
+                                          TD-058 s/d TD-133).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -1827,6 +1860,22 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       Total register naik dari 122 → 125 item (SEDANG 48 → 51; OPEN
       88 → 91; KRITIS 8 / TINGGI 35 / RENDAH 26 / FIXED 32 / DEFERRED 1
       tetap). Range SECTION F: TD-058 s/d TD-128 → TD-058 s/d TD-131.
+    - TD-069 FINALIZE (2026-09-23): delta fare selesai (actual_fare opsional
+      PATCH /rides/:id/status → handler/service/repo + integration & handler
+      test). TD-069 → ✅ FIXED (FIXED 33 → 34; TINGGI 34 → 33). Menambahkan
+      TD-132 (BACKEND/FITUR, SEDANG, OPEN): wallet SYSTEM_PLATFORM_SUBSIDY
+      tidak ada di kode/migration (hanya LOGIC_FLOW:351); shortfall fallback
+      pakai SYSTEM_PLATFORM sementara. Total register naik dari 125 → 126 item
+      (KRITIS 8 / TINGGI 33 / SEDANG 52 / RENDAH 26 / FIXED 34 / DEFERRED 1 /
+      OPEN 91 tetap). Range SECTION F: TD-058 s/d TD-131 → TD-058 s/d TD-132.
+    - TD-133 (2026-09-23): Handler UpdateStatus — ActualFare di-Round(2)
+      SETELAH cek IsPositive() → nilai fraksional kecil (mis. 0.004) lolos
+      cek tapi round ke 0 → jatuh ke perilaku estimated (TD-069 temuan
+      OpenCode). Menambahkan TD-133 (KODE, SEDANG, OPEN): urutan seharusnya
+      Round(2) dulu → IsPositive() baru. Total register naik dari 126 → 127
+      item (KRITIS 8 / TINGGI 33 / SEDANG 52 → 53 / RENDAH 26 / FIXED 34 /
+      DEFERRED 1 / OPEN 91 → 92). Range SECTION F: TD-058 s/d TD-132 →
+      TD-058 s/d TD-133.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
