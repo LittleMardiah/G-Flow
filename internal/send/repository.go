@@ -77,59 +77,59 @@ type SendDriver struct {
 // SendOrder adalah representasi baris tabel send_orders (MIGRATION 005).
 // Kolom nullable direpresentasikan sebagai pointer; nil berarti SQL NULL.
 type SendOrder struct {
-	ID                  uuid.UUID
-	SenderID            uuid.UUID
-	DriverID            *uuid.UUID
-	SenderWalletID      *uuid.UUID
-	DriverWalletID      *uuid.UUID
-	PackageWeightKg     decimal.Decimal
-	PackageDimensionsCm *string
-	PackageDescription  *string
-	PickupLat           decimal.Decimal
-	PickupLng           decimal.Decimal
-	PickupAddress       string
-	BaseFare            decimal.Decimal
-	DistanceKm          decimal.Decimal
-	WeightSurcharge     decimal.Decimal
-	TotalFare           decimal.Decimal
-	DeclaredValue       decimal.Decimal
-	PackageType         string
-	InsuranceFee        decimal.Decimal
-	DiscountAmount      decimal.Decimal
-	VoucherID           *uuid.UUID
-	PaymentMethod       string
-	PlatformCommission  *decimal.Decimal
-	DriverEarning       *decimal.Decimal
-	Status              string
-	DeliveryPhotoURL    *string
-	RecipientSignature  []byte
-	CreatedAt           time.Time
-	AssignedAt          *time.Time
-	PickupAt            *time.Time
-	DeliveredAt         *time.Time
-	SettledAt           *time.Time
-	IsSettled           bool
+	ID                  uuid.UUID        `json:"id"`
+	SenderID            uuid.UUID        `json:"sender_id"`
+	DriverID            *uuid.UUID       `json:"driver_id,omitempty"`
+	SenderWalletID      *uuid.UUID       `json:"sender_wallet_id,omitempty"`
+	DriverWalletID      *uuid.UUID       `json:"driver_wallet_id,omitempty"`
+	PackageWeightKg     decimal.Decimal  `json:"package_weight_kg"`
+	PackageDimensionsCm *string          `json:"package_dimensions_cm,omitempty"`
+	PackageDescription  *string          `json:"package_description,omitempty"`
+	PickupLat           decimal.Decimal  `json:"pickup_lat"`
+	PickupLng           decimal.Decimal  `json:"pickup_lng"`
+	PickupAddress       string           `json:"pickup_address"`
+	BaseFare            decimal.Decimal  `json:"base_fare"`
+	DistanceKm          decimal.Decimal  `json:"distance_km"`
+	WeightSurcharge     decimal.Decimal  `json:"weight_surcharge"`
+	TotalFare           decimal.Decimal  `json:"total_fare"`
+	DeclaredValue       decimal.Decimal  `json:"declared_value"`
+	PackageType         string           `json:"package_type"`
+	InsuranceFee        decimal.Decimal  `json:"insurance_fee"`
+	DiscountAmount      decimal.Decimal  `json:"discount_amount"`
+	VoucherID           *uuid.UUID       `json:"voucher_id,omitempty"`
+	PaymentMethod       string           `json:"payment_method"`
+	PlatformCommission  *decimal.Decimal `json:"platform_commission,omitempty"`
+	DriverEarning       *decimal.Decimal `json:"driver_earning,omitempty"`
+	Status              string           `json:"status"`
+	DeliveryPhotoURL    *string          `json:"delivery_photo_url,omitempty"`
+	RecipientSignature  []byte           `json:"recipient_signature,omitempty"`
+	CreatedAt           time.Time        `json:"created_at"`
+	AssignedAt          *time.Time       `json:"assigned_at,omitempty"`
+	PickupAt            *time.Time       `json:"pickup_at,omitempty"`
+	DeliveredAt         *time.Time       `json:"delivered_at,omitempty"`
+	SettledAt           *time.Time       `json:"settled_at,omitempty"`
+	IsSettled           bool             `json:"is_settled"`
 }
 
 // SendOrderStop adalah representasi baris tabel send_order_stops (multi-stop
 // dengan alokasi ongkos — Task 3.5).
 type SendOrderStop struct {
-	ID                 uuid.UUID
-	OrderID            uuid.UUID
-	StopNumber         int
-	RecipientName      *string
-	RecipientPhone     *string
-	DropoffLat         decimal.Decimal
-	DropoffLng         decimal.Decimal
-	DropoffAddress     string
-	DistanceKm         *decimal.Decimal
-	AllocatedFare      *decimal.Decimal
-	Status             string
-	DeliveryPhotoURL   *string
-	RecipientSignature []byte
-	ArrivedAt          *time.Time
-	CompletedAt        *time.Time
-	Notes              *string
+	ID                 uuid.UUID        `json:"id"`
+	OrderID            uuid.UUID        `json:"order_id"`
+	StopNumber         int              `json:"stop_number"`
+	RecipientName      *string          `json:"recipient_name,omitempty"`
+	RecipientPhone     *string          `json:"recipient_phone,omitempty"`
+	DropoffLat         decimal.Decimal  `json:"dropoff_lat"`
+	DropoffLng         decimal.Decimal  `json:"dropoff_lng"`
+	DropoffAddress     string           `json:"dropoff_address"`
+	DistanceKm         *decimal.Decimal `json:"distance_km,omitempty"`
+	AllocatedFare      *decimal.Decimal `json:"allocated_fare,omitempty"`
+	Status             string           `json:"status"`
+	DeliveryPhotoURL   *string          `json:"delivery_photo_url,omitempty"`
+	RecipientSignature []byte           `json:"recipient_signature,omitempty"`
+	ArrivedAt          *time.Time       `json:"arrived_at,omitempty"`
+	CompletedAt        *time.Time       `json:"completed_at,omitempty"`
+	Notes              *string          `json:"notes,omitempty"`
 }
 
 // SendOrderEvent adalah representasi baris tabel send_order_events (audit

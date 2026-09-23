@@ -879,8 +879,8 @@ func toStopResponses(req []SendStopRequest, dists []stopDistance, allocs []decim
 
 // SendOrderDetail adalah hasil GET /send-orders/{id}: order + stops.
 type SendOrderDetail struct {
-	Order *SendOrder
-	Stops []*SendOrderStop
+	Order *SendOrder       `json:"order"`
+	Stops []*SendOrderStop `json:"stops"`
 }
 
 // GetSendOrder mengambil send order lengkap + stops dengan pemeriksaan

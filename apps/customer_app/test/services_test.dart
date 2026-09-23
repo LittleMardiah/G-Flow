@@ -303,12 +303,27 @@ void main() {
       await expectLater(svc.getOrder('s1'), throwsStateError);
     });
 
-    test('getOrder parses', () async {
-      final dio = DioAdapterMock(data: {'data': {'order_id': 's1', 'status': 'IN_TRANSIT'}});
+    test('getOrder parses nested order + stops', () async {
+      final dio = DioAdapterMock(data: {
+        'data': {
+          'order': {'id': 's1', 'status': 'IN_TRANSIT'},
+          'stops': [
+            {
+              'id': 'st1',
+              'order_id': 's1',
+              'recipient_name': 'Budi',
+              'status': 'PENDING',
+            },
+          ],
+        },
+      });
       final svc = SendOrderService(makeApi(dio));
       final o = await svc.getOrder('s1');
       expect(o.id, 's1');
       expect(o.status, 'IN_TRANSIT');
+      expect(o.stops, hasLength(1));
+      expect(o.stops.first.id, 'st1');
+      expect(o.stops.first.recipientName, 'Budi');
     });
 
     test('updateStatus calls patch', () async {

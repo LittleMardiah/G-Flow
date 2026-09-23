@@ -47,13 +47,25 @@ class SendOrderService {
   }
 
   /// GET /api/v1/send-orders/{order_id}
+  ///
+  /// Wire backend (internal/send/service.go SendOrderDetail) nested:
+  /// data = {order: {...}, stops: [...]}. Unwrap data['order'] + merge
+  /// stops ke satu map sebelum dariJson (mirror driver fetchSendDetail).
   Future<SendOrder> getOrder(String orderId) async {
     final res = await apiClient.get('/api/v1/send-orders/$orderId');
     final data = res.data is Map<String, dynamic> ? (res.data as Map)['data'] : null;
     if (data is! Map<String, dynamic>) {
       throw StateError('Respons tidak valid untuk send order $orderId');
     }
-    return SendOrder.fromJson(data);
+    final order = data['order'];
+    final stops = data['stops'];
+    final payload = order is Map<String, dynamic>
+        ? <String, dynamic>{
+            ...order,
+            if (stops is List) 'stops': stops,
+          }
+        : data;
+    return SendOrder.fromJson(payload);
   }
 
   /// PATCH /api/v1/send-orders/{order_id} — status (mis. CANCELLED).
