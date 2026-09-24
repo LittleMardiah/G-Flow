@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/g-flow/g-flow/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -53,7 +53,7 @@ func TestHandler_Register_Success(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userID))
 
 	mockDB.ExpectExec(`INSERT INTO wallets`).
-		WithArgs(userID).
+		WithArgs(userID, "CUSTOMER").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	mockDB.ExpectCommit()
@@ -460,7 +460,7 @@ func TestHandler_Register_WalletError(t *testing.T) {
 		WithArgs(email, nil, "Test User", "customer", pgxmock.AnyArg(), nil, nil, nil).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(uuid.New()))
 	mockDB.ExpectExec(`INSERT INTO wallets`).
-		WithArgs(pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), "CUSTOMER").
 		WillReturnError(errors.New("wallet failed"))
 
 	w := runRegister(t, mockDB, `{"email":"test@example.com","password":"Password123!","name":"Test User","user_type":"customer"}`)
@@ -484,7 +484,7 @@ func TestHandler_Register_CommitError(t *testing.T) {
 		WithArgs(email, nil, "Test User", "customer", pgxmock.AnyArg(), nil, nil, nil).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(uuid.New()))
 	mockDB.ExpectExec(`INSERT INTO wallets`).
-		WithArgs(pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), "CUSTOMER").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mockDB.ExpectCommit().WillReturnError(errors.New("commit failed"))
 
@@ -511,7 +511,10 @@ func TestHandler_Register_DriverSuccess(t *testing.T) {
 		WithArgs(email, "081234567891", "Driver One", "driver", pgxmock.AnyArg(), "car", "B 1234 CD", "LIC-001").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userID))
 	mockDB.ExpectExec(`INSERT INTO wallets`).
-		WithArgs(userID).
+		WithArgs(userID, "CUSTOMER").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mockDB.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(userID, "DRIVER").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mockDB.ExpectCommit()
 
@@ -524,5 +527,72 @@ func TestHandler_Register_DriverSuccess(t *testing.T) {
 	assert.Equal(t, userID.String(), resp["data"].(map[string]interface{})["user_id"])
 	assert.Equal(t, "driver", resp["data"].(map[string]interface{})["user_type"])
 
+	require.NoError(t, mockDB.ExpectationsWereMet())
+}
+
+// TestHandler_Register_MerchantSuccess: registrasi merchant membuat 2 wallet
+// (CUSTOMER + MERCHANT) dalam satu transaksi (TD-128 scope expansion).
+func TestHandler_Register_MerchantSuccess(t *testing.T) {
+	mockDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	email := "merchant@example.com"
+	userID := uuid.New()
+
+	mockDB.ExpectQuery(`SELECT EXISTS`).
+		WithArgs(email).
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(false))
+	mockDB.ExpectBegin()
+	mockDB.ExpectQuery(`INSERT INTO users`).
+		WithArgs(email, nil, "Merchant One", "merchant", pgxmock.AnyArg(), nil, nil, nil).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userID))
+	mockDB.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(userID, "CUSTOMER").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mockDB.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(userID, "MERCHANT").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mockDB.ExpectCommit()
+
+	w := runRegister(t, mockDB, `{"email":"merchant@example.com","password":"Password123!","name":"Merchant One","user_type":"merchant"}`)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp["success"].(bool))
+	assert.Equal(t, userID.String(), resp["data"].(map[string]interface{})["user_id"])
+	assert.Equal(t, "merchant", resp["data"].(map[string]interface{})["user_type"])
+
+	require.NoError(t, mockDB.ExpectationsWereMet())
+}
+
+// TestHandler_Register_DriverSecondWalletError: wallet DRIVER gagal insert →
+// 500 (rollback transaksi; user dan wallet CUSTOMER tidak jadi tersimpan).
+func TestHandler_Register_DriverSecondWalletError(t *testing.T) {
+	mockDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	email := "driver2@example.com"
+
+	mockDB.ExpectQuery(`SELECT EXISTS`).
+		WithArgs(email).
+		WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(false))
+	mockDB.ExpectBegin()
+	mockDB.ExpectQuery(`INSERT INTO users`).
+		WithArgs(email, nil, "Driver Two", "driver", pgxmock.AnyArg(), "motorcycle", "B 5678 EF", "LIC-002").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(uuid.New()))
+	mockDB.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(pgxmock.AnyArg(), "CUSTOMER").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mockDB.ExpectExec(`INSERT INTO wallets`).
+		WithArgs(pgxmock.AnyArg(), "DRIVER").
+		WillReturnError(errors.New("wallet driver failed"))
+
+	w := runRegister(t, mockDB, `{"email":"driver2@example.com","password":"Password123!","name":"Driver Two","user_type":"driver","vehicle_type":"motorcycle","vehicle_plate":"B 5678 EF","license_number":"LIC-002"}`)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "INTERNAL_SERVER_ERROR", decodeErrorCode(t, w.Body.Bytes()))
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }

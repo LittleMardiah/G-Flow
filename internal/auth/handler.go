@@ -33,6 +33,13 @@ var allowedUserTypes = map[string]bool{
 	"merchant": true,
 }
 
+// wallet types yang dibuat saat register (sinkron enum wallets.wallet_type).
+const (
+	walletTypeCustomer = "CUSTOMER"
+	walletTypeDriver   = "DRIVER"
+	walletTypeMerchant = "MERCHANT"
+)
+
 // Handler menerima request HTTP terkait autentikasi.
 type Handler struct {
 	jwtService *JWTService
@@ -222,10 +229,7 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO wallets (user_id, wallet_type, balance, status) VALUES ($1, 'CUSTOMER', 0, 'ACTIVE')`,
-		userID,
-	); err != nil {
+	if err := createWalletsForUser(ctx, tx, userID, userType); err != nil {
 		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal membuat wallet")
 		return
 	}
@@ -271,6 +275,41 @@ func (h *Handler) Logout(c *gin.Context) {
 // validEmail melakukan validasi ringan format email (regex ketat di DB CHECK).
 func validEmail(email string) bool {
 	return strings.Contains(email, "@") && strings.Contains(email, ".")
+}
+
+// walletsForUserType memetakan user_type ke daftar wallet yang harus dibuat
+// saat register, dalam satu transaksi:
+//
+//	customer  → CUSTOMER
+//	driver    → CUSTOMER + DRIVER (TD-128)
+//	merchant  → CUSTOMER + MERCHANT
+//
+// user_type lain (admin/system) tidak self-register — sudah ditolak di
+// allowedUserTypes.
+func walletsForUserType(userType string) []string {
+	switch userType {
+	case "driver":
+		return []string{walletTypeCustomer, walletTypeDriver}
+	case "merchant":
+		return []string{walletTypeCustomer, walletTypeMerchant}
+	default: // customer
+		return []string{walletTypeCustomer}
+	}
+}
+
+// createWalletsForUser insert semua wallet milik user baru dalam transaksi
+// yang sama. Kalau salah satu insert gagal, error dikembalikan dan caller
+// wajib rollback — atomicity dijamin oleh transaksi DB.
+func createWalletsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, userType string) error {
+	for _, walletType := range walletsForUserType(userType) {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO wallets (user_id, wallet_type, balance, status) VALUES ($1, $2, 0, 'ACTIVE')`,
+			userID, walletType,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeError menulis error response sesuai format API_CONTRACT:

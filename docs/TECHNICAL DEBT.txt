@@ -1544,11 +1544,13 @@ Judul      : Register driver hanya membuat wallet CUSTOMER (auth/handler.go
 Dampak     : Driver tidak bisa lihat saldo earning, withdrawal blocked
              sampai wallet DRIVER terbuat (via settlement order pertama).
              Onboarding driver baru broken UX.
-Solusi     : Register driver (user_type=driver) buat 2 wallet: CUSTOMER +
-             DRIVER dalam 1 transaksi. Atau /wallets/me auto-create kalau
-             belum ada (kalau memang desainnya begitu).
+Solusi     : ✅ DONE (2026-09-24, commit TD-128): helper createWalletsForUser
+             + walletsForUserType di auth/handler.go membuat wallet sesuai
+             user_type dalam 1 transaksi: customer → CUSTOMER; driver →
+             CUSTOMER + DRIVER; merchant → CUSTOMER + MERCHANT (scope
+             expansion minor, user-approved). Atomicity dijamin tx rollback.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-24, commit TD-128)
 Referensi  : TD-074 (temuan OpenCode)
 
 ID         : TD-129
@@ -1724,19 +1726,34 @@ Prioritas  : RENDAH
 Status     : OPEN
 Referensi  : Merchant S3 (temuan OpenCode)
 
+ID         : TD-141
+Kategori   : TESTING
+Judul      : TestAuthRBAC_Allowed (integration auth) FAIL pre-existing —
+             register user_type=admin via public API → 422
+             INVALID_USER_TYPE (handler allowedUserTypes tolak admin sejak
+             awal). Test pakai mekanisme yang salah: admin di-seed, bukan
+             self-register.
+Dampak     : Integration suite auth punya 1 fail noise. Developer baru
+             bingung mana fail legitimate vs noise.
+Solusi     : (a) pakai seeded admin (fixture) untuk RBAC test, atau
+             (b) hapus test karena admin self-register memang dilarang.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-128 (temuan OpenCode)
+
 ===============================================================================
 2. RINGKASAN
 ===============================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 134 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 135 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 32 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 58 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139)
+- TINGGI  : 31 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125)
+- SEDANG  : 59 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141)
 - RENDAH  : 28 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140)
 
-STATUS: 36 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 98 item OPEN (24 item lama + 74 item baru dari SECTION F, TD-058 s/d TD-140).
+STATUS: 37 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 98 item OPEN (24 item lama + 74 item baru dari SECTION F, TD-058 s/d TD-141).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1762,11 +1779,11 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-24):
-   - Total hutang teridentifikasi      : 134 item (TD-051 di-reserve/skip; +81 dari SECTION F/follow-up, TD-058 s/d TD-140).
-   - Sudah FIXED/CLOSED                : 36 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-069, TD-070, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074, TD-138).
+   - Total hutang teridentifikasi      : 135 item (TD-051 di-reserve/skip; +82 dari SECTION F/follow-up, TD-058 s/d TD-141).
+   - Sudah FIXED/CLOSED                : 37 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-069, TD-070, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074, TD-138, TD-128).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
 - ❌ OPEN                         : 98 item (24 item lama + 74 item baru,
-                                          TD-058 s/d TD-140).
+                                          TD-058 s/d TD-141).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -2049,6 +2066,21 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       naik dari 132 → 134 item (KRITIS 8 / TINGGI 32 / SEDANG 57 → 58 /
       RENDAH 27 → 28 / FIXED 36 / DEFERRED 1 tetap; OPEN 96 → 98).
       Range SECTION F: TD-058 s/d TD-138 → TD-058 s/d TD-140.
+    - TD-128 FINALIZE (2026-09-24): register wallet provisioning fix.
+      auth/handler.go register kini membuat wallet sesuai user_type dalam
+      1 transaksi (helper createWalletsForUser + walletsForUserType,
+      atomicity via tx rollback): customer → 1 CUSTOMER; driver → 2
+      CUSTOMER+DRIVER; merchant → 2 CUSTOMER+MERCHANT (scope expansion
+      minor, user-approved). TD-128 → ✅ FIXED (FIXED 36 → 37; TINGGI 32 →
+      31; OPEN 98 → 97; register tetap 134 item). Test: unit (register
+      customer 1 wallet, driver 2 wallet ikuti second-wallet insert error
+      → rollback, merchant 2 wallet) PASS + coverage 95.0%; integration
+      TestAuthRegister_DriverHasWallets_Integration & TestAuthRegister_
+      MerchantHasWallet_Integration (GET /wallets/me?type=DRIVER/MERCHANT
+      → 200) PASS + go build/vet PASS. Catatan: TestAuthRBAC_Allowed
+      (integration auth) FAIL pre-existing — register user_type=admin →
+      422 INVALID_USER_TYPE (handler allowedUserTypes tolak admin sejak
+      awal, tidak terkait TD-128; usul TD follow-up di luar scope ini).
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

@@ -93,6 +93,10 @@ func (tc *testConfig) newRouter() *gin.Engine {
 		api.POST("/wallets/:wallet_id/transfer", walletHandler.Transfer)
 		api.GET("/wallets/:wallet_id/balance", walletHandler.GetBalance)
 
+		// TD-120: GET /wallets/me — auto-resolve wallet milik user (mirror
+		// cmd/api/main.go wiring; dipakai test wallet provisioning TD-128).
+		api.GET("/wallets/me", auth.RBACMiddleware("customer", "driver", "merchant"), walletHandler.GetMyWallet)
+
 		// Endpoint khusus test untuk menutup branch coverage auth/middleware.
 		api.GET("/me", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -532,13 +536,13 @@ func TestAuthRegister_DriverSuccess(t *testing.T) {
 	r := tc.newRouter()
 
 	w, resp := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", gin.H{
-		"email":         randomEmail(),
-		"password":      "password123",
-		"name":          "Full Driver",
-		"user_type":     "driver",
-		"phone":         "081234567890",
-		"vehicle_type":  "motorcycle",
-		"vehicle_plate": "B 1234 XY",
+		"email":          randomEmail(),
+		"password":       "password123",
+		"name":           "Full Driver",
+		"user_type":      "driver",
+		"phone":          "081234567890",
+		"vehicle_type":   "motorcycle",
+		"vehicle_plate":  "B 1234 XY",
 		"license_number": "SIM-12345",
 	}, "")
 	if w.Code != http.StatusCreated {
@@ -628,5 +632,76 @@ func TestAuthRegister_DriverMissingInfo(t *testing.T) {
 	}
 	if resp.Error == nil || resp.Error.Code != "INVALID_DRIVER_INFO" {
 		t.Fatalf("expected INVALID_DRIVER_INFO, got %+v", resp.Error)
+	}
+}
+
+// TestAuthRegister_DriverHasWallets_Integration (TD-128): register driver
+// membentuk user + 2 wallet (CUSTOMER + DRIVER) dalam 1 transaksi.
+// Memverifikasi GET /wallets/me?type=CUSTOMER & ?type=DRIVER → 200.
+func TestAuthRegister_DriverHasWallets_Integration(t *testing.T) {
+	tc := setupTestConfig(t)
+	r := tc.newRouter()
+
+	email := randomEmail()
+	w, _ := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", gin.H{
+		"email":          email,
+		"password":       "password123",
+		"name":           "Driver Wallet",
+		"user_type":      "driver",
+		"vehicle_type":   "motorcycle",
+		"vehicle_plate":  "B 1234 XY",
+		"license_number": "SIM-12345",
+	}, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("registrasi driver gagal: %d (%s)", w.Code, w.Body.String())
+	}
+
+	wLogin, resp := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", gin.H{
+		"email":    email,
+		"password": "password123",
+	}, "")
+	if wLogin.Code != http.StatusOK || resp.Data.AccessToken == "" {
+		t.Fatalf("login driver gagal: %d (%s)", wLogin.Code, wLogin.Body.String())
+	}
+
+	for _, wt := range []string{"CUSTOMER", "DRIVER"} {
+		wWallet, _ := doJSON(t, r, http.MethodGet, "/api/v1/wallets/me?type="+wt, nil, resp.Data.AccessToken)
+		if wWallet.Code != http.StatusOK {
+			t.Fatalf("GET /wallets/me?type=%s harus 200, got %d (%s)", wt, wWallet.Code, wWallet.Body.String())
+		}
+	}
+}
+
+// TestAuthRegister_MerchantHasWallet_Integration (TD-128 scope expansion):
+// register merchant membentuk wallet CUSTOMER + MERCHANT. GET
+// /wallets/me?type=MERCHANT → 200.
+func TestAuthRegister_MerchantHasWallet_Integration(t *testing.T) {
+	tc := setupTestConfig(t)
+	r := tc.newRouter()
+
+	email := randomEmail()
+	w, _ := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", gin.H{
+		"email":     email,
+		"password":  "password123",
+		"name":      "Merchant Wallet",
+		"user_type": "merchant",
+	}, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("registrasi merchant gagal: %d (%s)", w.Code, w.Body.String())
+	}
+
+	wLogin, resp := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", gin.H{
+		"email":    email,
+		"password": "password123",
+	}, "")
+	if wLogin.Code != http.StatusOK || resp.Data.AccessToken == "" {
+		t.Fatalf("login merchant gagal: %d (%s)", wLogin.Code, wLogin.Body.String())
+	}
+
+	for _, wt := range []string{"CUSTOMER", "MERCHANT"} {
+		wWallet, _ := doJSON(t, r, http.MethodGet, "/api/v1/wallets/me?type="+wt, nil, resp.Data.AccessToken)
+		if wWallet.Code != http.StatusOK {
+			t.Fatalf("GET /wallets/me?type=%s harus 200, got %d (%s)", wt, wWallet.Code, wWallet.Body.String())
+		}
 	}
 }
