@@ -1189,3 +1189,183 @@ func TestIntegrationRide_DeltaFareShortfall(t *testing.T) {
 		assertLedgerBalanced(t, e, ctx, orderID)
 	})
 }
+
+// --- Voucher discount (TD-070) ---
+
+// createVoucher membuat voucher ACTIVE baru langsung di DB (belum ada
+// endpoint admin voucher). Per hit call memakai kode unik.
+func (e *testEnv) createVoucher(t *testing.T, ctx context.Context, discountType string, value decimal.Decimal, perUserLimit int) (uuid.UUID, string) {
+	t.Helper()
+	code := "ITV" + strings.ToUpper(strings.ReplaceAll(uuid.New().String(), "-", ""))[:12]
+	var id uuid.UUID
+	err := e.pool.QueryRow(ctx, `
+		INSERT INTO vouchers (
+			code, name, discount_type, discount_value, applicable_services,
+			per_user_limit, valid_from, valid_to, status
+		) VALUES ($1, 'IT Voucher', $2, $3, ARRAY['RIDE'::order_type_enum], $4,
+			NOW() - INTERVAL '1 hour', NOW() + INTERVAL '24 hours', 'ACTIVE')
+		RETURNING id`,
+		code, discountType, value, perUserLimit).Scan(&id)
+	require.NoError(t, err)
+	return id, code
+}
+
+type voucherBookData struct {
+	OrderID        uuid.UUID       `json:"order_id"`
+	Status         string          `json:"status"`
+	EstimatedFare  decimal.Decimal `json:"estimated_fare"`
+	DiscountAmount decimal.Decimal `json:"discount_amount"`
+	VoucherCode    *string         `json:"voucher_code"`
+}
+
+// bookRideWithVoucher melakukan booking WALLET memakai voucher_code dan
+// mengembalikan data respons booking (termasuk diskon).
+func bookRideWithVoucher(t *testing.T, e *testEnv, token, code string) voucherBookData {
+	t.Helper()
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/book", gin.H{
+		"pickup_lat":      defaultPickupLat,
+		"pickup_lng":      defaultPickupLng,
+		"pickup_address":  "Jl. Test A",
+		"dropoff_lat":     defaultDropoffLat,
+		"dropoff_lng":     defaultDropoffLng,
+		"dropoff_address": "Jl. Test B",
+		"payment_method":  "WALLET",
+		"voucher_code":    code,
+	}, token, uuid.New().String())
+	require.Equal(t, http.StatusCreated, w.Code, "book: %s", w.Body.String())
+
+	var data voucherBookData
+	require.NoError(t, json.Unmarshal(mustResp(t, w).Data, &data))
+	require.Equal(t, "SEARCHING_DRIVER", data.Status)
+	require.NotEqual(t, uuid.Nil, data.OrderID)
+	return data
+}
+
+// Book + settle end-to-end memakai voucher PERCENTAGE: escrow post-diskon,
+// user_vouchers APPLIED, settlement berbasis fareBasis (estimated − diskon).
+func TestIntegrationRide_VoucherBookingSettlement(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "500000")
+
+	voucherID, code := e.createVoucher(t, ctx, "PERCENTAGE", decimal.NewFromInt(20), 5)
+	_ = e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+
+	data := bookRideWithVoucher(t, e, custToken, code)
+	discount := data.EstimatedFare.Mul(decimal.RequireFromString("0.20")).Round(2)
+	require.True(t, data.DiscountAmount.Equal(discount), "discount=%v want %v", data.DiscountAmount, discount)
+	require.NotNil(t, data.VoucherCode)
+	require.Equal(t, code, *data.VoucherCode)
+
+	// Escrow yang ditahan = estimated − diskon (bukan estimated penuh).
+	finalFare := data.EstimatedFare.Sub(discount)
+	escrowHeld := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+	require.True(t, escrowHeld.Equal(finalFare), "escrow held=%v want %v", escrowHeld, finalFare)
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(500000).Sub(finalFare)),
+		"balance=%v want %v", e.getBalance(t, ctx, custWallet), decimal.NewFromInt(500000).Sub(finalFare))
+
+	// Trigger: used_count bertambah & user_vouchers tercatat APPLIED.
+	var usedCount int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT used_count FROM vouchers WHERE id = $1`, voucherID).Scan(&usedCount))
+	require.Equal(t, 1, usedCount)
+	var uvStatus string
+	var uvDiscount decimal.Decimal
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT status, discount_amount_applied FROM user_vouchers WHERE voucher_id = $1`, voucherID).
+		Scan(&uvStatus, &uvDiscount))
+	require.Equal(t, "APPLIED", uvStatus)
+	require.True(t, uvDiscount.Equal(discount), "discount_applied=%v want %v", uvDiscount, discount)
+
+	// Order menyimpan voucher_id + discount_amount.
+	order := getOrder(t, e, ctx, data.OrderID)
+	require.NotNil(t, order.VoucherID)
+	require.Equal(t, voucherID, *order.VoucherID)
+	require.NotNil(t, order.DiscountAmount)
+	require.True(t, order.DiscountAmount.Equal(discount), "order discount=%v want %v", *order.DiscountAmount, discount)
+
+	// Settlement memakai fareBasis (post-diskon).
+	dToken, _, drvWallet := newDriver(t, e, decimal.Zero)
+	require.Equal(t, http.StatusOK,
+		doJSON(e.r, http.MethodPost, "/api/v1/rides/"+data.OrderID.String()+"/accept", nil, dToken, "").Code,
+		"accept harus 200")
+	for _, st := range []string{"DRIVER_ARRIVED", "TRIP_STARTED"} {
+		require.Equal(t, http.StatusOK, updateRideStatus(t, e, dToken, data.OrderID, st, "").Code, "status %s", st)
+	}
+	w := updateRideStatus(t, e, dToken, data.OrderID, "COMPLETED", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "SETTLED", updatedStatus(t, w))
+
+	commission := finalFare.Mul(decimal.RequireFromString("0.20")).Round(2)
+	earning := finalFare.Sub(commission)
+	order = getOrder(t, e, ctx, data.OrderID)
+	require.Equal(t, "SETTLED", order.Status)
+	require.NotNil(t, order.DriverEarning)
+	require.True(t, order.DriverEarning.Equal(earning), "earning=%v want %v", order.DriverEarning, earning)
+	require.NotNil(t, order.PlatformCommission)
+	require.True(t, order.PlatformCommission.Equal(commission), "commission=%v want %v", order.PlatformCommission, commission)
+	require.True(t, e.getBalance(t, ctx, drvWallet).Equal(earning), "driver=%v want %v", e.getBalance(t, ctx, drvWallet), earning)
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(500000).Sub(finalFare)))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowHeld.Sub(finalFare)))
+
+	// Voucher tetap APPLIED setelah settlement (bukan cancel).
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT status FROM user_vouchers WHERE voucher_id = $1`, voucherID).Scan(&uvStatus))
+	require.Equal(t, "APPLIED", uvStatus)
+
+	assertLedgerBalanced(t, e, ctx, data.OrderID)
+}
+
+// Cancel order ber-voucher: trigger rollback_voucher_soft_delete menandai
+// user_vouchers CANCELLED + used_count kembali; refund escrow post-diskon.
+func TestIntegrationRide_VoucherCancelRollback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	voucherID, code := e.createVoucher(t, ctx, "PERCENTAGE", decimal.NewFromInt(20), 5)
+	data := bookRideWithVoucher(t, e, custToken, code)
+	finalFare := data.EstimatedFare.Sub(data.DiscountAmount)
+
+	// Escrow post-diskon: saldo customer berkurang finalFare (bukan estimated).
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(100000).Sub(finalFare)),
+		"balance=%v want %v", e.getBalance(t, ctx, custWallet), decimal.NewFromInt(100000).Sub(finalFare))
+
+	var uvStatus string
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT status FROM user_vouchers WHERE voucher_id = $1`, voucherID).Scan(&uvStatus))
+	require.Equal(t, "APPLIED", uvStatus)
+
+	w := updateRideStatus(t, e, custToken, data.OrderID, "CANCELLED", "CUSTOMER_CANCEL")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "CANCELLED", updatedStatus(t, w))
+
+	// Trigram rollback: user_vouchers → CANCELLED, used_count → 0.
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT status FROM user_vouchers WHERE voucher_id = $1`, voucherID).Scan(&uvStatus))
+	require.Equal(t, "CANCELLED", uvStatus, "voucher harus di-rollback ke CANCELLED saat order cancel")
+	var usedCount int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT used_count FROM vouchers WHERE id = $1`, voucherID).Scan(&usedCount))
+	require.Equal(t, 0, usedCount, "used_count harus kembali 0 setelah rollback")
+
+	// Full refund escrow post-diskon → saldo customer kembali penuh.
+	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(100000)),
+		"balance=%v want 100000", e.getBalance(t, ctx, custWallet))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").IsZero())
+	require.Equal(t, "CANCELLED", getOrder(t, e, ctx, data.OrderID).Status)
+
+	assertLedgerBalanced(t, e, ctx, data.OrderID)
+}

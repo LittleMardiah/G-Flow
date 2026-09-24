@@ -16,6 +16,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/g-flow/g-flow/internal/wallet"
 )
@@ -81,6 +82,32 @@ func (m *mockRepo) InsertEvent(ctx context.Context, q Querier, event RideOrderEv
 func (m *mockRepo) SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error) {
 	args := m.Called(ctx, q, walletType)
 	return args.Get(0).(uuid.UUID), args.Error(1)
+}
+
+func (m *mockRepo) GetVoucherByCode(ctx context.Context, code string) (*Voucher, error) {
+	args := m.Called(ctx, code)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Voucher), args.Error(1)
+}
+
+func (m *mockRepo) GetVoucherByID(ctx context.Context, voucherID uuid.UUID) (*Voucher, error) {
+	args := m.Called(ctx, voucherID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Voucher), args.Error(1)
+}
+
+func (m *mockRepo) CountUserVoucherUsage(ctx context.Context, q Querier, userID, voucherID uuid.UUID) (int, error) {
+	args := m.Called(ctx, q, userID, voucherID)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *mockRepo) InsertUserVoucher(ctx context.Context, q Querier, uv *UserVoucher) error {
+	args := m.Called(ctx, q, uv)
+	return args.Error(0)
 }
 
 func (m *mockRepo) GetDriver(ctx context.Context, driverID uuid.UUID) (*Driver, error) {
@@ -2178,4 +2205,390 @@ func TestHoldEscrow_InsufficientAfterLock(t *testing.T) {
 	_, err = svc.holdEscrow(context.Background(), mDB, svcWallet(decimal.NewFromInt(100)), svcOrderID, decimal.NewFromInt(10000))
 	assert.ErrorIs(t, err, ErrInsufficientBalance)
 	repo.AssertExpectations(t)
+}
+
+// ---- Voucher discount (TD-070) ----
+
+var svcVoucherID = uuid.MustParse("88888888-8888-8888-8888-888888888888")
+
+// svcVoucher membangun fixture voucher dengan window waktu aktif saat ini.
+func svcVoucher(discountType string, value decimal.Decimal, maxDiscount *decimal.Decimal, minOrder decimal.Decimal, perUserLimit int) *Voucher {
+	return &Voucher{
+		ID:                 svcVoucherID,
+		Code:               "RIDE20",
+		Name:               "Diskon Ride 20%",
+		DiscountType:       discountType,
+		DiscountValue:      value,
+		MaxDiscount:        maxDiscount,
+		ApplicableServices: []string{"RIDE"},
+		MinOrderAmount:     minOrder,
+		PerUserLimit:       perUserLimit,
+		UsedCount:          1,
+		ValidFrom:          time.Now().Add(-time.Hour),
+		ValidTo:            time.Now().Add(24 * time.Hour),
+		Status:             "ACTIVE",
+	}
+}
+
+// assertEscrowEntries memverifikasi double-entry holdEscrow: DEBIT customer =
+// escrow & CREDIT SYSTEM_ESCROW = escrow (jumlah sama, TD-070 post-diskon).
+func assertEscrowEntries(t *testing.T, args mock.Arguments, want decimal.Decimal) {
+	t.Helper()
+	entries, ok := args.Get(0).([]wallet.LedgerEntry)
+	assert.True(t, ok, "CreateLedgerEntries harus menerima []wallet.LedgerEntry")
+	assert.Len(t, entries, 2)
+	assert.Equal(t, wallet.EntryDebit, entries[0].EntryType)
+	assert.Equal(t, wallet.EntryCredit, entries[1].EntryType)
+	assert.True(t, entries[0].Amount.Equal(want), "DEBIT customer = %v want %v", entries[0].Amount, want)
+	assert.True(t, entries[1].Amount.Equal(want), "CREDIT escrow = %v want %v", entries[1].Amount, want)
+}
+
+// assertFullRefundEntries memverifikasi refundEscrow: escrow di-DEBIT &
+// customer di-CREDIT sebesar fareBasis (post-diskon), bukan estimated penuh.
+func assertFullRefundEntries(t *testing.T, args mock.Arguments, want decimal.Decimal) {
+	t.Helper()
+	entries, ok := args.Get(0).([]wallet.LedgerEntry)
+	assert.True(t, ok, "CreateLedgerEntries harus menerima []wallet.LedgerEntry")
+	assert.Len(t, entries, 2)
+	assert.Equal(t, wallet.EntryDebit, entries[0].EntryType)
+	assert.Equal(t, wallet.EntryCredit, entries[1].EntryType)
+	assert.True(t, entries[0].Amount.Equal(want), "DEBIT escrow = %v want %v", entries[0].Amount, want)
+	assert.True(t, entries[1].Amount.Equal(want), "CREDIT customer = %v want %v", entries[1].Amount, want)
+}
+
+func svcBookingFare(req BookRideRequest) (dist, est decimal.Decimal) {
+	dist = haversineKm(req.PickupLat, req.PickupLng, req.DropoffLat, req.DropoffLng).Round(3)
+	est = baseFare.Add(dist.Mul(perKmRate)).Round(2)
+	return dist, est
+}
+
+// BookRide WALLET memakai voucher PERCENTAGE: diskon = estimated × 20/100,
+// escrow = estimated − diskon, user_vouchers dicatat APPLIED, response
+// menampilkan discount_amount + voucher_code.
+func TestBookRide_VoucherPercentage(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "book-key-vpct"
+	req := svcValidReq(PaymentMethodWallet, idemKey)
+	code := "RIDE20"
+	req.VoucherCode = &code
+
+	_, est := svcBookingFare(req)
+	voucher := svcVoucher(voucherDiscountPct, decimal.NewFromInt(20), nil, decimal.Zero, 1)
+	discount := est.Mul(decimal.NewFromInt(20)).Div(decimal.NewFromInt(100)).Round(2)
+	escrow := est.Sub(discount)
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByCode", mock.Anything, code).Return(voucher, nil)
+	repo.On("CountUserVoucherUsage", mock.Anything, mock.Anything, svcCustomerID, voucher.ID).Return(0, nil)
+	repo.On("InsertOrder", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			order := args.Get(2).(*RideOrder)
+			require.NotNil(t, order.VoucherID)
+			require.NotNil(t, order.DiscountAmount)
+			assert.Equal(t, voucher.ID, *order.VoucherID)
+			assert.True(t, order.DiscountAmount.Equal(discount), "discount_amount = %v want %v", *order.DiscountAmount, discount)
+		}).Return(nil)
+	repo.On("TransitionStatus", mock.Anything, mock.Anything, mock.Anything, statusCreated, statusSearchingDriver).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	repo.On("InsertUserVoucher", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			uv := args.Get(2).(*UserVoucher)
+			assert.Equal(t, voucher.ID, uv.VoucherID)
+			assert.Equal(t, orderTypeRide, uv.OrderType)
+			assert.Equal(t, voucherUsageApplied, uv.Status)
+			assert.True(t, uv.DiscountApplied.Equal(discount), "discount_applied = %v want %v", uv.DiscountApplied, discount)
+		}).Return(nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertEscrowEntries(t, args, escrow) }).Return(nil)
+
+	setupBookRideDB(mDB, idemKey)
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectQuery("SELECT balance FROM wallets").
+		WithArgs(svcWalletID).
+		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(200000)))
+	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs(idemKey, svcCustomerID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.BookRide(context.Background(), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.VoucherCode)
+	assert.Equal(t, code, *resp.VoucherCode)
+	assert.True(t, resp.DiscountAmount.Equal(discount), "discount_amount = %v want %v", resp.DiscountAmount, discount)
+	assert.True(t, resp.EscrowAmount.Equal(escrow), "escrow = %v want %v", resp.EscrowAmount, escrow)
+	assert.True(t, resp.EstimatedFare.Equal(est))
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// BookRide WALLET memakai voucher FIXED via voucher_id: diskon flat = value,
+// escrow = estimated − 10.000.
+func TestBookRide_VoucherFixed(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "book-key-vfix"
+	req := svcValidReq(PaymentMethodWallet, idemKey)
+	req.VoucherID = &svcVoucherID
+
+	_, est := svcBookingFare(req)
+	voucher := svcVoucher(voucherDiscountFixed, decimal.NewFromInt(10000), nil, decimal.Zero, 1)
+	discount := decimal.NewFromInt(10000)
+	escrow := est.Sub(discount)
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByID", mock.Anything, svcVoucherID).Return(voucher, nil)
+	repo.On("CountUserVoucherUsage", mock.Anything, mock.Anything, svcCustomerID, voucher.ID).Return(0, nil)
+	repo.On("InsertOrder", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			order := args.Get(2).(*RideOrder)
+			require.NotNil(t, order.DiscountAmount)
+			assert.True(t, order.DiscountAmount.Equal(discount), "discount_amount = %v want %v", *order.DiscountAmount, discount)
+		}).Return(nil)
+	repo.On("TransitionStatus", mock.Anything, mock.Anything, mock.Anything, statusCreated, statusSearchingDriver).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	repo.On("InsertUserVoucher", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertEscrowEntries(t, args, escrow) }).Return(nil)
+
+	setupBookRideDB(mDB, idemKey)
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectQuery("SELECT balance FROM wallets").
+		WithArgs(svcWalletID).
+		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(200000)))
+	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs(idemKey, svcCustomerID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.BookRide(context.Background(), req)
+
+	require.NoError(t, err)
+	assert.True(t, resp.DiscountAmount.Equal(discount), "discount_amount = %v want %v", resp.DiscountAmount, discount)
+	assert.True(t, resp.EscrowAmount.Equal(escrow), "escrow = %v want %v", resp.EscrowAmount, escrow)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// Voucher sudah lewat valid_to → ErrVoucherExpired; tidak ada order dibuat.
+func TestBookRide_VoucherExpired(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	req := svcValidReq(PaymentMethodWallet, "book-key-vexp")
+	code := "RIDE20"
+	req.VoucherCode = &code
+
+	voucher := svcVoucher(voucherDiscountPct, decimal.NewFromInt(20), nil, decimal.Zero, 1)
+	voucher.ValidFrom = time.Now().Add(-48 * time.Hour)
+	voucher.ValidTo = time.Now().Add(-24 * time.Hour)
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByCode", mock.Anything, code).Return(voucher, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err = svc.BookRide(context.Background(), req)
+
+	assert.ErrorIs(t, err, ErrVoucherExpired)
+	repo.AssertNotCalled(t, "InsertOrder")
+	repo.AssertExpectations(t)
+}
+
+// Estimated fare di bawah min_order_amount → ErrVoucherMinOrder.
+func TestBookRide_VoucherMinOrder(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	req := svcValidReq(PaymentMethodWallet, "book-key-vmin")
+	code := "RIDE20"
+	req.VoucherCode = &code
+
+	_, est := svcBookingFare(req)
+	voucher := svcVoucher(voucherDiscountFixed, decimal.NewFromInt(10000), nil, est.Add(decimal.NewFromInt(1)), 1)
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByCode", mock.Anything, code).Return(voucher, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err = svc.BookRide(context.Background(), req)
+
+	assert.ErrorIs(t, err, ErrVoucherMinOrder)
+	repo.AssertNotCalled(t, "InsertOrder")
+	repo.AssertExpectations(t)
+}
+
+// Usage sudah menyentuh per_user_limit → ErrVoucherPerUserLimit. Pre-check
+// dilakukan di dalam transaksi sebelum order dibuat (early exit).
+func TestBookRide_VoucherPerUserLimit(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "book-key-vlim"
+	req := svcValidReq(PaymentMethodWallet, idemKey)
+	code := "RIDE20"
+	req.VoucherCode = &code
+
+	voucher := svcVoucher(voucherDiscountPct, decimal.NewFromInt(20), nil, decimal.Zero, 1)
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByCode", mock.Anything, code).Return(voucher, nil)
+	repo.On("CountUserVoucherUsage", mock.Anything, mock.Anything, svcCustomerID, voucher.ID).Return(1, nil)
+
+	setupBookRideDB(mDB, idemKey)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err = svc.BookRide(context.Background(), req)
+
+	assert.ErrorIs(t, err, ErrVoucherPerUserLimit)
+	repo.AssertNotCalled(t, "InsertOrder")
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// PERCENTAGE dengan max_discount: diskon dibatasi (est×50% = jauh di atas
+// 5.000) → discount_amount = 5.000, escrow = est − 5.000.
+func TestBookRide_VoucherMaxDiscountCap(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "book-key-vcap"
+	req := svcValidReq(PaymentMethodWallet, idemKey)
+	code := "RIDE50"
+	req.VoucherCode = &code
+
+	_, est := svcBookingFare(req)
+	maxDisc := decimal.NewFromInt(5000)
+	voucher := svcVoucher(voucherDiscountPct, decimal.NewFromInt(50), &maxDisc, decimal.Zero, 1)
+	discount := decimal.NewFromInt(5000)
+	escrow := est.Sub(discount)
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByCode", mock.Anything, code).Return(voucher, nil)
+	repo.On("CountUserVoucherUsage", mock.Anything, mock.Anything, svcCustomerID, voucher.ID).Return(0, nil)
+	repo.On("InsertOrder", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	repo.On("TransitionStatus", mock.Anything, mock.Anything, mock.Anything, statusCreated, statusSearchingDriver).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	repo.On("InsertUserVoucher", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertEscrowEntries(t, args, escrow) }).Return(nil)
+
+	setupBookRideDB(mDB, idemKey)
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectQuery("SELECT balance FROM wallets").
+		WithArgs(svcWalletID).
+		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(200000)))
+	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs(idemKey, svcCustomerID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.BookRide(context.Background(), req)
+
+	require.NoError(t, err)
+	assert.True(t, resp.DiscountAmount.Equal(discount), "discount_amount = %v want %v", resp.DiscountAmount, discount)
+	assert.True(t, resp.EscrowAmount.Equal(escrow), "escrow = %v want %v", resp.EscrowAmount, escrow)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// VoucherCode + VoucherID diisi keduanya → ErrVoucherInvalid.
+func TestBookRide_VoucherBothFields(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	req := svcValidReq(PaymentMethodWallet, "book-key-vboth")
+	code := "RIDE20"
+	req.VoucherCode = &code
+	req.VoucherID = &svcVoucherID
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err = svc.BookRide(context.Background(), req)
+
+	assert.ErrorIs(t, err, ErrVoucherInvalid)
+	repo.AssertNotCalled(t, "GetVoucherByCode")
+	repo.AssertNotCalled(t, "GetVoucherByID")
+	repo.AssertExpectations(t)
+}
+
+// Cancel WALLET tanpa fee untuk order ber-voucher: refund escrow = fareBasis
+// (estimated − discount), bukan estimated penuh (anti over-refund).
+func TestCancelOrder_VoucherRefundDiscounted(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	discount := decimal.NewFromInt(10000)
+	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
+	order.DiscountAmount = &discount
+	refund := fareBasis(order)
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonCustomerCancel, decimal.Zero).Return(true, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
+		Run(func(args mock.Arguments) { assertFullRefundEntries(t, args, refund) }).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectCommit()
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, statusCancelled, resp.Status)
+	require.NotNil(t, resp.CancellationFee)
+	assert.True(t, resp.CancellationFee.IsZero(), "fee harus 0 untuk cancel sebelum driver assigned")
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }

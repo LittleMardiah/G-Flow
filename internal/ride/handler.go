@@ -39,21 +39,27 @@ func NewHandler(svc RideService) *Handler {
 }
 
 // bookRideRequestBody input JSON dari POST /rides/book (API_CONTRACT 7.1).
+// VoucherCode/VoucherID opsional (TD-070): salah satu, tidak keduanya.
 type bookRideRequestBody struct {
 	PickupLat     float64 `json:"pickup_lat"`
 	PickupLng     float64 `json:"pickup_lng"`
 	DropoffLat    float64 `json:"dropoff_lat"`
 	DropoffLng    float64 `json:"dropoff_lng"`
 	PaymentMethod string  `json:"payment_method"`
+	VoucherCode   string  `json:"voucher_code"`
+	VoucherID     string  `json:"voucher_id"`
 }
 
 // bookRideResponse memotong BookRideResponse service ke field yang
-// dijanjikan API_CONTRACT 7.1 untuk respons booking.
+// dijanjikan API_CONTRACT 7.1 untuk respons booking. DiscountAmount &
+// VoucherCode hanya muncul saat booking memakai voucher (TD-070).
 type bookRideResponse struct {
 	OrderID       uuid.UUID       `json:"order_id"`
 	Status        string          `json:"status"`
 	DistanceKm    decimal.Decimal `json:"distance_km"`
 	EstimatedFare decimal.Decimal `json:"estimated_fare"`
+	DiscountAmount decimal.Decimal `json:"discount_amount"`
+	VoucherCode   *string         `json:"voucher_code"`
 	PaymentMethod string          `json:"payment_method"`
 	ExpiresAt     time.Time       `json:"expires_at"`
 }
@@ -87,7 +93,19 @@ func (h *Handler) BookRide(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.svc.BookRide(c.Request.Context(), BookRideRequest{
+	// Voucher (TD-070): diizinkan salah satu dari voucher_code / voucher_id.
+	// Keduanya diisi → service mengembalikan VOUCHER_INVALID. voucher_id yang
+	// bukan UUID valid → 422 langsung dari handler.
+	var voucherID *uuid.UUID
+	if body.VoucherID != "" {
+		id, err := uuid.Parse(body.VoucherID)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, "INVALID_VOUCHER_ID", "invalid voucher_id")
+			return
+		}
+		voucherID = &id
+	}
+	req := BookRideRequest{
 		UserID:         userID,
 		PickupLat:      body.PickupLat,
 		PickupLng:      body.PickupLng,
@@ -95,7 +113,13 @@ func (h *Handler) BookRide(c *gin.Context) {
 		DropoffLng:     body.DropoffLng,
 		PaymentMethod:  body.PaymentMethod,
 		IdempotencyKey: c.GetHeader("X-Idempotency-Key"),
-	})
+		VoucherID:      voucherID,
+	}
+	if body.VoucherCode != "" {
+		req.VoucherCode = &body.VoucherCode
+	}
+
+	resp, err := h.svc.BookRide(c.Request.Context(), req)
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())
 		return
@@ -104,12 +128,14 @@ func (h *Handler) BookRide(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"data": bookRideResponse{
-			OrderID:       resp.OrderID,
-			Status:        resp.Status,
-			DistanceKm:    resp.DistanceKm,
-			EstimatedFare: resp.EstimatedFare,
-			PaymentMethod: resp.PaymentMethod,
-			ExpiresAt:     resp.ExpiresAt,
+			OrderID:        resp.OrderID,
+			Status:         resp.Status,
+			DistanceKm:     resp.DistanceKm,
+			EstimatedFare:  resp.EstimatedFare,
+			DiscountAmount: resp.DiscountAmount,
+			VoucherCode:    resp.VoucherCode,
+			PaymentMethod:  resp.PaymentMethod,
+			ExpiresAt:      resp.ExpiresAt,
 		},
 	})
 }
@@ -422,7 +448,8 @@ func statusForError(err error) int {
 	switch {
 	case errors.Is(err, ErrCustomerNotFound),
 		errors.Is(err, ErrWalletNotFound),
-		errors.Is(err, ErrOrderNotFound):
+		errors.Is(err, ErrOrderNotFound),
+		errors.Is(err, ErrVoucherNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, ErrDriverNotFound):
 		return http.StatusUnprocessableEntity
@@ -438,7 +465,11 @@ func statusForError(err error) int {
 		errors.Is(err, ErrInsufficientBalance),
 		errors.Is(err, ErrDriverInactive),
 		errors.Is(err, ErrInsufficientDriverBalance),
-		errors.Is(err, ErrIdempotencyKeyRequired):
+		errors.Is(err, ErrIdempotencyKeyRequired),
+		errors.Is(err, ErrVoucherInvalid),
+		errors.Is(err, ErrVoucherExpired),
+		errors.Is(err, ErrVoucherMinOrder),
+		errors.Is(err, ErrVoucherPerUserLimit):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, ErrIdempotencyInProgress),
 		errors.Is(err, ErrDriverBusy),
@@ -466,6 +497,8 @@ func codeForError(err error) string {
 		return "WALLET_NOT_FOUND"
 	case errors.Is(err, ErrOrderNotFound):
 		return "ORDER_NOT_FOUND"
+	case errors.Is(err, ErrVoucherNotFound):
+		return "VOUCHER_NOT_FOUND"
 	case errors.Is(err, ErrDriverNotFound):
 		return "DRIVER_NOT_FOUND"
 	case errors.Is(err, ErrNotCustomer):
@@ -506,6 +539,14 @@ func codeForError(err error) string {
 		return "FORBIDDEN"
 	case errors.Is(err, ErrIdempotencyKeyRequired):
 		return "INVALID_IDEMPOTENCY_KEY"
+	case errors.Is(err, ErrVoucherInvalid):
+		return "VOUCHER_INVALID"
+	case errors.Is(err, ErrVoucherExpired):
+		return "VOUCHER_EXPIRED"
+	case errors.Is(err, ErrVoucherMinOrder):
+		return "VOUCHER_MIN_ORDER_NOT_MET"
+	case errors.Is(err, ErrVoucherPerUserLimit):
+		return "VOUCHER_PER_USER_LIMIT"
 	case errors.Is(err, ErrIdempotencyInProgress):
 		return "IDEMPOTENCY_IN_PROGRESS"
 	case errors.Is(err, ErrInvalidCachedResponse):

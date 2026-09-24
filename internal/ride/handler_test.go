@@ -15,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/g-flow/g-flow/internal/auth"
 )
@@ -173,6 +174,141 @@ func TestHandler_BookRide_ServiceError(t *testing.T) {
 	h := NewHandler(svc)
 	h.BookRide(c)
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	svc.AssertExpectations(t)
+}
+
+// BookRide memakai voucher_code: service menerima VoucherCode ter-set,
+// VoucherID nil; respons menampilkan discount_amount + voucher_code.
+func TestHandler_BookRide_VoucherSuccess(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rides/book",
+		bytes.NewBufferString(`{"pickup_lat":-6.2,"pickup_lng":106.8,"dropoff_lat":-6.26,"dropoff_lng":106.8,"payment_method":"WALLET","voucher_code":"RIDE20"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-v1")
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	voucherCode := "RIDE20"
+	svc.On("BookRide", mock.Anything, mock.MatchedBy(func(req BookRideRequest) bool {
+		return req.VoucherCode != nil && *req.VoucherCode == voucherCode && req.VoucherID == nil
+	})).Return(&BookRideResponse{
+		OrderID:        svcOrderID,
+		Status:         statusSearchingDriver,
+		DistanceKm:     decimal.NewFromFloat(6.7),
+		EstimatedFare:  decimal.NewFromInt(36800),
+		PaymentMethod:  PaymentMethodWallet,
+		EscrowAmount:   decimal.NewFromInt(29440),
+		DiscountAmount: decimal.NewFromInt(7360),
+		VoucherCode:    &voucherCode,
+	}, nil)
+
+	h := NewHandler(svc)
+	h.BookRide(c)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var out struct {
+		Success bool             `json:"success"`
+		Data    bookRideResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.True(t, out.Success)
+	assert.True(t, out.Data.DiscountAmount.Equal(decimal.NewFromInt(7360)))
+	require.NotNil(t, out.Data.VoucherCode)
+	assert.Equal(t, voucherCode, *out.Data.VoucherCode)
+	svc.AssertExpectations(t)
+}
+
+// BookRide memakai voucher_id: service menerima VoucherID ter-set.
+func TestHandler_BookRide_VoucherByID(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rides/book",
+		bytes.NewBufferString(`{"pickup_lat":-6.2,"pickup_lng":106.8,"dropoff_lat":-6.26,"dropoff_lng":106.8,"payment_method":"WALLET","voucher_id":"88888888-8888-8888-8888-888888888888"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("BookRide", mock.Anything, mock.MatchedBy(func(req BookRideRequest) bool {
+		return req.VoucherID != nil && *req.VoucherID == svcVoucherID && req.VoucherCode == nil
+	})).Return(&BookRideResponse{
+		OrderID:        svcOrderID,
+		Status:         statusSearchingDriver,
+		DistanceKm:     decimal.NewFromFloat(6.7),
+		EstimatedFare:  decimal.NewFromInt(36800),
+		PaymentMethod:  PaymentMethodWallet,
+		DiscountAmount: decimal.NewFromInt(10000),
+	}, nil)
+
+	h := NewHandler(svc)
+	h.BookRide(c)
+	assert.Equal(t, http.StatusCreated, w.Code)
+	svc.AssertExpectations(t)
+}
+
+// voucher_id bukan UUID valid → 422 INVALID_VOUCHER_ID (tanpa panggil service).
+func TestHandler_BookRide_InvalidVoucherID(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rides/book",
+		bytes.NewBufferString(`{"pickup_lat":-6.2,"pickup_lng":106.8,"dropoff_lat":-6.26,"dropoff_lng":106.8,"payment_method":"WALLET","voucher_id":"not-a-uuid"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcCustomerID.String())
+
+	h := NewHandler(nil)
+	h.BookRide(c)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "INVALID_VOUCHER_ID")
+}
+
+// Voucher tidak ditemukan → 404 VOUCHER_NOT_FOUND.
+func TestHandler_BookRide_VoucherNotFound(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rides/book",
+		bytes.NewBufferString(`{"pickup_lat":-6.2,"pickup_lng":106.8,"dropoff_lat":-6.26,"dropoff_lng":106.8,"payment_method":"WALLET","voucher_code":"GAK ADA"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("BookRide", mock.Anything, mock.Anything).Return(nil, ErrVoucherNotFound)
+
+	h := NewHandler(svc)
+	h.BookRide(c)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "VOUCHER_NOT_FOUND")
+	svc.AssertExpectations(t)
+}
+
+// Voucher expired → 422 VOUCHER_EXPIRED.
+func TestHandler_BookRide_VoucherExpired(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rides/book",
+		bytes.NewBufferString(`{"pickup_lat":-6.2,"pickup_lng":106.8,"dropoff_lat":-6.26,"dropoff_lng":106.8,"payment_method":"WALLET","voucher_code":"RIDE20"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("BookRide", mock.Anything, mock.Anything).Return(nil, ErrVoucherExpired)
+
+	h := NewHandler(svc)
+	h.BookRide(c)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "VOUCHER_EXPIRED")
+	svc.AssertExpectations(t)
+}
+
+// Voucher di bawah min_order / limit pemakaian → 422 map API.
+func TestHandler_BookRide_VoucherMinOrder(t *testing.T) {
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/rides/book",
+		bytes.NewBufferString(`{"pickup_lat":-6.2,"pickup_lng":106.8,"dropoff_lat":-6.26,"dropoff_lng":106.8,"payment_method":"WALLET","voucher_code":"RIDE20"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcCustomerID.String())
+
+	svc := new(mockRideService)
+	svc.On("BookRide", mock.Anything, mock.Anything).Return(nil, ErrVoucherMinOrder)
+
+	h := NewHandler(svc)
+	h.BookRide(c)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "VOUCHER_MIN_ORDER_NOT_MET")
 	svc.AssertExpectations(t)
 }
 

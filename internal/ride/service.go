@@ -27,6 +27,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/g-flow/g-flow/internal/wallet"
@@ -102,6 +103,15 @@ const (
 	// Ceiling saldo negatif driver (LOGIC_FLOW 5.5): jika balance driver
 	// < -Rp 50.000 setelah CASH settlement, akun driver di-SUSPENDED.
 	maxDriverNegativeBalance = -50000
+
+	// Voucher discount (TD-070): order_type_enum untuk layanan ride &
+	// default per_user_limit bila kolom tidak diisi (MIGRATION 016).
+	orderTypeRide        = "RIDE"
+	voucherStatusActive  = "ACTIVE"
+	voucherUsageApplied  = "APPLIED"
+	voucherPerUserLimit  = 1
+	voucherDiscountPct   = "PERCENTAGE"
+	voucherDiscountFixed = "FIXED"
 )
 
 // Tarif G-Ride (API_CONTRACT 7.1 / ROADMAP 02 §2.2).
@@ -140,6 +150,13 @@ var (
 	ErrInvalidTransition = errors.New("invalid status transition for current order state")
 	ErrNotAllowed        = errors.New("user is not allowed to update this order")
 	ErrInvalidPagination = errors.New("invalid page or page_size")
+
+	// Voucher discount (TD-070). ErrVoucherNotFound dideklarasikan di
+	// repository.go (dikembalikan saat scan baris voucher tidak ditemukan).
+	ErrVoucherInvalid     = errors.New("voucher is not valid for ride service")
+	ErrVoucherExpired     = errors.New("voucher has expired or not yet valid")
+	ErrVoucherMinOrder    = errors.New("order amount does not meet voucher minimum")
+	ErrVoucherPerUserLimit = errors.New("voucher per-user usage limit reached")
 )
 
 // BookRideRequest input untuk operasi booking ride.
@@ -153,6 +170,11 @@ type BookRideRequest struct {
 	DropoffAddress string
 	PaymentMethod  string
 	IdempotencyKey string
+	// VoucherCode kode voucher diskon (opsional, TD-070). Nil/"" = tanpa voucher.
+	VoucherCode *string
+	// VoucherID id voucher diskon (opsional, alternatif VoucherCode, TD-070).
+	// Jika keduanya diisi, dananya konflik → ErrVoucherInvalid.
+	VoucherID *uuid.UUID
 }
 
 // FareBreakdown rincian perhitungan fare (API_CONTRACT 7.1).
@@ -176,6 +198,10 @@ type BookRideResponse struct {
 	PaymentMethod string          `json:"payment_method"`
 	EscrowAmount  decimal.Decimal `json:"escrow_amount"`
 	ExpiresAt     time.Time       `json:"expires_at"`
+	// Voucher discount (TD-070). DiscountAmount = 0 saat tanpa voucher;
+	// VoucherCode nil saat tanpa voucher.
+	DiscountAmount decimal.Decimal `json:"discount_amount"`
+	VoucherCode    *string         `json:"voucher_code"`
 }
 
 // AcceptOrderResponse hasil accept order oleh driver (API_CONTRACT 7.2).
@@ -206,6 +232,12 @@ type Repo interface {
 	LockOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) error
 	AssignDriver(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error)
 	MarkDriverBusy(ctx context.Context, q Querier, driverID uuid.UUID) error
+
+	// Voucher discount (TD-070).
+	GetVoucherByCode(ctx context.Context, code string) (*Voucher, error)
+	GetVoucherByID(ctx context.Context, voucherID uuid.UUID) (*Voucher, error)
+	CountUserVoucherUsage(ctx context.Context, q Querier, userID, voucherID uuid.UUID) (int, error)
+	InsertUserVoucher(ctx context.Context, q Querier, uv *UserVoucher) error
 
 	// Fase lanjutan F005/F006: transisi status, cancel, auto-cancel & settlement.
 	LockOrderForUpdate(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error)
@@ -304,6 +336,34 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 	dist := distanceKm.Round(3)
 	estimatedFare := baseFare.Add(dist.Mul(perKmRate)).Round(2)
 
+	// Voucher discount (TD-070): resolve → validasi → hitung potongan.
+	// Potongan memakai estimatedFare sebagai subtotal (min_order ditegakkan
+	// terhadap estimatedFare, bukan total setelah diskon).
+	voucherDiscount := decimal.Zero
+	var voucher *Voucher
+	if (req.VoucherCode != nil && *req.VoucherCode != "") && req.VoucherID != nil {
+		return nil, ErrVoucherInvalid
+	}
+	if req.VoucherCode != nil && *req.VoucherCode != "" {
+		v, err := s.repo.GetVoucherByCode(ctx, *req.VoucherCode)
+		if err != nil {
+			return nil, err
+		}
+		voucher = v
+	} else if req.VoucherID != nil {
+		v, err := s.repo.GetVoucherByID(ctx, *req.VoucherID)
+		if err != nil {
+			return nil, err
+		}
+		voucher = v
+	}
+	if voucher != nil {
+		if err := validateVoucher(voucher, estimatedFare); err != nil {
+			return nil, err
+		}
+		voucherDiscount = computeVoucherDiscount(voucher, estimatedFare)
+	}
+
 	// L2: PostgreSQL idempotency.
 	if res, err := s.idemAcquire(ctx, req.UserID, req.IdempotencyKey); err != nil {
 		return nil, err
@@ -329,6 +389,22 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 		return nil, err
 	}
 
+	// Pre-check per_user_limit (early exit sebelum menulis order). Trigger DB
+	// validate_per_user_limit tetap menjadi guard final (defense-in-depth).
+	if voucher != nil && voucherDiscount.IsPositive() {
+		usage, err := s.repo.CountUserVoucherUsage(ctx, tx, req.UserID, voucher.ID)
+		if err != nil {
+			return nil, err
+		}
+		limit := voucher.PerUserLimit
+		if limit <= 0 {
+			limit = voucherPerUserLimit
+		}
+		if usage >= limit {
+			return nil, ErrVoucherPerUserLimit
+		}
+	}
+
 	// Buat order berstatus CREATED (transaksi yang sama dengan escrow).
 	order := &RideOrder{
 		ID:               orderID,
@@ -347,6 +423,12 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 		PaymentMethod:    req.PaymentMethod,
 		Status:           statusCreated,
 		ExpiresAt:        &expiresAt,
+	}
+	if voucher != nil {
+		if voucherDiscount.IsPositive() {
+			order.VoucherID = &voucher.ID
+			order.DiscountAmount = &voucherDiscount
+		}
 	}
 	if err := s.repo.InsertOrder(ctx, tx, order); err != nil {
 		return nil, err
@@ -367,11 +449,37 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 		return nil, err
 	}
 
-	// Escrow conditional: hanya payment WALLET.
+	// Escrow conditional: hanya payment WALLET. Escrow dihitung setelah
+	// diskon voucher (estimated - discount) sehingga dana yang ditahan = yang
+	// benar-benar dibayar customer (TD-070).
 	escrowAmount := decimal.Zero
 	if req.PaymentMethod == PaymentMethodWallet {
-		escrowAmount, err = s.holdEscrow(ctx, tx, customerWallet, orderID, estimatedFare)
-		if err != nil {
+		holding := estimatedFare.Sub(voucherDiscount)
+		if holding.IsPositive() {
+			escrowAmount, err = s.holdEscrow(ctx, tx, customerWallet, orderID, holding)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Catat pemakaian voucher (user_vouchers) dalam transaksi yang sama
+	// dengan order. Trigger DB memvalidasi per_user_limit & meng-increment
+	// vouchers.used_count; kalau transaksi di-rollback, pemakaian ikut batal.
+	if voucher != nil && voucherDiscount.IsPositive() {
+		orderIDVal := orderID
+		if err := s.repo.InsertUserVoucher(ctx, tx, &UserVoucher{
+			UserID:          req.UserID,
+			VoucherID:       voucher.ID,
+			OrderType:       orderTypeRide,
+			OrderID:         &orderIDVal,
+			DiscountApplied: voucherDiscount,
+			Status:          voucherUsageApplied,
+		}); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && (pgErr.Code == "P0001" || pgErr.Code == "23505") {
+				return nil, ErrVoucherPerUserLimit
+			}
 			return nil, err
 		}
 	}
@@ -394,9 +502,14 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 			DistanceCharge: dist.Mul(perKmRate).Round(2),
 			Total:          estimatedFare,
 		},
-		PaymentMethod: req.PaymentMethod,
-		EscrowAmount:  escrowAmount,
-		ExpiresAt:     expiresAt,
+		PaymentMethod:  req.PaymentMethod,
+		EscrowAmount:   escrowAmount,
+		DiscountAmount: voucherDiscount,
+		ExpiresAt:      expiresAt,
+	}
+	if voucher != nil {
+		code := voucher.Code
+		resp.VoucherCode = &code
 	}
 
 	if err := s.cacheResponse(ctx, req.UserID, req.IdempotencyKey, resp); err != nil {
@@ -777,15 +890,15 @@ func cancellationFeeFor(orderStatus, reason string) decimal.Decimal {
 // melewati TRIP_STARTED boleh menyelesaikan order.
 //
 // TD-069 (delta fare): driver boleh mengirim actual_fare opsional. Jika
-// kosong/nol → pakai estimated_fare (backward compat). Jika ada:
-//   - Shortfall (actual > estimated): debit customer delta; jika saldo
+// kosong/nol → pakai fareBasis (estimated_fare − discount; TD-070). Jika ada:
+//   - Shortfall (actual > fareBasis): debit customer delta; jika saldo
 //     customer kurang, kekurangan dari subsidi SYSTEM_PLATFORM (wallet
 //     SYSTEM_PLATFORM_SUBSIDY belum ada, TD-132) + record overdue_debt.
-//   - Surplus (actual < estimated): credit customer delta, debit escrow.
+//   - Surplus (actual < fareBasis): credit customer delta, debit escrow.
 //
 // Settlement selalu memakai actual_fare (driver 80%, platform 20%).
 func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error) {
-	actualFare := order.EstimatedFare
+	actualFare := fareBasis(order)
 	if req.ActualFare != nil && req.ActualFare.IsPositive() {
 		actualFare = req.ActualFare.Round(2)
 	}
@@ -825,14 +938,15 @@ func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrd
 	return &UpdateRideStatusResponse{OrderID: order.ID, Status: statusSettled}, nil
 }
 
-// applyFareDelta menerapkan selisih actual vs estimated fare (LOGIC_FLOW 2.2
-// §2 / TD-069). Hanya berlaku untuk payment WALLET (ada escrow):
-//   - Shortfall (actual > estimated): menahan delta ke escrow — DEBIT customer
+// applyFareDelta menerapkan selisih actual vs fareBasis (LOGIC_FLOW 2.2
+// §2 / TD-069, basis diperbarui utk diskon voucher TD-070). Hanya berlaku
+// untuk payment WALLET (ada escrow):
+//   - Shortfall (actual > fareBasis): menahan delta ke escrow — DEBIT customer
 //     selisih; jika saldo customer kurang, kekurangan ditutup subsidi
 //     SYSTEM_PLATFORM + dicatat overdue_debt.
-//   - Surplus (actual < estimated): refund — DEBIT escrow, CREDIT customer.
+//   - Surplus (actual < fareBasis): refund — DEBIT escrow, CREDIT customer.
 func (s *Service) applyFareDelta(ctx context.Context, tx pgx.Tx, order *RideOrder, actualFare decimal.Decimal) error {
-	delta := actualFare.Sub(order.EstimatedFare).Round(2)
+	delta := actualFare.Sub(fareBasis(order)).Round(2)
 	if delta.IsZero() || order.PaymentMethod != PaymentMethodWallet {
 		return nil
 	}
@@ -1083,10 +1197,12 @@ func (s *Service) settleOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder
 
 // refundEscrow mengembalikan dana escrow penuh ke customer saat order
 // dibatalkan (payment WALLET): DEBIT SYSTEM_ESCROW → CREDIT customer wallet.
+// Nilai refund = fareBasis (post-diskon) agar tidak over-refund (TD-070).
 func (s *Service) refundEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder) error {
 	if order.CustomerWalletID == nil {
 		return ErrWalletNotFound
 	}
+	refund := fareBasis(order)
 	escrowID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemEscrow)
 	if err != nil {
 		return err
@@ -1098,7 +1214,7 @@ func (s *Service) refundEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder)
 		{
 			WalletID:      escrowID,
 			EntryType:     wallet.EntryDebit,
-			Amount:        order.EstimatedFare,
+			Amount:        refund,
 			ReferenceID:   order.ID,
 			ReferenceType: referenceTypeRideRefund,
 			Description:   "RIDE_REFUND - escrow release to customer",
@@ -1106,7 +1222,7 @@ func (s *Service) refundEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder)
 		{
 			WalletID:      *order.CustomerWalletID,
 			EntryType:     wallet.EntryCredit,
-			Amount:        order.EstimatedFare,
+			Amount:        refund,
 			ReferenceID:   order.ID,
 			ReferenceType: referenceTypeRideRefund,
 			Description:   "RIDE_REFUND - full refund customer wallet",
@@ -1115,8 +1231,8 @@ func (s *Service) refundEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder)
 }
 
 // refundCancellationFee melepas escrow saat cancel yang memungut fee (WALLET):
-// escrow di-DEBIT total estimated, CREDIT driver = cancellation fee
-// (reference RIDE_CANCELLATION_FEE), CREDIT customer = estimated - fee
+// escrow di-DEBIT total fareBasis, CREDIT driver = cancellation fee
+// (reference RIDE_CANCELLATION_FEE), CREDIT customer = fareBasis - fee
 // (reference RIDE_REFUND). Double-entry tetap seimbang per reference_id
 // (trigger validate_ledger_balance) karena SUM DEBIT = SUM CREDIT.
 func (s *Service) refundCancellationFee(ctx context.Context, tx pgx.Tx, order *RideOrder, fee decimal.Decimal) error {
@@ -1126,6 +1242,7 @@ func (s *Service) refundCancellationFee(ctx context.Context, tx pgx.Tx, order *R
 	if order.DriverID == nil {
 		return ErrDriverNotFound
 	}
+	refundable := fareBasis(order)
 	escrowID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemEscrow)
 	if err != nil {
 		return err
@@ -1135,11 +1252,11 @@ func (s *Service) refundCancellationFee(ctx context.Context, tx pgx.Tx, order *R
 		return err
 	}
 
-	// Defensive: fee tidak boleh melebihi estimated sehingga refund >= 0.
-	if fee.GreaterThan(order.EstimatedFare) {
-		fee = order.EstimatedFare
+	// Defensive: fee tidak boleh melebihi refundable sehingga refund >= 0.
+	if fee.GreaterThan(refundable) {
+		fee = refundable
 	}
-	customerRefund := order.EstimatedFare.Sub(fee)
+	customerRefund := refundable.Sub(fee)
 
 	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID, driverWallet.ID); err != nil {
 		return err
@@ -1379,6 +1496,70 @@ func (s *Service) validateBookingInput(req BookRideRequest) error {
 // validLatLng memastikan koordinat berada pada rentang geografis yang valid.
 func validLatLng(lat, lng float64) bool {
 	return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+}
+
+// validateVoucher memvalidasi kelayakan voucher untuk order ride ini
+// (TD-070). Urutan pemeriksaan menentukan error yang dikembalikan:
+// status -> window waktu -> min_order -> layanan yang didukung.
+func validateVoucher(v *Voucher, estimatedFare decimal.Decimal) error {
+	if v.Status != voucherStatusActive {
+		return ErrVoucherInvalid
+	}
+	now := time.Now()
+	if now.Before(v.ValidFrom) || now.After(v.ValidTo) {
+		return ErrVoucherExpired
+	}
+	if estimatedFare.LessThan(v.MinOrderAmount) {
+		return ErrVoucherMinOrder
+	}
+	for _, svc := range v.ApplicableServices {
+		if strings.EqualFold(svc, orderTypeRide) {
+			return nil
+		}
+	}
+	return ErrVoucherInvalid
+}
+
+// computeVoucherDiscount menghitung besar potongan (TD-070):
+//   - PERCENTAGE: estimatedFare × (discount_value/100), dibatasi max_discount
+//     jika diisi, dan tidak boleh melebihi estimatedFare.
+//   - FIXED: discount_value, dibatasi estimatedFare (tidak boleh > subtotal).
+//
+// Potongan minimal: selalu non-negatif; nilai 0 berarti tanpa efek.
+func computeVoucherDiscount(v *Voucher, estimatedFare decimal.Decimal) decimal.Decimal {
+	var discount decimal.Decimal
+	switch v.DiscountType {
+	case voucherDiscountPct:
+		pct := v.DiscountValue.Div(decimal.NewFromInt(100))
+		discount = estimatedFare.Mul(pct).Round(2)
+		if v.MaxDiscount != nil && !v.MaxDiscount.IsZero() && discount.GreaterThan(*v.MaxDiscount) {
+			discount = v.MaxDiscount.Round(2)
+		}
+	case voucherDiscountFixed:
+		discount = v.DiscountValue.Round(2)
+	}
+	if discount.IsNegative() {
+		return decimal.Zero
+	}
+	if discount.GreaterThan(estimatedFare) {
+		return estimatedFare
+	}
+	return discount
+}
+
+// fareBasis mengembalikan besar fare yang menjadi dasar escrow/refund/
+// settlement (rantai uang customer) setelah diskon voucher (TD-070):
+// estimated_fare - discount_amount, minimal 0. Tanpa voucher (= 0) → equal
+// estimated_fare, sehingga perilaku lama (TD-069) tidak berubah.
+func fareBasis(order *RideOrder) decimal.Decimal {
+	amount := order.EstimatedFare
+	if order.DiscountAmount != nil && order.DiscountAmount.IsPositive() {
+		amount = amount.Sub(*order.DiscountAmount)
+	}
+	if amount.IsNegative() {
+		return decimal.Zero
+	}
+	return amount
 }
 
 // haversineKm menghitung jarak geodesik (km) antara dua koordinat dengan

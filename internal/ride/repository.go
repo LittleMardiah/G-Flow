@@ -25,6 +25,7 @@ var (
 	ErrWalletNotFound   = errors.New("wallet not found")
 	ErrOrderNotFound    = errors.New("ride order not found")
 	ErrDriverNotFound   = errors.New("driver not found")
+	ErrVoucherNotFound  = errors.New("voucher not found")
 )
 
 // RepoDB adalah subset operasi pool yang dipakai Repository untuk query
@@ -114,6 +115,40 @@ type RideOrderEvent struct {
 	Metadata    []byte
 }
 
+// Voucher adalah representasi baris tabel vouchers (MIGRATION 016, TD-070).
+// DiscountType adalah enum voucher_discount_type_enum (PERCENTAGE/FIXED).
+// ApplicableServices adalah daftar order_type_enum yang berhak memakai voucher.
+type Voucher struct {
+	ID                 uuid.UUID
+	Code               string
+	Name               string
+	Description        *string
+	DiscountType       string
+	DiscountValue      decimal.Decimal
+	MaxDiscount        *decimal.Decimal
+	ApplicableServices []string
+	MinOrderAmount     decimal.Decimal
+	PerUserLimit       int
+	TotalQuota         *int
+	UsedCount          int
+	ValidFrom          time.Time
+	ValidTo            time.Time
+	Status             string
+	CreatedBy          *uuid.UUID
+}
+
+// UserVoucher adalah representasi baris tabel user_vouchers (tracking pemakaian
+// voucher per user+order, MIGRATION 016).
+type UserVoucher struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	VoucherID       uuid.UUID
+	OrderType       string
+	OrderID         *uuid.UUID
+	DiscountApplied decimal.Decimal
+	Status          string
+}
+
 // Driver adalah representasi subset baris users yang dibutuhkan untuk validasi
 // accept order (user_type, status, working_status, min_balance_threshold).
 type Driver struct {
@@ -171,7 +206,9 @@ func (r *Repository) GetWalletByUserAndType(ctx context.Context, userID uuid.UUI
 }
 
 // InsertOrder membuat baris ride_orders berstatus CREATED. Dipanggil di dalam
-// transaksi booking sehingga order + escrow bersifat atomik.
+// transaksi booking sehingga order + escrow bersifat atomik. VoucherID &
+// DiscountAmount diisi apabila booking memakai voucher (TD-070); keduanya
+// boleh nil (tanpa voucher).
 func (r *Repository) InsertOrder(ctx context.Context, q Querier, o *RideOrder) error {
 	_, err := q.Exec(ctx, `
 		INSERT INTO ride_orders (
@@ -179,8 +216,9 @@ func (r *Repository) InsertOrder(ctx context.Context, q Querier, o *RideOrder) e
 			pickup_lat, pickup_lng, pickup_address,
 			dropoff_lat, dropoff_lng, dropoff_address,
 			distance_km, base_fare, per_km_rate, estimated_fare,
+			discount_amount, voucher_id,
 			payment_method, status, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`,
 		o.ID,
 		o.CustomerID,
@@ -195,6 +233,8 @@ func (r *Repository) InsertOrder(ctx context.Context, q Querier, o *RideOrder) e
 		o.BaseFare,
 		o.PerKmRate,
 		o.EstimatedFare,
+		o.DiscountAmount,
+		o.VoucherID,
 		o.PaymentMethod,
 		o.Status,
 		o.ExpiresAt,
@@ -241,6 +281,74 @@ func (r *Repository) SystemWalletID(ctx context.Context, q Querier, walletType s
 		return uuid.Nil, err
 	}
 	return id, nil
+}
+
+// voucherColumns daftar kolom vouchers untuk SELECT lengkap. Dipakai bersama
+// GetVoucherByCode & GetVoucherByID agar tetap satu sumber.
+const voucherColumns = `id, code, name,
+	discount_type, discount_value, max_discount,
+	applicable_services::text[], min_order_amount, per_user_limit,
+	total_quota, used_count, valid_from, valid_to, status, created_by`
+
+// scanVoucherRow memindahkan satu baris vouchers ke *Voucher.
+// Mengembalikan ErrVoucherNotFound jika tidak ada baris.
+func scanVoucherRow(row pgx.Row) (*Voucher, error) {
+	var v Voucher
+	err := row.Scan(
+		&v.ID, &v.Code, &v.Name,
+		&v.DiscountType, &v.DiscountValue, &v.MaxDiscount,
+		&v.ApplicableServices, &v.MinOrderAmount, &v.PerUserLimit,
+		&v.TotalQuota, &v.UsedCount, &v.ValidFrom, &v.ValidTo, &v.Status, &v.CreatedBy,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrVoucherNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// GetVoucherByCode mengambil voucher lengkap berdasarkan kode (case-sensitive).
+// Mengembalikan ErrVoucherNotFound jika kode tidak ada. Validasi status &
+// window waktu dilakukan di Service Layer (F004).
+func (r *Repository) GetVoucherByCode(ctx context.Context, code string) (*Voucher, error) {
+	return scanVoucherRow(r.db.QueryRow(ctx, `
+		SELECT `+voucherColumns+` FROM vouchers WHERE code = $1
+	`, code))
+}
+
+// GetVoucherByID mengambil voucher lengkap berdasarkan id.
+// Mengembalikan ErrVoucherNotFound jika tidak ada.
+func (r *Repository) GetVoucherByID(ctx context.Context, voucherID uuid.UUID) (*Voucher, error) {
+	return scanVoucherRow(r.db.QueryRow(ctx, `
+		SELECT `+voucherColumns+` FROM vouchers WHERE id = $1
+	`, voucherID))
+}
+
+// CountUserVoucherUsage menghitung jumlah pemakaian ACTIVE (status='APPLIED')
+// voucher oleh user — dipakai validasi per_user_limit sebelum booking
+// (TD-070). Di dalam transaksi booking, trigger DB validate_per_user_limit
+// melakukan hal yang sama (defense-in-depth).
+func (r *Repository) CountUserVoucherUsage(ctx context.Context, q Querier, userID, voucherID uuid.UUID) (int, error) {
+	var count int
+	err := q.QueryRow(ctx, `
+		SELECT COUNT(*) FROM user_vouchers
+		WHERE user_id = $1 AND voucher_id = $2 AND status = 'APPLIED'
+	`, userID, voucherID).Scan(&count)
+	return count, err
+}
+
+// InsertUserVoucher mencatat pemakaian voucher per user+order. Dipanggil di
+// dalam transaksi booking; trigger DB meng-increment used_count pada vouchers
+// dan pre-angka per_user_limit. Mengembalikan 23505/trigger exception apa
+// adanya untuk di-map Service.
+func (r *Repository) InsertUserVoucher(ctx context.Context, q Querier, uv *UserVoucher) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO user_vouchers (user_id, voucher_id, order_type, order_id, discount_amount_applied, status)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, uv.UserID, uv.VoucherID, uv.OrderType, uv.OrderID, uv.DiscountApplied, uv.Status)
+	return err
 }
 
 // rideOrderColumns daftar kolom ride_orders untuk SELECT lengkap. Dipakai
