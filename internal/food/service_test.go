@@ -989,6 +989,168 @@ func TestUpdateFoodOrderStatus_MerchantConfirm(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+func TestUpdateFoodOrderStatus_MerchantConfirmWallet(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	// WALLET order auto-paid lahir status CONFIRMED + merchant_status WAITING
+	// → merchant tetap bisa confirm (WAITING→CONFIRMED): status order masih
+	// CONFIRMED, merchant_status maju ke CONFIRMED.
+	order := fCustBOrder(foodStatusConfirmed, PaymentMethodWallet, nil)
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
+	repo.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything, fOrderID, foodStatusConfirmed, foodStatusConfirmed, mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectCommit()
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	resp, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusConfirmed,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, foodStatusConfirmed, resp.Status)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateFoodOrderStatus_MerchantRejectWallet(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	// Merchant reject order WALLET yang belum settle → escrow di-refund penuh
+	// + is_refunded = TRUE, respon status CANCELLED.
+	order := fCustBOrder(foodStatusConfirmed, PaymentMethodWallet, nil)
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
+	repo.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything, fOrderID, foodStatusConfirmed, foodStatusCancelled, mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, walletTypeSystemEscrow).Return(fEscrowID, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	mDB.ExpectCommit()
+
+	svc := NewService(repo, mDB, nil, lgr)
+	resp, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, foodStatusCancelled, resp.Status)
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateFoodOrderStatus_MerchantRejectCash(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	// Order CASH tidak punya escrow → reject tanpa refund ledger.
+	order := fCustBOrder(foodStatusCreated, PaymentMethodCash, nil)
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
+	repo.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything, fOrderID, foodStatusCreated, foodStatusCancelled, mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectCommit()
+
+	svc := NewService(repo, mDB, nil, lgr)
+	resp, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, foodStatusCancelled, resp.Status)
+	lgr.AssertNotCalled(t, "CreateLedgerEntries")
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateFoodOrderStatus_MerchantPreparingAfterConfirm(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	// PREPARING hanya valid setelah merchant confirm (merchant_status CONFIRMED).
+	order := fCustBOrder(foodStatusConfirmed, PaymentMethodCash, nil)
+	order.MerchantStatus = merchantStatusConfirmed
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
+	repo.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything, fOrderID, foodStatusConfirmed, foodStatusPreparing, mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectCommit()
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	resp, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusPreparing,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, foodStatusPreparing, resp.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateFoodOrderStatus_MerchantReadyAfterPreparing(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	order := fCustBOrder(foodStatusPreparing, PaymentMethodCash, nil)
+	order.MerchantStatus = merchantStatusPreparing
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
+	repo.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything, fOrderID, foodStatusPreparing, foodStatusReadyForPickup, mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectCommit()
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	resp, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusReadyForPickup,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, foodStatusReadyForPickup, resp.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateFoodOrderStatus_MerchantSkippedStep(t *testing.T) {
+	repo := new(mockRepo)
+
+	// Merchant WALLET tidak bisa lompat: merchant_status masih WAITING harus
+	// confirm dulu, PREPARING langsung → ErrInvalidTransition.
+	order := fCustBOrder(foodStatusConfirmed, PaymentMethodWallet, nil)
+	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	_, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusPreparing,
+	})
+	assert.ErrorIs(t, err, ErrInvalidTransition)
+	repo.AssertExpectations(t)
+}
+
 func TestUpdateFoodOrderStatus_DriverPickedUp(t *testing.T) {
 	repo := new(mockRepo)
 	mDB, err := pgxmock.NewPool()
@@ -1366,9 +1528,28 @@ func TestValidateFoodTransition(t *testing.T) {
 	assert.Error(t, validateFoodTransition(o, actorKindCustomer, foodStatusPreparing))
 	assert.NoError(t, validateFoodTransition(o, actorKindCustomer, foodStatusCancelled))
 
+	// Merchant di-gate oleh merchant_status (bukan status order).
+	o.Status = foodStatusCreated
+	o.MerchantStatus = merchantStatusWaiting
+	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusConfirmed))
+	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusCancelled))
+	assert.Error(t, validateFoodTransition(o, actorKindMerchant, foodStatusPreparing))
+
+	// WALLET order lahir status CONFIRMED tapi merchant_status WAITING —
+	// merchant tetap boleh confirm.
 	o.Status = foodStatusConfirmed
-	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusPreparing))
+	o.MerchantStatus = merchantStatusWaiting
+	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusConfirmed))
+	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusCancelled))
+	assert.Error(t, validateFoodTransition(o, actorKindMerchant, foodStatusPreparing))
 	assert.Error(t, validateFoodTransition(o, actorKindMerchant, foodStatusPickedUp))
+
+	o.MerchantStatus = merchantStatusConfirmed
+	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusPreparing))
+	assert.Error(t, validateFoodTransition(o, actorKindMerchant, foodStatusReadyForPickup))
+
+	o.MerchantStatus = merchantStatusPreparing
+	assert.NoError(t, validateFoodTransition(o, actorKindMerchant, foodStatusReadyForPickup))
 
 	o.Status = foodStatusReadyForPickup
 	assert.NoError(t, validateFoodTransition(o, actorKindDriver, foodStatusPickedUp))

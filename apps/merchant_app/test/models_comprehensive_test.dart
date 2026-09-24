@@ -168,7 +168,7 @@ void main() {
           {'order_item_id': 'x', 'item_name': 'A', 'quantity': 1, 'unit_price': 10, 'subtotal': 10},
         ],
         'item_subtotal': '10',
-        'delivery_fee': 2000.5,
+        'delivery_fee': 2000.4,
         'discount_amount': 1000,
         'total_amount': 11000,
         'payment_method': 'COD',
@@ -184,7 +184,7 @@ void main() {
       expect(o.id, 'ord-1');
       expect(o.items.length, 1);
       expect(o.itemSubtotal, 10);
-      expect(o.deliveryFee, 2000); // 2000.5 rounds to 2000 by round()
+      expect(o.deliveryFee, 2000); // 2000.4 rounds to 2000 by round()
       expect(o.isSettled, isTrue);
       expect(o.createdAt, isNotNull);
     });

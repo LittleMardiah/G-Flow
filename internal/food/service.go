@@ -1420,8 +1420,11 @@ const (
 //
 //   - Customer (pemilik order): CREATED/CONFIRMED → CANCELLED, dengan refund
 //     escrow penuh jika payment WALLET (is_refunded = TRUE).
-//   - Merchant (pemilik merchant): CREATED → CONFIRMED → PREPARING →
-//     READY_FOR_PICKUP (merchant_status ikut maju).
+//   - Merchant (pemilik merchant): aksi di-gate oleh merchant_status (bukan
+//     status order) — WAITING → CONFIRMED (confirm), WAITING → CANCELLED
+//     (reject + refund WALLET), CONFIRMED → PREPARING → READY. WALLET order
+//     lahir status CONFIRMED tapi merchant_status WAITING, sehingga merchant
+//     tetap harus confirm dulu sebelum PREPARING (merchant_status ikut maju).
 //   - Driver tertunjuk: READY_FOR_PICKUP → PICKED_UP → IN_TRANSIT →
 //     DELIVERED; status DELIVERED otomatis memicu settlement (Task 3.4):
 //     order langsung menjadi SETTLED dalam transaksi yang sama
@@ -1577,9 +1580,12 @@ func validFoodStatusTarget(s string) bool {
 }
 
 // validateFoodTransition memvalidasi transisi status per aktor sesuai state
-// machine food order (ROADMAP 3.4 status flow + batasan Task 3.3).
+// machine food order (ROADMAP 3.4 status flow + batasan Task 3.3). Aksi
+// merchant di-gate oleh merchant_status (bukan status order) supaya order
+// WALLET yang lahir status CONFIRMED tetap bisa di-confirm/di-reject merchant.
 func validateFoodTransition(order *FoodOrder, actor int, target string) error {
 	from := order.Status
+	ms := order.MerchantStatus
 	switch actor {
 	case actorKindCustomer:
 		if target == foodStatusCancelled && (from == foodStatusCreated || from == foodStatusConfirmed) {
@@ -1588,15 +1594,19 @@ func validateFoodTransition(order *FoodOrder, actor int, target string) error {
 	case actorKindMerchant:
 		switch target {
 		case foodStatusConfirmed:
-			if from == foodStatusCreated {
+			if ms == merchantStatusWaiting {
+				return nil
+			}
+		case foodStatusCancelled:
+			if ms == merchantStatusWaiting {
 				return nil
 			}
 		case foodStatusPreparing:
-			if from == foodStatusConfirmed {
+			if ms == merchantStatusConfirmed {
 				return nil
 			}
 		case foodStatusReadyForPickup:
-			if from == foodStatusPreparing {
+			if ms == merchantStatusPreparing {
 				return nil
 			}
 		}

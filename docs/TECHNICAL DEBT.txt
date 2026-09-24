@@ -1685,8 +1685,44 @@ Dampak     : Suite merchant_app punya 3 fail. Test #1/#2 kemungkinan
              order belum ada); #3 off-by-one fixture.
 Solusi     : S3 fix akan unblock #1/#2. #3 perlu cek fixture numbers.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (Merchant S3, 2026-09-24)
+Catatan    : #1/#2 unblocked oleh S3 — displayStatus di merchant_order.dart
+             kini memprioritaskan status terminal (CANCELLED/DELIVERED/
+             SETTLED) di atas merchant_status (order reject WALLET tampil
+             CANCELLED tanpa aksi confirm/reject) dan default WAITING untuk
+             status kosong. #3 fixture off-by-one diperbaiki: 2000.5 → 2001
+             karena `round()` half-away-from-zero (komentar lama keliru);
+             fixture jadi 2000.4 → round 2000. Suite merchant_app 105/105
+             PASS, analyze clean.
 Referensi  : Merchant S1+S2 (temuan session)
+
+ID         : TD-139
+Kategori   : TESTING
+Judul      : Integration test ride/send FAIL saat dijalankan bareng
+             package lain (state pollution DB antar-package) — PASS saat
+             solo. Escrow/wallet tidak hermetic antar-test-suite.
+Dampak     : CI yang jalankan `go test -tags integration ./internal/...`
+             bakal FAIL flaky → false negative; developer skip integration
+             untuk menghindari noise.
+Solusi     : Isolate DB per package (schema terpisah atau transaksi rollback),
+             ATAU pytest-style setup/teardown global, ATAU jalankan
+             sequential dengan --parallel 1 + DB reset.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : Merchant S3 (temuan OpenCode)
+
+ID         : TD-140
+Kategori   : MOBILE / UX
+Judul      : Merchant orders list: order yang di-reject punya
+             merchant_status='WAITING' (DB CHECK nolak CANCELLED) tapi
+             status=CANCELLED → muncul di tab WAITING dengan badge CANCELLED.
+Dampak     : Merchant lihat order reject di tab WAITING — confusing
+             UX; filter tab tidak match tampilan.
+Solusi     : Ubah filter tab berdasarkan status order (bukan
+             merchant_status), ATAU exclude status CANCELLED dari tab WAITING.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : Merchant S3 (temuan OpenCode)
 
 ===============================================================================
 2. RINGKASAN
@@ -1694,13 +1730,13 @@ Referensi  : Merchant S1+S2 (temuan session)
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 132 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 134 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 32 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 57 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138)
-- RENDAH  : 27 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136)
+- SEDANG  : 58 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139)
+- RENDAH  : 28 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140)
 
-STATUS: 35 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 97 item OPEN (24 item lama + 73 item baru dari SECTION F, TD-058 s/d TD-138).
+STATUS: 36 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 98 item OPEN (24 item lama + 74 item baru dari SECTION F, TD-058 s/d TD-140).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1725,12 +1761,12 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-23):
-   - Total hutang teridentifikasi      : 132 item (TD-051 di-reserve/skip; +79 dari SECTION F/follow-up, TD-058 s/d TD-138).
-   - Sudah FIXED/CLOSED                : 35 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-069, TD-070, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074).
+3. RINGKASAN STATUS TERKINI (2026-09-24):
+   - Total hutang teridentifikasi      : 134 item (TD-051 di-reserve/skip; +81 dari SECTION F/follow-up, TD-058 s/d TD-140).
+   - Sudah FIXED/CLOSED                : 36 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-069, TD-070, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074, TD-138).
    - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                         : 97 item (24 item lama + 73 item baru,
-                                          TD-058 s/d TD-138).
+- ❌ OPEN                         : 98 item (24 item lama + 74 item baru,
+                                          TD-058 s/d TD-140).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -1979,6 +2015,40 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       127 → 130 item (KRITIS 8 / TINGGI 32 / SEDANG 53 → 55 / RENDAH 26 →
       27 / FIXED 35 / DEFERRED 1 tetap; OPEN 92 → 95). Range SECTION F:
       TD-058 s/d TD-133 → TD-058 s/d TD-136.
+    - MERCHANT S3 (2026-09-24): WALLET order transition bug selesai.
+      validateFoodTransition di internal/food/service.go kini meng-gate aksi
+      merchant via merchant_status (bukan status order): WAITING→CONFIRMED
+      (confirm), WAITING→CANCELLED (reject + refund WALLET penuh), CONFIRMED→
+      PREPARING, PREPARING→READY. Order WALLET yang lahir status CONFIRMED +
+      merchant_status WAITING (auto-paid) kini bisa di-confirm/di-reject.
+      Refund reject memakai refundFoodEscrow yang sudah generic (actor-agnostic:
+      CANCELLED + WALLET + !is_refunded + !is_settled → FOOD_REFUND escrow→
+      customer full TotalAmount). Merchant reject tidak mengubah merchant_status
+      (DB CHECK constraint di migration 005 menolak 'CANCELLED') → status order
+      = CANCELLED yang menentukan display (mobile displayStatus prioritaskan
+      status terminal di atas merchant_status). Test: unit service (confirm
+      WALLET, reject WALLET refund, reject CASH tanpa refund, PREPARING/READY,
+      skip-step invalid), handler(200/409), integration TC_FOOD_006 baru +
+      TC_FOOD_001/004 ditambah step CONFIRMED. TD-138 → ✅ FIXED (3/3 test
+      PASS: #1/#2 unblocked di S3, #3 fixture diperbaiki). FIXED 35 → 36;
+      OPEN 97 → 96; register tetap 132 item. Food unit coverage 90.0% (naik
+      dari 89.6%), integration food 6/6 PASS, go build/vet + go test ./...
+      PASS, merchant_app analyze clean + test 105/105 PASS. Catatan: ride & send
+      integration FAIL saat go test -tags integration ./internal/... dirun
+      bersama-sama (state pollution DB antar-package, escrow/wallet tidak
+      hermetic — sudah diverifikasi pre-existing via git stash, PASS saat
+      package solo). Range SECTION F: TD-058 s/d TD-140.
+    - S3 FOLLOW-UP (2026-09-24): menambahkan TD-139 (TESTING, SEDANG,
+      OPEN): integration ride/send FAIL saat go test -tags integration
+      ./internal/... bareng (state pollution DB antar-package) padahal
+      PASS solo — escrow/wallet tidak hermetic → CI bakal flaky.
+      TD-140 (MOBILE / UX, RENDAH, OPEN): merchant orders list —
+      order reject punya merchant_status='WAITING' (DB CHECK nolak
+      CANCELLED) tapi status=CANCELLED → tampil di tab WAITING dengan
+      badge CANCELLED (filter tab tidak match tampilan). Total register
+      naik dari 132 → 134 item (KRITIS 8 / TINGGI 32 / SEDANG 57 → 58 /
+      RENDAH 27 → 28 / FIXED 36 / DEFERRED 1 tetap; OPEN 96 → 98).
+      Range SECTION F: TD-058 s/d TD-138 → TD-058 s/d TD-140.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

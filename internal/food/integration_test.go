@@ -480,8 +480,16 @@ func TestIntegrationFood_TC_FOOD_001_E2EWalletSettlement(t *testing.T) {
 	// Driver matching (simulasi) → merchant siapkan → driver antar.
 	e.assignFoodDriver(t, ctx, orderID, driverID, driverWalletID, true)
 
-	// Merchant: PREPARING → READY_FOR_PICKUP (order WALLET lahir CONFIRMED).
-	code, got := updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
+	// Merchant: CONFIRMED → PREPARING → READY_FOR_PICKUP. Order WALLET lahir
+	// CONFIRMED + merchant_status WAITING → merchant wajib confirm dulu
+	// (WAITING→CONFIRMED) sebelum PREPARING.
+	code, got := updateFoodStatus(t, e, merchToken, orderID, "CONFIRMED", "")
+	require.Equal(t, http.StatusOK, code, "merchant CONFIRMED (WAITING): %s")
+	require.Equal(t, "CONFIRMED", got)
+	var ms string
+	require.NoError(t, e.pool.QueryRow(ctx, `SELECT merchant_status FROM food_orders WHERE id = $1`, orderID).Scan(&ms))
+	require.Equal(t, "CONFIRMED", ms, "merchant_status harus maju ke CONFIRMED")
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
 	require.Equal(t, http.StatusOK, code, "merchant PREPARING: %s")
 	require.Equal(t, "PREPARING", got)
 	code, got = updateFoodStatus(t, e, merchToken, orderID, "READY_FOR_PICKUP", "")
@@ -663,7 +671,10 @@ func TestIntegrationFood_TC_FOOD_004_DriverEmergencyCancel(t *testing.T) {
 
 	// Matching engine menunjuk driver + BUSY.
 	e.assignFoodDriver(t, ctx, orderID, driverID, driverWalletID, true)
-	code, got := updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
+	code, got := updateFoodStatus(t, e, merchToken, orderID, "CONFIRMED", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "CONFIRMED", got)
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, "PREPARING", got)
 	code, got = updateFoodStatus(t, e, merchToken, orderID, "READY_FOR_PICKUP", "")
@@ -764,4 +775,50 @@ func TestIntegrationFood_TC_FOOD_005_AutoCancelExpired(t *testing.T) {
 		"customer balance harus pulih 100000, got %v", e.getBalance(t, ctx, custWalletID))
 
 	assertLedgerBalanced(t, e, ctx, walletOrderID)
+}
+
+// TC-FOOD-006 — Merchant reject order WALLET (status CONFIRMED + merchant_status
+// WAITING): PATCH CANCELLED oleh merchant → order CANCELLED, is_refunded TRUE,
+// escrow di-refund penuh TotalAmount, customer balance pulih. Merchant_status
+// tidak bisa di-set CANCELLED (CHECK constraint) → tetap WAITING, display
+// ditentukan status order (lihat merchant_order.dart displayStatus).
+func TestIntegrationFood_TC_FOOD_006_MerchantRejectWalletRefund(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWalletID := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWalletID, "100000")
+
+	merchToken, _ := registerAndLogin(t, e.r, "merchant")
+	merchantID := registerMerchant(t, e, merchToken)
+	e.activateMerchant(t, ctx, merchantID)
+	menuID := createMenu(t, e, merchToken, merchantID)
+	itemID := createItem(t, e, merchToken, merchantID, menuID, 25000)
+
+	// Order WALLET → CONFIRMED + merchant_status WAITING (auto-paid).
+	orderID, status := createFoodOrder(t, e, custToken, merchantID, itemID, "WALLET")
+	require.Equal(t, "CONFIRMED", status)
+
+	// Merchant reject → CANCELLED + refund penuh WALLET.
+	code, got := updateFoodStatus(t, e, merchToken, orderID, "CANCELLED", "tidak bisa dibuat")
+	require.Equal(t, http.StatusOK, code, "merchant reject: %d")
+	require.Equal(t, "CANCELLED", got)
+
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").IsZero(),
+		"escrow harus kembali 0 setelah merchant reject, got %v", e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW"))
+	require.True(t, e.getBalance(t, ctx, custWalletID).Equal(decimal.NewFromInt(100000)),
+		"customer balance harus pulih 100000, got %v", e.getBalance(t, ctx, custWalletID))
+
+	var isRefunded bool
+	var ms string
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT is_refunded, merchant_status FROM food_orders WHERE id = $1`, orderID).Scan(&isRefunded, &ms))
+	require.True(t, isRefunded)
+	require.Equal(t, "WAITING", ms, "merchant_status tidak bisa CANCELLED (CHECK constraint)")
+
+	assertLedgerBalanced(t, e, ctx, orderID)
 }

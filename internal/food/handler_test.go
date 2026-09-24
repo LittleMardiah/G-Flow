@@ -504,12 +504,47 @@ func TestHandler_UpdateFoodOrderStatus(t *testing.T) {
 	h2.UpdateFoodOrderStatus(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
 
-	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"bad"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"bad"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c3.Set("user_id", fMerchID.String())
 	svc3.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything).Return(nil, ErrInvalidTransition)
 	h3 := NewHandler(svc3)
 	h3.UpdateFoodOrderStatus(c3)
 	assert.Equal(t, http.StatusConflict, w3.Code)
+}
+
+func TestHandler_UpdateFoodOrderStatus_MerchantWallet(t *testing.T) {
+	// Merchant confirm order WALLET (born CONFIRMED/WAITING) → 200.
+	svc, c, w := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"confirmed"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	c.Set("user_id", fMerchID.String())
+	svc.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
+		return r.OrderID == fOrderID && r.Status == "CONFIRMED"
+	})).Return(&UpdateFoodOrderStatusResponse{OrderID: fOrderID, Status: foodStatusConfirmed}, nil)
+	h := NewHandler(svc)
+	h.UpdateFoodOrderStatus(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+
+	// Merchant reject order WALLET → CANCELLED 200.
+	svc2, c2, w2 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"cancelled"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	c2.Set("user_id", fMerchID.String())
+	svc2.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
+		return r.OrderID == fOrderID && r.Status == "CANCELLED"
+	})).Return(&UpdateFoodOrderStatusResponse{OrderID: fOrderID, Status: foodStatusCancelled}, nil)
+	h2 := NewHandler(svc2)
+	h2.UpdateFoodOrderStatus(c2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+	svc2.AssertExpectations(t)
+
+	// Merchant skip confirm (PREPARING langsung saat merchant_status WAITING) → 409.
+	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"preparing"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	c3.Set("user_id", fMerchID.String())
+	svc3.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
+		return r.OrderID == fOrderID && r.Status == "PREPARING"
+	})).Return(nil, ErrInvalidTransition)
+	h3 := NewHandler(svc3)
+	h3.UpdateFoodOrderStatus(c3)
+	assert.Equal(t, http.StatusConflict, w3.Code)
+	svc3.AssertExpectations(t)
 }
 
 func TestHandler_GetFoodOrder(t *testing.T) {

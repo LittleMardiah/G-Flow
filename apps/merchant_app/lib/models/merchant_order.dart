@@ -47,15 +47,21 @@ class MerchantOrder {
       id.length > 8 ? '#${id.substring(0, 8).toUpperCase()}' : '#${id.toUpperCase()}';
 
   String get displayStatus {
+    final st = status.toUpperCase();
     final ms = merchantStatus.toUpperCase();
+    // Status order terminal mendahului merchant_status: order yang di-reject
+    // merchant punya merchant_status 'WAITING' (DB CHECK constraint menolak
+    // 'CANCELLED'), tapi harus tampil CANCELLED + tanpa aksi confirm/reject.
+    if (const {'CANCELLED', 'DELIVERED', 'SETTLED'}.contains(st)) return st;
     if (ms.isNotEmpty) return ms;
-    switch (status.toUpperCase()) {
+    switch (st) {
+      case '':
       case 'CREATED':
         return 'WAITING';
       case 'READY_FOR_PICKUP':
         return 'READY';
       default:
-        return status.toUpperCase();
+        return st;
     }
   }
 
