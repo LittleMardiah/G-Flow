@@ -37,6 +37,14 @@ func (m *mockFoodService) GetMerchant(ctx context.Context, merchantID uuid.UUID)
 	return args.Get(0).(*Merchant), args.Error(1)
 }
 
+func (m *mockFoodService) GetMerchantForUser(ctx context.Context, userID uuid.UUID) (*Merchant, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Merchant), args.Error(1)
+}
+
 func (m *mockFoodService) UpdateMerchant(ctx context.Context, req UpdateMerchantRequest) (*Merchant, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
@@ -238,10 +246,34 @@ func TestHandler_GetMerchant(t *testing.T) {
 	h2.GetMerchant(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
 
-	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String(), "", gin.Param{Key: "id", Value: fMerchID.String()})
+svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String(), "", gin.Param{Key: "id", Value: fMerchID.String()})
 	svc3.On("GetMerchant", mock.Anything, fMerchID).Return(nil, ErrMerchantNotFound)
 	h3 := NewHandler(svc3)
 	h3.GetMerchant(c3)
+	assert.Equal(t, http.StatusNotFound, w3.Code)
+}
+
+func TestHandler_GetMerchantMe(t *testing.T) {
+	svc, c, w := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/me", "")
+	c.Set("user_id", fCustID.String())
+	m := &Merchant{ID: fMerchID, UserID: fCustID, Name: "Warung", Category: "food",
+		Latitude: decimal.NewFromFloat(-6.2), Longitude: decimal.NewFromFloat(106.8), Status: merchantStatusWaiting}
+	svc.On("GetMerchantForUser", mock.Anything, fCustID).Return(m, nil)
+	h := NewHandler(svc)
+	h.GetMerchantMe(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+
+	_, c2, w2 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/me", "")
+	h2 := NewHandler(new(mockFoodService))
+	h2.GetMerchantMe(c2)
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+
+	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/me", "")
+	c3.Set("user_id", fCustID.String())
+	svc3.On("GetMerchantForUser", mock.Anything, fCustID).Return(nil, ErrMerchantNotFound)
+	h3 := NewHandler(svc3)
+	h3.GetMerchantMe(c3)
 	assert.Equal(t, http.StatusNotFound, w3.Code)
 }
 

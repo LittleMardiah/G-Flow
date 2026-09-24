@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/merchant.dart';
@@ -16,7 +17,11 @@ final menuServiceProvider = Provider<MenuService>((ref) => MenuService(ref.watch
 final orderServiceProvider = Provider<OrderService>((ref) => OrderService(ref.watch(apiClientProvider)));
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref.watch(apiClientProvider), ref.watch(storageProvider));
+  return AuthNotifier(
+    ref.watch(apiClientProvider),
+    ref.watch(storageProvider),
+    merchantService: ref.watch(merchantServiceProvider),
+  );
 });
 
 final currentMerchantIdProvider = FutureProvider<String?>((ref) async {
@@ -62,10 +67,13 @@ class AuthState {
 }
 
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier(this.apiClient, this.storage) : super(const AuthState());
+  AuthNotifier(this.apiClient, this.storage, {MerchantService? merchantService})
+      : merchantService = merchantService ?? MerchantService(apiClient),
+        super(const AuthState());
 
   final ApiClient apiClient;
   final FlutterSecureStorage storage;
+  final MerchantService merchantService;
 
   Future<bool> login(String email, String password) async {
     state = state.copyWith(isLoading: true, error: null);
@@ -80,6 +88,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       await storage.write(key: 'access_token', value: data['access_token']);
       await storage.write(key: 'refresh_token', value: data['refresh_token']);
       await storage.write(key: kUserTypeKey, value: userType);
+      try {
+        final profile = await merchantService.fetchMyMerchant();
+        if (profile.id.isNotEmpty) {
+          await storage.write(key: kMerchantIdKey, value: profile.id);
+        }
+      } catch (e) {
+        debugPrint('AuthNotifier.login: fetchMyMerchant gagal (merchant_id tidak diset): $e');
+      }
       state = state.copyWith(isLoading: false, user: data, isAuthenticated: true, userType: userType);
       return true;
     } catch (e) {

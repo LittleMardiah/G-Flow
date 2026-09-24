@@ -29,6 +29,7 @@ import (
 type FoodService interface {
 	RegisterMerchant(ctx context.Context, req RegisterMerchantRequest) (*RegisterMerchantResponse, error)
 	GetMerchant(ctx context.Context, merchantID uuid.UUID) (*Merchant, error)
+	GetMerchantForUser(ctx context.Context, userID uuid.UUID) (*Merchant, error)
 	UpdateMerchant(ctx context.Context, req UpdateMerchantRequest) (*Merchant, error)
 
 	CreateMenu(ctx context.Context, req CreateMenuRequest) (*MenuResponse, error)
@@ -174,6 +175,30 @@ func (h *Handler) GetMerchant(c *gin.Context) {
 	}
 
 	merchant, err := h.svc.GetMerchant(c.Request.Context(), merchantID)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    toMerchantResponse(merchant),
+	})
+}
+
+// GetMerchantMe GET /api/v1/merchants/me
+// Auth: merchant (RBAC di route). Resolve merchant profile milik user yang
+// login dari JWT claim (TASK S1). Cross-device login: merchant yang sudah
+// terdaftar akan ter-resolve otomatis → mobile app dapat menyimpan merchant_id.
+// Error: 401 tanpa identitas, 404 user belum punya merchant profile.
+func (h *Handler) GetMerchantMe(c *gin.Context) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	merchant, err := h.svc.GetMerchantForUser(c.Request.Context(), userID)
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())
 		return

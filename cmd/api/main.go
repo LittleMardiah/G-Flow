@@ -232,6 +232,7 @@ func main() {
 	merchants := r.Group("/api/v1/merchants", middleware.AuthMiddleware(jwtService, blacklistService), auth.RBACMiddleware("merchant"))
 	{
 		merchants.POST("/register", foodHandler.RegisterMerchant)
+		merchants.GET("/me", foodHandler.GetMerchantMe)
 		merchants.GET("/:id", foodHandler.GetMerchant)
 		merchants.PATCH("/:id", foodHandler.UpdateMerchant)
 		merchants.POST("/:id/menus", foodHandler.CreateMenu)

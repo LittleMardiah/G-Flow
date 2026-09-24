@@ -24,6 +24,15 @@ class MerchantService {
     return MerchantProfile.fromJson(d);
   }
 
+  Future<MerchantProfile> fetchMyMerchant() async {
+    final res = await apiClient.get('/api/v1/merchants/me');
+    final d = res.data is Map<String, dynamic> ? (res.data as Map)['data'] : null;
+    if (d is! Map<String, dynamic>) {
+      throw StateError('Profil merchant tidak valid');
+    }
+    return MerchantProfile.fromJson(d);
+  }
+
   Future<MerchantProfile> updateProfile(
     String merchantId, {
     bool? isOpen,
