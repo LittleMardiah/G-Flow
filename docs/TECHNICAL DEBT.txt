@@ -75,7 +75,8 @@ Solusi : Tambah unit test ledger (ReverseLedger, CreateLedgerEntries error),
          transfer (insufficient, self-transfer), ProcessTopUpWebhook.
 Estimasi : 2-3 jam
 Prioritas : TINGGI
-Status : FIXED (commit 9cf905d, coverage 85.1%, 2026-08-31)
+Status : ✅ FIXED (commit 9cf905d, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 
 ID : TD-004
 Kategori : TESTING
@@ -86,9 +87,10 @@ Solusi : Tulis ulang/refresh unit test auth (login, register, blacklist,
          RBACMiddleware) dan integrasikan ke go test -cover ./....
 Estimasi : 2-4 jam
 Prioritas : TINGGI
-Status : FIXED (commit 9522f29, coverage 94.8%, 2026-08-31) — refresh & unfreeze
-         semua test yang di-skip; tambah coverage login/register/logout/RBAC/JWT
-         helpers; 85% target terlampaui (94.8%).
+Status : ✅ FIXED (commit 9522f29, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
+         refresh & unfreeze semua test yang di-skip; tambah coverage
+         login/register/logout/RBAC/JWT helpers; 85% target terlampaui (94.8%).
 
 ID : TD-005
 Kategori : TESTING
@@ -102,7 +104,8 @@ Solusi : Tulis unit test untuk ride (booking, dispatch, settlement, cancellation
          send (multi-stop, 3-way settlement, capacity check), worker, location.
 Estimasi : 15-25 jam
 Prioritas : TINGGI
-Status : FIXED (commit f71e33e, coverage 85.3%, 2026-09-01)
+Status : ✅ FIXED (commit f71e33e, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 
 ID : TD-006
 Kategori : TESTING
@@ -114,7 +117,8 @@ Solusi : Tambah unit test food & send (order creation, settlement, status
          machine, multi-stop, capacity check) hingga >=85% per modul.
 Estimasi : 8-14 jam
 Prioritas : TINGGI
-Status : FIXED (Food 89.9%, Send 95.2%, commit 8f25af8, 2026-08-31)
+Status : ✅ FIXED (commit 8f25af8, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 
 ID : TD-007
 Kategori : DEPLOYMENT / INFRA
@@ -125,7 +129,7 @@ Solusi : Siapkan migration/seed untuk Supabase, atur env (DATABASE_URL, REDIS_UR
          JWT, SECRET), siapkan Render config (health check, start command, env).
 Estimasi : 30-40 jam (ROADMAP 04)
 Prioritas : TINGGI
-Status : OPEN
+Status : 🔵 DEFERRED (triage — user skip deploy; revisit if Render/Supabase)
 
 ID : TD-008
 Kategori : KODE / ARSITEKTUR
@@ -138,7 +142,8 @@ Solusi : Implementasikan endpoint pencarian order tersedia & history yang
          dipakai app; ganti dataset DEMO dengan data backend.
 Estimasi : 6-10 jam
 Prioritas : TINGGI
-Status : ✅ RESOLVED (menggunakan laptop+ngrok, deployment guide siap)
+Status : ✅ FIXED (commit rolled into TD-077, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 
 ID : TD-009
 Kategori : KODE / ARSITEKTUR
@@ -150,7 +155,8 @@ Solusi : Implement pending/backlog & timeout cancellation sesuai ROADMAP 3.10;
          tambah guard capacity saat accept.
 Estimasi : 4-8 jam
 Prioritas : TINGGI
-Status : FIXED (commit b29b707, coverage 89.1%, 2026-08-31)
+Status : ✅ FIXED (commit b29b707, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 
 ID : TD-010
 Kategori : MOBILE / TESTING
@@ -163,7 +169,7 @@ Solusi : Perluas widget test untuk tiap screen kritis & integration test alur
          lengkap di ketiga app; kejar coverage layar sesuai ROADMAP.
 Estimasi : 12-20 jam
 Prioritas : TINGGI
-Status : DEFERRED
+Status : 🔵 DEFERRED
 Catatan : Flutter coverage collection gagal (Service has disappeared). Test
           services_test.dart PASS (32/32). Akan dikerjakan ulang di lingkungan
           stabil.
@@ -286,7 +292,8 @@ Solusi : Implement backend internal/admin (handler, service, repository, lockout
          auto-sweep journal. Frontend: halaman /transactions/[id]/reverse di admin_web.
 Estimasi : 10-15 jam
 Prioritas : TINGGI
-Status : FIXED (commit ?, 2026-09-01, coverage 85.8%)
+Status : ✅ FIXED (commit 74edaa6, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Catatan : Task 4.2.4 selesai — backend & frontend reversal dengan 2FA, lockout,
           proportional clawback, auto-sweep journal.
 
@@ -494,7 +501,8 @@ Dampak     : dashboard/ledger/users UI bakal 404 (ledger/users: path tanpa
 Solusi     : unify frontend pakai pola reversal.ts (.data.data + prefix /api/v1)
              di dashboard.ts, ledger.ts, users.ts.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit 74edaa6, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 
 ID         : TD-052
 Kategori   : KODE
@@ -617,7 +625,8 @@ Solusi     : Implement repository/filter (status, page) + handler GET /wallets/{
             (ownership via JWT) + route + integration TC.
 Estimasi   : 2-4 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit a199b61, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r01.log (GAP list #2; usulan TD-058)
 
 ID         : TD-059
@@ -630,7 +639,8 @@ Solusi     : Tambah SuspendWallet/FreezeWallet/DeactivateWallet + handler/route 
             cache GetBalance di Redis dengan TTL & invalidasi saat mutasi balance.
 Estimasi   : 3-5 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit 4a29ee3, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r01.log (GAP list #4, #9; usulan TD-059)
 
 ID         : TD-060
@@ -642,7 +652,8 @@ Solusi     : Bangun screens (balance, topup, transfer, history) + wallet_provide
             customer_app dan wire ke backend (TD-058/TD-059).
 Estimasi   : 8-12 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit 0167384, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r01.log (GAP list #1; usulan TD-060)
 
 ID         : TD-061
@@ -666,7 +677,7 @@ Dampak     : Race/deadlock wallet (transfer balik arah, idempotency simultan) ti
 Solusi     : Unit/integration test A↔B transfer simultan + 5-simultan idempotency key.
 Estimasi   : 2-3 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage 2026-09-25 — low ROI portfolio: perf/monorepo/websocket)
 Referensi  : audit_r01.log (GAP list #6; usulan TD-062)
 
 ID         : TD-063
@@ -678,7 +689,7 @@ Solusi     : scripts/k6 + Postman collection di CI (koordinasi TD-092 & TD-101 a
             tidak duplikat).
 Estimasi   : 3-4 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage 2026-09-25 — low ROI portfolio: perf/monorepo/websocket)
 Referensi  : audit_r01.log (GAP list #10; usulan TD-063)
 
 ID         : TD-064
@@ -715,7 +726,7 @@ Solusi     : Implementasi RLS policy saat deploy ke Supabase (users/wallets/ledg
             idempotency/topups) + test.
 Estimasi   : 4-6 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage — user skip deploy; revisit if Render/Supabase)
 Referensi  : audit_r01.log (GAP list #8; usulan TD-066)
 
 ID         : TD-067
@@ -794,7 +805,8 @@ Solusi     : Ikuti lock hierarchy v2.3 (lock driver user FOR UPDATE NOWAIT dulu)
             race (TestRaceCondition_10DriversConcurrentAccept perlu diverifikasi ulang).
 Estimasi   : 2-3 jam
 Prioritas  : TINGGI
-Status     : ✅ DONE (2026-09-21, commit TD-071)
+Status     : ✅ FIXED (commit c379de1, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r02.log (deviasi AcceptOrder + [PERLU VERIFIKASI])
 Note       : Fixed: LockDriverUserForAccept ditambah. Urutan lock users→ride_orders.
            Test: TestIntegrationRide_SameDriverDoubleAccept (1 driver/2 order).
@@ -808,7 +820,8 @@ Solusi     : Bangun ride_history_screen, ride_detail_screen + route + service ca
             GET /rides/{id} (koordinasi TD-077 untuk endpoint detail).
 Estimasi   : 4-6 jam
 Prioritas  : TINGGI
-Status     : ✅ FIXED (2026-09-22, commit TD-077 C2+C3)
+Status     : ✅ FIXED (commit b820f3e, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r02.log (customer app ride screens)
 
 ID         : TD-073
@@ -852,7 +865,7 @@ Dampak     : Duplikasi kode antar 3 app; logika bersama tidak dikelola terpusat;
 Solusi     : Set up Melos monorepo + packages/core & migrasi model/providers bersama.
 Estimasi   : 6-10 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage 2026-09-25 — low ROI portfolio: perf/monorepo/websocket)
 Referensi  : audit_r02.log (mobile no melos/packages/core)
 
 ID         : TD-076
@@ -924,7 +937,8 @@ Dampak     : Send Package History (ROADMAP 3.8) error; layar history send kosong
 Solusi     : Route + handler GET /send-orders (pagination) + TC.
 Estimasi   : 2-3 jam
 Prioritas  : TINGGI
-Status     : ✅ FIXED (commit 542952f, 2026-09-23)
+Status     : ✅ FIXED (commit 542952f, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r03.log (GAP-1, 3.5b; usulan TD-058)
 
 ID         : TD-080
@@ -935,7 +949,8 @@ Dampak     : Fungsionalitas core merchant app tidak berfungsi (orders list error
 Solusi     : Route owner GET /merchants/{id}/orders (+ filter status) + TC.
 Estimasi   : 3-4 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit 542952f, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : audit_r03.log (GAP-2, 3.9; usulan TD-059)
 
 ID         : TD-081
@@ -1028,7 +1043,7 @@ Dampak     : Load balancer/Render/monitoring salah deteksi hidup mati service.
 Solusi     : Split endpoint liveness & readiness (probe DB/Redis) + update openapi + Render.
 Estimasi   : 2-3 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage — user skip deploy; revisit if Render/Supabase)
 Referensi  : audit_r04.log (GAP-17; usulan TD-067)
 
 ID         : TD-089
@@ -1053,7 +1068,7 @@ Solusi     : Set pool options (25/10), DefaultQueryExecMode=SimpleProtocol, veri
             port 6543 & default_pool_size≥80.
 Estimasi   : 2-3 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage — user skip deploy; revisit if Render/Supabase)
 Referensi  : audit_r04.log (GAP-4; usulan TD-069)
 
 ID         : TD-091
@@ -1075,7 +1090,7 @@ Dampak     : Performa produksi tidak terukur; kriteria Go/No-Go tidak bisa diver
 Solusi     : scripts/k6 (HTTP + WS) + CI gate + threshold.
 Estimasi   : 6-8 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ CLOSED (triage 2026-09-25 — low ROI portfolio: perf/monorepo/websocket)
 Referensi  : audit_r04.log (GAP-8; usulan TD-071)
 
 ID         : TD-093
@@ -1134,7 +1149,7 @@ Dampak     : Live update (lokasi driver, status order) tidak real-time; tidak ad
 Solusi     : Implementasi WS endpoint + auth + broadcast + 500-connection test.
 Estimasi   : 6-8 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage 2026-09-25 — low ROI portfolio: perf/monorepo/websocket)
 Referensi  : audit_r04.log (GAP-10; usulan TD-072 bagian WS)
 
 ID         : TD-098
@@ -1146,7 +1161,7 @@ Dampak     : Deploy database tidak zero-downtime; rollback tidak mungkin; terkai
 Solusi     : Dokumen+script expand-contract, tambah .down.sql, rollback drill.
 Estimasi   : 4-6 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage — user skip deploy; revisit if Render/Supabase)
 Referensi  : audit_r04.log (GAP-7; usulan TD-075)
 
 ID         : TD-099
@@ -1168,7 +1183,7 @@ Dampak     : Operasional/manual run pindah produksi tidak jelas; DR tidak teruku
 Solusi     : Tulis runbook produksi + konfigurasi backup/restore + ukur RTO/RPO.
 Estimasi   : 4-6 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage — user skip deploy; revisit if Render/Supabase)
 Referensi  : audit_r04.log (GAP-6, GAP-15; usulan TD-077)
 
 ID         : TD-101
@@ -1214,7 +1229,8 @@ Dampak     : Refund escrow (ride+food+send) tanpa test guard.
 Solusi     : Tambah internal/worker/worker_test.go (pgxmock,
              mirror pola internal/ride/service_test.go).
 Prioritas  : TINGGI
-Status     : ✅ FIXED (2026-09-21, commit TD-104, coverage 66.4%)
+Status     : ✅ FIXED (commit 8ea4107, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Note       : 9 test cases PASS, build OK, vet clean. Coverage 66.4% —
              error-path extension dicatat di TD-106.
 Referensi  : TD-067
@@ -1476,7 +1492,8 @@ Dampak     : Client terima HTTP 500 (raw PG error) saat lock timeout,
 Solusi     : Map pgconn 55P03 di LockFoodDriverUserForAccept call site
              (service AcceptFoodOrder) → ErrLockTimeout (mirror send).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (commit implisit di S3 4b13daa, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : TD-078 (temuan OpenCode)
 
 ID         : TD-124
@@ -1503,7 +1520,8 @@ Dampak     : GET /send-orders/{order_id} di customer_app broken
 Solusi     : Unwrap data['order'] + merge data['stops'] sebelum dariJson
              (mirror driver fetchSendDetail) — selesai commit ini.
 Prioritas  : TINGGI
-Status     : ✅ FIXED (2026-09-23, chain SendOrderDetail wrapper)
+Status     : ✅ FIXED (commit cf30644, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Referensi  : SendOrderDetail wrapper fixes (OpenCode)
 
 ID         : TD-126
@@ -1687,7 +1705,8 @@ Dampak     : Suite merchant_app punya 3 fail. Test #1/#2 kemungkinan
              order belum ada); #3 off-by-one fixture.
 Solusi     : S3 fix akan unblock #1/#2. #3 perlu cek fixture numbers.
 Prioritas  : SEDANG
-Status     : ✅ FIXED (Merchant S3, 2026-09-24)
+Status     : ✅ FIXED (commit 4b13daa, triage 2026-09-25)
+Note   : Verifikasi git log + kode — sudah implemented tapi register stale. ✅ FIXED
 Catatan    : #1/#2 unblocked oleh S3 — displayStatus di merchant_order.dart
              kini memprioritaskan status terminal (CANCELLED/DELIVERED/
              SETTLED) di atas merchant_status (order reject WALLET tampil
@@ -1743,17 +1762,20 @@ Referensi  : TD-128 (temuan OpenCode)
 
 ===============================================================================
 2. RINGKASAN
-===============================================================================
-2. RINGKASAN
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 135 item (TD-051 di-reserve/skip)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 31 item (TD-003 s/d TD-010, TD-020, TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061, TD-071, TD-072, TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095, TD-098, TD-100, TD-104, TD-106, TD-114, TD-125)
+- TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
+            TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
+            TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
+            TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
+            TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
 - SEDANG  : 59 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141)
 - RENDAH  : 28 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140)
 
-STATUS: 37 item FIXED/CLOSED, 1 item DEFERRED (TD-010), 98 item OPEN (24 item lama + 74 item baru dari SECTION F, TD-058 s/d TD-141).
+STATUS: ✅ FIXED 56 item, 5 item CLOSED (FIXED/CLOSED 61), 7 item DEFERRED,
+        68 item OPEN (TD-058 s/d TD-141).
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1778,12 +1800,13 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-24):
-   - Total hutang teridentifikasi      : 135 item (TD-051 di-reserve/skip; +82 dari SECTION F/follow-up, TD-058 s/d TD-141).
-   - Sudah FIXED/CLOSED                : 37 item (TD-001 s/d TD-006, TD-008, TD-009, TD-011 s/d TD-021, TD-023, TD-024, TD-025, TD-027, TD-041, TD-044, TD-068, TD-069, TD-070, TD-071, TD-104, TD-072, TD-078, TD-079, TD-125, TD-074, TD-138, TD-128).
-   - DEFERRED                          : 1 item (TD-010 - Flutter coverage instability).
-- ❌ OPEN                         : 98 item (24 item lama + 74 item baru,
-                                          TD-058 s/d TD-141).
+3. RINGKASAN STATUS TERKINI (2026-09-25):
+   - Total hutang teridentifikasi      : 135 item (TD-051 di-reserve/skip; TD-058 s/d TD-141).
+   - ✅ FIXED                           : 56 item
+   - CLOSED (via triage)                : 5 item
+   - FIXED/CLOSED                       : 61 item
+   - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
+   - ❌ OPEN                              : 68 item (TD-058 s/d TD-141).
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -2081,6 +2104,11 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
       (integration auth) FAIL pre-existing — register user_type=admin →
       422 INVALID_USER_TYPE (handler allowedUserTypes tolak admin sejak
       awal, tidak terkait TD-128; usul TD follow-up di luar scope ini).
+     - TRIAGE (2026-09-25): 19 FIXED setelah verifikasi git log + kode; 6 DEFERRED
+       (TD-007, TD-066, TD-088, TD-090, TD-098, TD-100 — user skip deploy, revisit
+       jika Render/Supabase ready); 5 CLOSED (TD-062, TD-063, TD-075, TD-092,
+       TD-097 — low ROI portfolio: perf/monorepo/websocket); duplicate header fixed.
+       Total 135; TD-051 reserved/skip. Range SECTION F: TD-058 s/d TD-141.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
