@@ -530,8 +530,8 @@ func TestHandler_Register_DriverSuccess(t *testing.T) {
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }
 
-// TestHandler_Register_MerchantSuccess: registrasi merchant membuat 2 wallet
-// (CUSTOMER + MERCHANT) dalam satu transaksi (TD-128 scope expansion).
+// TestHandler_Register_MerchantSuccess: registrasi merchant membuat 1 wallet
+// CUSTOMER dalam satu transaksi; wallet MERCHANT dibuat oleh food service.
 func TestHandler_Register_MerchantSuccess(t *testing.T) {
 	mockDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
@@ -549,9 +549,6 @@ func TestHandler_Register_MerchantSuccess(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userID))
 	mockDB.ExpectExec(`INSERT INTO wallets`).
 		WithArgs(userID, "CUSTOMER").
-		WillReturnResult(pgxmock.NewResult("INSERT", 1))
-	mockDB.ExpectExec(`INSERT INTO wallets`).
-		WithArgs(userID, "MERCHANT").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mockDB.ExpectCommit()
 

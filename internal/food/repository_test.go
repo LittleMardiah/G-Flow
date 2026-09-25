@@ -149,13 +149,32 @@ func TestRepo_GetWalletByUserAndType(t *testing.T) {
 
 func TestRepo_InsertMerchantWallet(t *testing.T) {
 	r, mDB := newFoodRepo(t)
-	mDB.ExpectQuery("INSERT INTO wallets").
+	mDB.ExpectExec("INSERT INTO wallets").
+		WithArgs(fCustID).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectQuery("SELECT id, user_id, wallet_type, balance, status").
 		WithArgs(fCustID).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "user_id", "wallet_type", "balance", "status"}).
 			AddRow(fMerchWallet, fCustID, WalletTypeMerchant, decimal.Zero, "ACTIVE"))
 	w, err := r.InsertMerchantWallet(context.Background(), mDB, fCustID)
 	assert.NoError(t, err)
 	assert.Equal(t, fMerchWallet, w.ID)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_InsertMerchantWallet_Existing(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	mDB.ExpectExec("INSERT INTO wallets").
+		WithArgs(fCustID).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 0"))
+	mDB.ExpectQuery("SELECT id, user_id, wallet_type, balance, status").
+		WithArgs(fCustID).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "user_id", "wallet_type", "balance", "status"}).
+			AddRow(fMerchWallet, fCustID, WalletTypeMerchant, decimal.NewFromInt(42), "ACTIVE"))
+	w, err := r.InsertMerchantWallet(context.Background(), mDB, fCustID)
+	assert.NoError(t, err)
+	assert.Equal(t, fMerchWallet, w.ID)
+	assert.Equal(t, decimal.NewFromInt(42), w.Balance)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
@@ -547,6 +566,66 @@ func TestRepo_GetFoodOrderItems(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+func TestRepo_GetItemsByOrderIDs_MultiOrder(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	orderIDs := []uuid.UUID{
+		uuid.MustParse("b1111111-1111-1111-1111-111111111111"),
+		uuid.MustParse("b2222222-2222-2222-2222-222222222222"),
+		uuid.MustParse("b3333333-3333-3333-3333-333333333333"),
+	}
+	itemIDs := []uuid.UUID{
+		uuid.MustParse("c1111111-1111-1111-1111-111111111111"),
+		uuid.MustParse("c2222222-2222-2222-2222-222222222222"),
+		uuid.MustParse("c3333333-3333-3333-3333-333333333333"),
+		uuid.MustParse("c4444444-4444-4444-4444-444444444444"),
+		uuid.MustParse("c5555555-5555-5555-5555-555555555555"),
+	}
+	rows := pgxmock.NewRows(foodItemCols).
+		AddRow(itemIDs[0], orderIDs[0], itemIDs[0], "Nasi", decimal.NewFromInt(50000), 1, decimal.NewFromInt(50000), json.RawMessage(`{}`), decimal.Zero, nil, time.Now()).
+		AddRow(itemIDs[1], orderIDs[0], itemIDs[1], "Ayam", decimal.NewFromInt(75000), 1, decimal.NewFromInt(75000), json.RawMessage(`{}`), decimal.Zero, nil, time.Now()).
+		AddRow(itemIDs[2], orderIDs[1], itemIDs[2], "Sate", decimal.NewFromInt(10000), 2, decimal.NewFromInt(20000), json.RawMessage(`{}`), decimal.Zero, nil, time.Now()).
+		AddRow(itemIDs[3], orderIDs[1], itemIDs[3], "Es", decimal.NewFromInt(5000), 1, decimal.NewFromInt(5000), json.RawMessage(`{}`), decimal.Zero, nil, time.Now()).
+		AddRow(itemIDs[4], orderIDs[2], itemIDs[4], "Kerupuk", decimal.NewFromInt(3000), 1, decimal.NewFromInt(3000), json.RawMessage(`{}`), decimal.Zero, nil, time.Now())
+	mDB.ExpectQuery("SELECT id, order_id, item_id, item_name").
+		WithArgs(orderIDs).
+		WillReturnRows(rows)
+
+	itemsByOrderID, err := r.GetItemsByOrderIDs(context.Background(), orderIDs)
+	require.NoError(t, err)
+	require.Len(t, itemsByOrderID, 3)
+	expected := map[uuid.UUID][]string{
+		orderIDs[0]: {"Nasi", "Ayam"},
+		orderIDs[1]: {"Sate", "Es"},
+		orderIDs[2]: {"Kerupuk"},
+	}
+	for orderID, names := range expected {
+		items := itemsByOrderID[orderID]
+		require.Len(t, items, len(names))
+		for i, name := range names {
+			assert.Equal(t, name, items[i].ItemName)
+			assert.Equal(t, orderID, items[i].OrderID)
+		}
+	}
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestRepo_GetItemsByOrderIDs_Empty(t *testing.T) {
+	r, mDB := newFoodRepo(t)
+	orderIDs := []uuid.UUID{uuid.MustParse("b4444444-4444-4444-4444-444444444444")}
+	mDB.ExpectQuery("SELECT id, order_id, item_id, item_name").
+		WithArgs(orderIDs).
+		WillReturnRows(pgxmock.NewRows(foodItemCols))
+
+	itemsByOrderID, err := r.GetItemsByOrderIDs(context.Background(), orderIDs)
+	assert.NoError(t, err)
+	assert.Empty(t, itemsByOrderID)
+
+	itemsByOrderID, err = r.GetItemsByOrderIDs(context.Background(), nil)
+	assert.NoError(t, err)
+	assert.Empty(t, itemsByOrderID)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 func TestRepo_GetFoodOrdersByCustomer(t *testing.T) {
 	r, mDB := newFoodRepo(t)
 	cols := foodOrderCols
@@ -697,4 +776,3 @@ func TestRepo_UpdateFoodDriverWorkingStatus(t *testing.T) {
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
-

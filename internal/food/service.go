@@ -210,6 +210,7 @@ type Repo interface {
 	UpdateFoodOrderStatus(ctx context.Context, q Querier, orderID uuid.UUID,
 		fromStatus, toStatus string, merchantStatus *string, isRefunded *bool) (bool, error)
 	GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*FoodOrderItem, error)
+	GetItemsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID][]*FoodOrderItem, error)
 	GetFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID, limit, offset int) ([]*FoodOrder, error)
 	CountFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID) (int, error)
 	GetFoodOrdersByMerchant(ctx context.Context, merchantID uuid.UUID, status string, limit, offset int) ([]*FoodOrder, error)
@@ -1869,6 +1870,23 @@ func (s *Service) GetMerchantOrders(ctx context.Context, userID, merchantID uuid
 	orders, err := s.repo.GetFoodOrdersByMerchant(ctx, merchantID, status, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, err
+	}
+	orderIDs := make([]uuid.UUID, 0, len(orders))
+	for _, order := range orders {
+		orderIDs = append(orderIDs, order.ID)
+	}
+	itemsByOrderID, err := s.repo.GetItemsByOrderIDs(ctx, orderIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, order := range orders {
+		items := itemsByOrderID[order.ID]
+		order.Items = make([]FoodOrderItem, 0, len(items))
+		for _, item := range items {
+			if item != nil {
+				order.Items = append(order.Items, *item)
+			}
+		}
 	}
 	return orders, total, nil
 }

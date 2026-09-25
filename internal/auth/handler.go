@@ -282,7 +282,7 @@ func validEmail(email string) bool {
 //
 //	customer  → CUSTOMER
 //	driver    → CUSTOMER + DRIVER (TD-128)
-//	merchant  → CUSTOMER + MERCHANT
+//	merchant  → CUSTOMER
 //
 // user_type lain (admin/system) tidak self-register — sudah ditolak di
 // allowedUserTypes.
@@ -291,7 +291,7 @@ func walletsForUserType(userType string) []string {
 	case "driver":
 		return []string{walletTypeCustomer, walletTypeDriver}
 	case "merchant":
-		return []string{walletTypeCustomer, walletTypeMerchant}
+		return []string{walletTypeCustomer}
 	default: // customer
 		return []string{walletTypeCustomer}
 	}

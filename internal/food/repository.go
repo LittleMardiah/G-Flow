@@ -261,14 +261,26 @@ func (r *Repository) GetWalletByUserAndType(ctx context.Context, userID uuid.UUI
 }
 
 // InsertMerchantWallet membuat wallet bertipe MERCHANT untuk user dalam
-// transaksi. Mengembalikan wallet yang baru dibuat.
+// transaksi. Mengembalikan wallet yang sudah ada bila insert bertabrakan.
 func (r *Repository) InsertMerchantWallet(ctx context.Context, q Querier, userID uuid.UUID) (*FoodWallet, error) {
-	var w FoodWallet
-	err := q.QueryRow(ctx, `
+	_, err := q.Exec(ctx, `
 		INSERT INTO wallets (user_id, wallet_type, balance, status)
 		VALUES ($1, 'MERCHANT', 0, 'ACTIVE')
-		RETURNING id, user_id, wallet_type, balance, status
+		ON CONFLICT (user_id, wallet_type) DO NOTHING
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	var w FoodWallet
+	err = q.QueryRow(ctx, `
+		SELECT id, user_id, wallet_type, balance, status
+		FROM wallets
+		WHERE user_id = $1 AND wallet_type = 'MERCHANT'
 	`, userID).Scan(&w.ID, &w.UserID, &w.Type, &w.Balance, &w.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWalletNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -619,6 +631,7 @@ type FoodOrder struct {
 	SettledAt           *time.Time       `json:"settled_at,omitempty"`
 	IsSettled           bool             `json:"is_settled"`
 	IsRefunded          bool             `json:"is_refunded"`
+	Items               []FoodOrderItem  `json:"items,omitempty"`
 }
 
 // FoodOrderItem adalah representasi baris tabel food_order_items.
@@ -818,6 +831,37 @@ func (r *Repository) GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) (
 		items = append(items, &it)
 	}
 	return items, rows.Err()
+}
+
+func (r *Repository) GetItemsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID][]*FoodOrderItem, error) {
+	itemsByOrderID := make(map[uuid.UUID][]*FoodOrderItem)
+	if len(orderIDs) == 0 {
+		return itemsByOrderID, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, order_id, item_id, item_name, item_price, quantity, subtotal,
+		       options, options_total, special_instructions, created_at
+		FROM food_order_items
+		WHERE order_id = ANY($1)
+		ORDER BY order_id ASC, created_at ASC
+	`, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var it FoodOrderItem
+		if err := rows.Scan(
+			&it.ID, &it.OrderID, &it.ItemID, &it.ItemName, &it.ItemPrice, &it.Quantity, &it.Subtotal,
+			&it.Options, &it.OptionsTotal, &it.SpecialInstructions, &it.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		itemsByOrderID[it.OrderID] = append(itemsByOrderID[it.OrderID], &it)
+	}
+	return itemsByOrderID, rows.Err()
 }
 
 // GetFoodOrdersByCustomer mengambil riwayat order milik customer (pagination,

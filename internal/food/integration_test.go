@@ -302,12 +302,34 @@ func registerMerchant(t *testing.T, e *testEnv, token string) uuid.UUID {
 
 	out := mustResp(t, w)
 	var data struct {
-		ID     uuid.UUID `json:"id"`
-		Status string    `json:"status"`
+		ID       uuid.UUID `json:"id"`
+		Status   string    `json:"status"`
+		WalletID uuid.UUID `json:"wallet_id"`
 	}
 	require.NoError(t, json.Unmarshal(out.Data, &data))
 	require.Equal(t, "PENDING_VERIFICATION", data.Status)
 	require.NotEqual(t, uuid.Nil, data.ID)
+	require.NotEqual(t, uuid.Nil, data.WalletID)
+
+	var walletID uuid.UUID
+	err := e.pool.QueryRow(context.Background(), `
+		SELECT id
+		FROM wallets
+		WHERE user_id = (SELECT user_id FROM food_merchants WHERE id = $1)
+		  AND wallet_type = 'MERCHANT'
+	`, data.ID).Scan(&walletID)
+	require.NoError(t, err)
+	require.Equal(t, data.WalletID, walletID)
+
+	var walletCount int
+	err = e.pool.QueryRow(context.Background(), `
+		SELECT COUNT(*)
+		FROM wallets
+		WHERE user_id = (SELECT user_id FROM food_merchants WHERE id = $1)
+		  AND wallet_type = 'MERCHANT'
+	`, data.ID).Scan(&walletCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, walletCount)
 	return data.ID
 }
 
@@ -416,11 +438,11 @@ func (e *testEnv) assignFoodDriver(t *testing.T, ctx context.Context, orderID, d
 	}
 }
 
-// newDriver mendaftarkan driver + wallet DRIVER dengan saldo awal.
-func newDriver(t *testing.T, e *testEnv, initialBalance int) (string, uuid.UUID, uuid.UUID) {
+// newDriver mendaftarkan driver dan mengambil wallet DRIVER dari auth.
+func newDriver(t *testing.T, e *testEnv) (string, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	token, driverID := registerAndLogin(t, e.r, "driver")
-	walletID := e.createWallet(t, context.Background(), driverID, "DRIVER", decimal.NewFromInt(int64(initialBalance)))
+	walletID := e.getWalletID(t, context.Background(), driverID, "DRIVER")
 	return token, driverID, walletID
 }
 
@@ -468,7 +490,7 @@ func TestIntegrationFood_TC_FOOD_001_E2EWalletSettlement(t *testing.T) {
 	itemID := createItem(t, e, merchToken, merchantID, menuID, itemPrice)
 
 	// Driver + wallet DRIVER.
-	driverToken, driverID, driverWalletID := newDriver(t, e, 0)
+	driverToken, driverID, driverWalletID := newDriver(t, e)
 
 	// Order WALLET → CONFIRMED, escrow dipegang.
 	orderID, status := createFoodOrder(t, e, custToken, merchantID, itemID, "WALLET")
@@ -561,7 +583,7 @@ func TestIntegrationFood_TC_FOOD_002_CashDriverSuspended(t *testing.T) {
 	menuID := createMenu(t, e, merchToken, merchantID)
 	itemID := createItem(t, e, merchToken, merchantID, menuID, itemPrice)
 
-	driverToken, driverID, driverWalletID := newDriver(t, e, 0)
+	driverToken, driverID, driverWalletID := newDriver(t, e)
 
 	// CASH order → CREATED (tanpa escrow).
 	orderID, status := createFoodOrder(t, e, custToken, merchantID, itemID, "CASH")
@@ -665,7 +687,7 @@ func TestIntegrationFood_TC_FOOD_004_DriverEmergencyCancel(t *testing.T) {
 	menuID := createMenu(t, e, merchToken, merchantID)
 	itemID := createItem(t, e, merchToken, merchantID, menuID, 25000)
 
-	driverToken, driverID, driverWalletID := newDriver(t, e, 0)
+	driverToken, driverID, driverWalletID := newDriver(t, e)
 
 	orderID, _ := createFoodOrder(t, e, custToken, merchantID, itemID, "WALLET")
 

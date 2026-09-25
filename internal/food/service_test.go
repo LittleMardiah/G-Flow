@@ -15,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/g-flow/g-flow/internal/wallet"
 )
@@ -216,6 +217,14 @@ func (m *mockRepo) GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*FoodOrderItem), args.Error(1)
+}
+
+func (m *mockRepo) GetItemsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID][]*FoodOrderItem, error) {
+	args := m.Called(ctx, orderIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uuid.UUID][]*FoodOrderItem), args.Error(1)
 }
 
 func (m *mockRepo) GetFoodOrdersByCustomer(ctx context.Context, customerID uuid.UUID, limit, offset int) ([]*FoodOrder, error) {
@@ -1450,11 +1459,48 @@ func TestGetMerchantOrders_OwnerOK(t *testing.T) {
 	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "WAITING").Return(1, nil)
 	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "WAITING", 20, 0).
 		Return([]*FoodOrder{fFoodOrder(foodStatusCreated, PaymentMethodWallet, nil)}, nil)
+	repo.On("GetItemsByOrderIDs", mock.Anything, []uuid.UUID{fOrderID}).Return(map[uuid.UUID][]*FoodOrderItem{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
 	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "WAITING", 1, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Len(t, orders, 1)
+	repo.AssertExpectations(t)
+}
+
+func TestService_GetMerchantOrders_IncludesItems(t *testing.T) {
+	repo := new(mockRepo)
+	order1ID := uuid.MustParse("d1111111-1111-1111-1111-111111111111")
+	order2ID := uuid.MustParse("d2222222-2222-2222-2222-222222222222")
+	order1 := fFoodOrder(foodStatusCreated, PaymentMethodWallet, nil)
+	order2 := fFoodOrder(foodStatusCreated, PaymentMethodWallet, nil)
+	order1.ID = order1ID
+	order2.ID = order2ID
+	item1 := &FoodOrderItem{
+		ID: uuid.MustParse("e1111111-1111-1111-1111-111111111111"), OrderID: order1ID,
+		ItemID: fItemID, ItemName: "Nasi", ItemPrice: decimal.NewFromInt(50000), Quantity: 1, Subtotal: decimal.NewFromInt(50000),
+	}
+	item2 := &FoodOrderItem{
+		ID: uuid.MustParse("e2222222-2222-2222-2222-222222222222"), OrderID: order1ID,
+		ItemID: uuid.MustParse("eeeeeeee-3333-3333-3333-333333333333"), ItemName: "Ayam", ItemPrice: decimal.NewFromInt(75000), Quantity: 1, Subtotal: decimal.NewFromInt(75000),
+	}
+	item3 := &FoodOrderItem{
+		ID: uuid.MustParse("e3333333-3333-3333-3333-333333333333"), OrderID: order2ID,
+		ItemID: uuid.MustParse("eeeeeeee-4444-4444-4444-444444444444"), ItemName: "Sate", ItemPrice: decimal.NewFromInt(10000), Quantity: 2, Subtotal: decimal.NewFromInt(20000),
+	}
+	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(fMerchant(), nil)
+	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "WAITING").Return(2, nil)
+	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "WAITING", 20, 0).
+		Return([]*FoodOrder{order1, order2}, nil)
+	repo.On("GetItemsByOrderIDs", mock.Anything, []uuid.UUID{order1ID, order2ID}).
+		Return(map[uuid.UUID][]*FoodOrderItem{order1ID: {item1, item2}, order2ID: {item3}}, nil)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "WAITING", 1, 20)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, orders, 2)
+	assert.Equal(t, []FoodOrderItem{*item1, *item2}, orders[0].Items)
+	assert.Equal(t, []FoodOrderItem{*item3}, orders[1].Items)
 	repo.AssertExpectations(t)
 }
 
@@ -1480,6 +1526,7 @@ func TestGetMerchantOrders_Empty(t *testing.T) {
 	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(fMerchant(), nil)
 	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "").Return(0, nil)
 	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "", 20, 0).Return([]*FoodOrder{}, nil)
+	repo.On("GetItemsByOrderIDs", mock.Anything, []uuid.UUID{}).Return(map[uuid.UUID][]*FoodOrderItem{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
 	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "", 1, 20)
 	assert.NoError(t, err)
@@ -1492,6 +1539,7 @@ func TestGetMerchantOrders_Paging(t *testing.T) {
 	repo.On("GetMerchantByUserID", mock.Anything, fCustID).Return(fMerchant(), nil)
 	repo.On("CountFoodOrdersByMerchant", mock.Anything, fMerchID, "DELIVERED").Return(1, nil)
 	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "DELIVERED", 20, 40).Return([]*FoodOrder{}, nil)
+	repo.On("GetItemsByOrderIDs", mock.Anything, []uuid.UUID{}).Return(map[uuid.UUID][]*FoodOrderItem{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
 	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "DELIVERED", 3, 0)
 	assert.NoError(t, err)

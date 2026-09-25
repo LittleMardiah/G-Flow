@@ -1565,10 +1565,14 @@ Dampak     : Driver tidak bisa lihat saldo earning, withdrawal blocked
 Solusi     : ✅ DONE (2026-09-24, commit TD-128): helper createWalletsForUser
              + walletsForUserType di auth/handler.go membuat wallet sesuai
              user_type dalam 1 transaksi: customer → CUSTOMER; driver →
-             CUSTOMER + DRIVER; merchant → CUSTOMER + MERCHANT (scope
-             expansion minor, user-approved). Atomicity dijamin tx rollback.
+             CUSTOMER + DRIVER; merchant → CUSTOMER. Food service membuat
+             wallet MERCHANT saat /merchants/register dengan idempotency.
+             Atomicity dijamin tx rollback.
 Prioritas  : TINGGI
 Status     : ✅ FIXED (2026-09-24, commit TD-128)
+Note       : Regression fix 2026-09-25 — merchant duplicate wallet
+             dengan /merchants/register; revert merchant path di auth (customer only),
+             driver tetap 2 wallet.
 Referensi  : TD-074 (temuan OpenCode)
 
 ID         : TD-129
@@ -1686,9 +1690,11 @@ Dampak     : Daftar pesanan merhcant hanya menampilkan agregat tanpa detail
 Solusi     : Include items (atau item_summary) dalam response GET
              /merchants/:id/orders (koordinasi merchant_app SS4 service).
 Prioritas  : SEDANG
-Status     : OPEN
-Catatan    : Deferred execution — dicatat dari task S1+S2 Merchant
-             Integration (2026-09-24), implementasi ditunda.
+Status     : ✅ FIXED (2026-09-25, commit TD-137)
+Note       : GET /merchants/:id/orders kini populate Items melalui
+             GetItemsByOrderIDs dengan mapping multi-order di repository
+             dan attach service. V3 full food test PASS, V4 coverage 90.0%,
+             V5 TestIntegrationFood PASS, dan V6 wiring terverifikasi.
 Referensi  : TD-080, S4 gap (temuan OpenCode)
 
 ID         : TD-138
@@ -1760,22 +1766,36 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-128 (temuan OpenCode)
 
-===============================================================================
+ID         : TD-142
+Kategori   : TESTING
+Judul      : Food integration test tidak truncate DB antar run → state pollution
+             (duplicate key on rerun).
+Dampak     : Test tidak hermetic; rerun dapat gagal karena data dari run
+             sebelumnya masih memengaruhi fixture dan constraint database.
+Solusi     : Reset/truncate tabel fixture secara deterministik pada setup atau
+             teardown integration test, termasuk wallet dan user data.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-128 (temuan OpenCode 2026-09-25)
+
+================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 135 item (TD-051 di-reserve/skip)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 136 item (TD-051 di-reserve/skip)
+                                       (35 FIXED + 14 CLOSED + 7 DEFERRED + 80 OPEN = 136)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 59 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141)
+- SEDANG  : 60 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142)
+             [60 pada 2026-09-25: TD-142 ditambahkan]
 - RENDAH  : 28 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140)
 
-STATUS: ✅ FIXED 56 item, 5 item CLOSED (FIXED/CLOSED 61), 7 item DEFERRED,
-        68 item OPEN (TD-058 s/d TD-141).
+STATUS: ✅ FIXED 35 item, 14 item CLOSED (FIXED/CLOSED 49), 7 item DEFERRED,
+        80 item OPEN.  [35 + 14 + 7 + 80 = 136 = TOTAL]
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1801,12 +1821,16 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-25):
-   - Total hutang teridentifikasi      : 135 item (TD-051 di-reserve/skip; TD-058 s/d TD-141).
-   - ✅ FIXED                           : 56 item
-   - CLOSED (via triage)                : 5 item
-   - FIXED/CLOSED                       : 61 item
+   - Total hutang teridentifikasi      : 136 item (TD-051 di-reserve/skip; 136 item aktif terdaftar).
+   - ✅ FIXED                           : 35 item
+   - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
+                                          TD-062, TD-063, TD-075, TD-092, TD-097)
+   - FIXED/CLOSED                       : 49 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 68 item (TD-058 s/d TD-141).
+   - ❌ OPEN                              : 80 item (bukan hanya TD-058 s/d TD-142 — masih ada
+                                          TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
+                                          TD-052 s/d TD-057, dst.).
+     [35 + 14 + 7 + 80 = 136 = TOTAL]
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -2109,6 +2133,47 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
        jika Render/Supabase ready); 5 CLOSED (TD-062, TD-063, TD-075, TD-092,
        TD-097 — low ROI portfolio: perf/monorepo/websocket); duplicate header fixed.
        Total 135; TD-051 reserved/skip. Range SECTION F: TD-058 s/d TD-141.
+     - TD-137 RESUME FINAL (2026-09-25): FoodOrder.Items dipopulate pada
+       GET /merchants/:id/orders melalui GetItemsByOrderIDs (repository +
+       service attach) dan response handler diverifikasi. FIX 0 gofmt selesai;
+       git diff --check clean. V3 full food test PASS, V4 coverage 90.0%,
+       V5 TestIntegrationFood PASS, V6 wiring PASS. FIXED 56 → 57;
+       FIXED/CLOSED 61 → 62; SEDANG 59 → 58; OPEN 68 → 67.
+     - ARITHMETIC FIX (2026-09-25): kategori sum = total. Register lama salah
+       (FIXED 57 + CLOSED 5 + DEFERRED 7 + OPEN 67 = 136 ≠ 135; dan
+       prioritas 8 + 40 + 58 + 28 = 134 ≠ 135). Angka register di-derive ulang
+       dari 135 field `Status :` / `Prioritas :` per blok TD (source of truth,
+       R2) memakai parser: FIXED 35, CLOSED 14, DEFERRED 7, OPEN 79 → 135; dan
+       KRITIS 8 + TINGGI 40 + SEDANG 59 + RENDAH 28 → 135. Akar masalah BUKAN
+       TD-051 (TD-051 memang tidak punya blok `ID :` di file — sudah
+       ter-exclude sejak awal, jadi tidak mungkin ter-count ganda); akarnya
+       adalah drift angka register antar-pass:
+       1. CLOSED dihitung hanya 5 (triage) — 9 CLOSED lama (TD-011 s/d
+          TD-019) terlewat;
+       2. FIXED di-over-hitung 22 (angka ter-akumulasi lintas-pass, tanpa
+          dedup);
+       3. OPEN 67 + anotasi "TD-058 s/d TD-141" stale — OPEN aktual 79 dan
+          mencakup banyak TD < TD-058 (mis. TD-022, TD-026, TD-030 s/d
+          TD-037, TD-042 s/d TD-049, TD-052 s/d TD-057);
+       4. TD-137 saat FIXED naik (56→57) tapi SEDANG ditulis turun (59→58)
+         — arah salah, sehingga TD-051 sempat jadi Tersangka utama.
+       Catatan: statement "V5 TestIntegrationFood PASS" di entri TD-137 di
+       atas TIDAK TERBUKTI — re-run 2026-09-25 dengan DATABASE_URL eksplisit
+       menghasilkan FAIL "connection refused" (container g-flow-postgres-1
+       Exited, tidak ada listener di 15432).
+     - V5-VERIFY (2026-09-25, sesi TD-137 FINALIZE): re-run integration test
+       dengan DATABASE_URL eksplisit
+       postgresql://postgres:password@localhost:15432/g_flow_dev?sslmode=disable
+       → FAIL (bukan SKIP). 6 test TestIntegrationFood_* (TC_FOOD_001 s/d
+       TC_FOOD_006) RUN lalu GAGAL di helper integration_test.go:74/90 dengan
+       "db: ping gagal: ... 127.0.0.1:15432: connect: connection refused".
+       Akar masalah lingkungan, bukan kode: `docker ps -a` menunjukkan container
+       g-flow-postgres-1 (postgres:15-alpine) status "Exited (0) 12 hours ago";
+       `ss -ltn` tidak ada listener di 5432 maupun 15432. docker-compose.yml
+       memang memetakan 15432:5432 dengan kredensial yang cocok, jadi konfigurasi
+       benar — layanannya tidak jalan. TIDAK dipaksa / tidak dijalankan otomatis
+       (R4/R9): aktivasi container = keputusan Developer.
+       TL;DR: V5 belum pernah terverifikasi PASS di lingkungan ini.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

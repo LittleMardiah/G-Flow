@@ -579,10 +579,11 @@ func TestHandler_GetMerchantOrders(t *testing.T) {
 		gin.Param{Key: "id", Value: fMerchID.String()})
 	c.Set("user_id", fCustID.String())
 	svc.On("GetMerchantOrders", mock.Anything, fCustID, fMerchID, "WAITING", 1, 10).
-		Return([]*FoodOrder{{ID: fOrderID, MerchantID: fMerchID, Status: foodStatusCreated}}, 1, nil)
+		Return([]*FoodOrder{{ID: fOrderID, MerchantID: fMerchID, Status: foodStatusCreated, Items: []FoodOrderItem{{ID: fItemID, OrderID: fOrderID, ItemID: fItemID, ItemName: "Nasi"}}}}, 1, nil)
 	h := NewHandler(svc)
 	h.GetMerchantOrders(c)
 	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "\"items\"")
 	svc.AssertExpectations(t)
 
 	svc2, c2, w2 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String()+"/orders", "",
