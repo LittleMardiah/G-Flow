@@ -36,6 +36,9 @@ type mockRepo struct {
 	activeRideCall bool
 	activeFoodCall bool
 	activeSendCall bool
+	profile        *DriverProfile
+	profileErr     error
+	profileCall    bool
 }
 
 func (m *mockRepo) GetDriverLocation(_ context.Context, _ uuid.UUID) (float64, float64, error) {
@@ -76,6 +79,11 @@ func (m *mockRepo) GetActiveFoodOrders(_ context.Context, _ uuid.UUID) ([]Active
 func (m *mockRepo) GetActiveSendOrders(_ context.Context, _ uuid.UUID) ([]ActiveSendOrder, error) {
 	m.activeSendCall = true
 	return m.activeSends, m.activeOrderErr
+}
+
+func (m *mockRepo) GetDriverProfile(_ context.Context, _ uuid.UUID) (*DriverProfile, error) {
+	m.profileCall = true
+	return m.profile, m.profileErr
 }
 
 // mockRedis adalah stub RedisClient untuk unit test service.
@@ -325,6 +333,17 @@ func TestService_GetActiveOrders_Error(t *testing.T) {
 
 	_, err := svc.GetActiveOrders(context.Background(), driverID)
 	require.Error(t, err)
+}
+
+func TestService_GetDriverProfile(t *testing.T) {
+	want := &DriverProfile{DriverID: driverID, Name: "Budi"}
+	repo := &mockRepo{profile: want}
+	svc := NewService(repo, nil)
+
+	got, err := svc.GetDriverProfile(context.Background(), driverID)
+	require.NoError(t, err)
+	assert.Same(t, want, got)
+	assert.True(t, repo.profileCall)
 }
 
 func ptrString(s string) *string { return &s }

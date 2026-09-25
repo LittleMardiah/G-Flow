@@ -60,6 +60,7 @@ type Repo interface {
 	GetActiveRideOrders(ctx context.Context, driverID uuid.UUID) ([]ActiveRideOrder, error)
 	GetActiveFoodOrders(ctx context.Context, driverID uuid.UUID) ([]ActiveFoodOrder, error)
 	GetActiveSendOrders(ctx context.Context, driverID uuid.UUID) ([]ActiveSendOrder, error)
+	GetDriverProfile(ctx context.Context, driverID uuid.UUID) (*DriverProfile, error)
 }
 
 // RedisClient adalah subset operasi Redis yang dipakai Service untuk membaca
@@ -105,19 +106,19 @@ type AvailableOrdersResult struct {
 // mengikuti konvensi response existing: ride = estimated_fare, food =
 // total_amount/delivery_fee, send = total_fare (API CONTRACT / DTO detail).
 type DriverActiveOrder struct {
-	Type      string    `json:"type"`
-	OrderID   uuid.UUID `json:"order_id"`
-	Status    string    `json:"status"`
-	DriverID  uuid.UUID `json:"driver_id,omitempty"`
+	Type     string    `json:"type"`
+	OrderID  uuid.UUID `json:"order_id"`
+	Status   string    `json:"status"`
+	DriverID uuid.UUID `json:"driver_id,omitempty"`
 	// Ride.
-	PickupAddress string          `json:"pickup_address,omitempty"`
-	PickupLat     float64         `json:"pickup_lat,omitempty"`
-	PickupLng     float64         `json:"pickup_lng,omitempty"`
-	DropoffAddress string         `json:"dropoff_address,omitempty"`
-	DropoffLat    float64         `json:"dropoff_lat,omitempty"`
-	DropoffLng    float64         `json:"dropoff_lng,omitempty"`
-	DistanceKm    float64         `json:"distance_km,omitempty"`
-	EstimatedFare decimal.Decimal `json:"estimated_fare,omitempty"`
+	PickupAddress  string          `json:"pickup_address,omitempty"`
+	PickupLat      float64         `json:"pickup_lat,omitempty"`
+	PickupLng      float64         `json:"pickup_lng,omitempty"`
+	DropoffAddress string          `json:"dropoff_address,omitempty"`
+	DropoffLat     float64         `json:"dropoff_lat,omitempty"`
+	DropoffLng     float64         `json:"dropoff_lng,omitempty"`
+	DistanceKm     float64         `json:"distance_km,omitempty"`
+	EstimatedFare  decimal.Decimal `json:"estimated_fare,omitempty"`
 	// Food.
 	MerchantName    string          `json:"merchant_name,omitempty"`
 	MerchantAddress string          `json:"merchant_address,omitempty"`
@@ -140,6 +141,22 @@ type DriverActiveOrder struct {
 // aktif milik driver (ride + food + send) yang harus dikerjakan.
 type ActiveOrdersResult struct {
 	Orders []DriverActiveOrder
+}
+
+type DriverProfile struct {
+	DriverID          uuid.UUID
+	Name              string
+	Email             string
+	Phone             *string
+	VehicleType       *string
+	VehiclePlate      *string
+	LicenseNumber     *string
+	LicenseExpiry     *string
+	Status            string
+	RatingAvg         float64
+	TotalRides        int64
+	BankName          *string
+	BankAccountNumber *string
 }
 
 // Service adalah business logic modul driver (available orders).
@@ -235,6 +252,10 @@ func (s *Service) GetActiveOrders(ctx context.Context, driverID uuid.UUID) (*Act
 		res.Orders = append(res.Orders, fromActiveSend(o))
 	}
 	return res, nil
+}
+
+func (s *Service) GetDriverProfile(ctx context.Context, driverID uuid.UUID) (*DriverProfile, error) {
+	return s.repo.GetDriverProfile(ctx, driverID)
 }
 
 // driverLocation membaca lokasi driver: Redis L1 (hash lat/lng) → jika tidak
@@ -377,17 +398,17 @@ func fromActiveFood(o ActiveFoodOrder) DriverActiveOrder {
 // fromActiveSend memetakan ActiveSendOrder ke DTO order aktif (TD-077 A2).
 func fromActiveSend(o ActiveSendOrder) DriverActiveOrder {
 	order := DriverActiveOrder{
-		Type:           OrderTypeSend,
-		OrderID:        o.ID,
-		Status:         o.Status,
-		DriverID:       o.DriverID,
-		PickupAddress:  o.PickupAddress,
-		PickupLat:      o.PickupLat,
-		PickupLng:      o.PickupLng,
-		DistanceKm:     o.DistanceKm,
-		TotalFare:      o.TotalFare,
-		PaymentMethod:  o.PaymentMethod,
-		CreatedAt:      o.CreatedAt,
+		Type:          OrderTypeSend,
+		OrderID:       o.ID,
+		Status:        o.Status,
+		DriverID:      o.DriverID,
+		PickupAddress: o.PickupAddress,
+		PickupLat:     o.PickupLat,
+		PickupLng:     o.PickupLng,
+		DistanceKm:    o.DistanceKm,
+		TotalFare:     o.TotalFare,
+		PaymentMethod: o.PaymentMethod,
+		CreatedAt:     o.CreatedAt,
 	}
 	if o.FirstStopAddress != nil {
 		order.FirstStopAddress = *o.FirstStopAddress

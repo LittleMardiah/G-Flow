@@ -14,12 +14,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
 // Error definitions tingkat package.
 var (
 	ErrDriverLocationNotFound = errors.New("driver location not found")
+	ErrDriverNotFound         = errors.New("driver not found")
 	ErrNoLocation             = errors.New("driver location unavailable")
 )
 
@@ -146,6 +148,109 @@ type Repository struct {
 // NewRepository membuat Repository baru dengan koneksi database.
 func NewRepository(db RepoDB) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) GetDriverProfile(ctx context.Context, driverID uuid.UUID) (*DriverProfile, error) {
+	profile, err := r.getDriverProfile(ctx, driverID, true)
+	if err == nil || !isUndefinedTable(err) {
+		return profile, err
+	}
+	return r.getDriverProfile(ctx, driverID, false)
+}
+
+func (r *Repository) getDriverProfile(ctx context.Context, driverID uuid.UUID, includeRatings bool) (*DriverProfile, error) {
+	ratingColumns := "0::float8 AS rating_avg, 0::int8 AS total_rides"
+	if includeRatings {
+		ratingColumns = `
+			COALESCE((
+				SELECT AVG(rr.stars)::float8
+				FROM ratings_reviews rr
+				WHERE rr.ratee_id = u.id
+				  AND rr.rating_type IN ('RIDE_DRIVER', 'FOOD_DELIVERY', 'SEND_DRIVER')
+			), 0)::float8 AS rating_avg,
+			COALESCE((
+				SELECT COUNT(*)::int8
+				FROM ratings_reviews rr
+				WHERE rr.ratee_id = u.id
+				  AND rr.rating_type IN ('RIDE_DRIVER', 'FOOD_DELIVERY', 'SEND_DRIVER')
+			), 0)::int8 AS total_rides`
+	}
+
+	query := `
+		SELECT u.id, u.name, u.email, COALESCE(u.phone, '') AS phone,
+		       COALESCE(u.vehicle_type, '') AS vehicle_type,
+		       COALESCE(u.vehicle_plate, '') AS vehicle_plate,
+		       COALESCE(u.license_number, '') AS license_number,
+		       COALESCE(u.license_expiry::text, '') AS license_expiry,
+		       COALESCE(u.status, '') AS status,
+		       COALESCE(u.bank_name, '') AS bank_name,
+		       COALESCE(u.bank_account_number, '') AS bank_account_number,
+		       ` + ratingColumns + `
+		FROM users u
+		WHERE u.id = $1
+		  AND u.user_type = 'driver'
+		  AND u.deleted_at IS NULL
+	`
+
+	var (
+		driverIDValue     uuid.UUID
+		name              string
+		email             string
+		phone             string
+		vehicleType       string
+		vehiclePlate      string
+		licenseNumber     string
+		licenseExpiry     string
+		status            string
+		bankName          string
+		bankAccountNumber string
+		profile           DriverProfile
+	)
+	err := r.db.QueryRow(ctx, query, driverID).Scan(
+		&driverIDValue,
+		&name,
+		&email,
+		&phone,
+		&vehicleType,
+		&vehiclePlate,
+		&licenseNumber,
+		&licenseExpiry,
+		&status,
+		&bankName,
+		&bankAccountNumber,
+		&profile.RatingAvg,
+		&profile.TotalRides,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrDriverNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	profile.DriverID = driverIDValue
+	profile.Name = name
+	profile.Email = email
+	profile.Phone = optionalString(phone)
+	profile.VehicleType = optionalString(vehicleType)
+	profile.VehiclePlate = optionalString(vehiclePlate)
+	profile.LicenseNumber = optionalString(licenseNumber)
+	profile.LicenseExpiry = optionalString(licenseExpiry)
+	profile.Status = status
+	profile.BankName = optionalString(bankName)
+	profile.BankAccountNumber = optionalString(bankAccountNumber)
+	return &profile, nil
+}
+
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // GetDriverLocation membaca lokasi driver terbaru dari tabel driver_locations.

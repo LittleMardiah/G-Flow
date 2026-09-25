@@ -34,8 +34,7 @@ class _FakeStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      store[key];
+  }) async => store[key];
 
   @override
   Future<void> delete({
@@ -59,7 +58,9 @@ Widget _build(FlutterSecureStorage storage) {
 }
 
 void main() {
-  testWidgets('render profil dengan data ter-register di perangkat', (tester) async {
+  testWidgets('render profil dengan data ter-register di perangkat', (
+    tester,
+  ) async {
     final storage = _FakeStorage({
       kDriverEmailKey: 'driver@mail.com',
       kDriverNameKey: 'Budi Driver',
@@ -81,8 +82,11 @@ void main() {
     expect(find.text('B 1234 X'), findsOneWidget);
     expect(find.text('DRIVER AKTIF'), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Logout'), 200,
-        scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(
+      find.text('Logout'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Logout'), findsOneWidget);
   });
 
@@ -94,10 +98,13 @@ void main() {
 
     expect(find.text('Driver G-Flow'), findsOneWidget);
     expect(find.text('—'), findsWidgets);
-    expect(find.textContaining('TD-127'), findsWidgets);
+    expect(find.text('Data kendaraan belum tersedia.'), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Logout'), 200,
-        scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(
+      find.text('Logout'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Logout'), findsOneWidget);
   });
 }

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -20,11 +21,28 @@ import (
 type DriverService interface {
 	GetAvailableOrders(ctx context.Context, driverID uuid.UUID) (*AvailableOrdersResult, error)
 	GetActiveOrders(ctx context.Context, driverID uuid.UUID) (*ActiveOrdersResult, error)
+	GetDriverProfile(ctx context.Context, driverID uuid.UUID) (*DriverProfile, error)
 }
 
 // Handler menerima request HTTP dan memanggil Service.
 type Handler struct {
 	svc DriverService
+}
+
+type DriverProfileResponse struct {
+	DriverID          uuid.UUID `json:"driver_id"`
+	Name              string    `json:"name"`
+	Email             string    `json:"email"`
+	Phone             *string   `json:"phone"`
+	VehicleType       *string   `json:"vehicle_type"`
+	VehiclePlate      *string   `json:"vehicle_plate"`
+	LicenseNumber     *string   `json:"license_number"`
+	LicenseExpiry     *string   `json:"license_expiry"`
+	Status            string    `json:"status"`
+	RatingAvg         float64   `json:"rating_avg"`
+	TotalRides        int64     `json:"total_rides"`
+	BankName          *string   `json:"bank_name"`
+	BankAccountMasked *string   `json:"bank_account_masked"`
 }
 
 // NewHandler membuat Handler baru dengan dependency injection.
@@ -107,9 +125,73 @@ func (h *Handler) GetDriverOrders(c *gin.Context) {
 	})
 }
 
+func (h *Handler) GetDriverMe(c *gin.Context) {
+	driverIDStr := c.GetString("user_id")
+	if driverIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+	driverID, err := uuid.Parse(driverIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	profile, err := h.svc.GetDriverProfile(c.Request.Context(), driverID)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+	if profile == nil {
+		writeError(c, http.StatusNotFound, "DRIVER_NOT_FOUND", ErrDriverNotFound.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    toDriverProfileResponse(profile),
+	})
+}
+
+func toDriverProfileResponse(profile *DriverProfile) DriverProfileResponse {
+	return DriverProfileResponse{
+		DriverID:          profile.DriverID,
+		Name:              profile.Name,
+		Email:             profile.Email,
+		Phone:             profile.Phone,
+		VehicleType:       profile.VehicleType,
+		VehiclePlate:      profile.VehiclePlate,
+		LicenseNumber:     profile.LicenseNumber,
+		LicenseExpiry:     profile.LicenseExpiry,
+		Status:            profile.Status,
+		RatingAvg:         profile.RatingAvg,
+		TotalRides:        profile.TotalRides,
+		BankName:          profile.BankName,
+		BankAccountMasked: maskBankAccount(profile.BankAccountNumber),
+	}
+}
+
+func maskBankAccount(account *string) *string {
+	if account == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*account)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) <= 4 {
+		masked := "****"
+		return &masked
+	}
+	masked := "****" + trimmed[len(trimmed)-4:]
+	return &masked
+}
+
 // statusForError memetakan error service ke status code HTTP.
 func statusForError(err error) int {
 	switch {
+	case errors.Is(err, ErrDriverNotFound):
+		return http.StatusNotFound
 	case errors.Is(err, ErrDriverLocationUnavailable):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrNoLocation), errors.Is(err, ErrInvalidCoordinates):
@@ -122,6 +204,8 @@ func statusForError(err error) int {
 // codeForError memetakan error service ke error code.
 func codeForError(err error) string {
 	switch {
+	case errors.Is(err, ErrDriverNotFound):
+		return "DRIVER_NOT_FOUND"
 	case errors.Is(err, ErrDriverLocationUnavailable):
 		return "DRIVER_LOCATION_UNAVAILABLE"
 	case errors.Is(err, ErrNoLocation):

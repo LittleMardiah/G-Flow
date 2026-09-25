@@ -5,19 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../../config/router.dart';
 import '../../providers/auth_provider.dart';
 
-/// Driver Profile Screen (ROADMAP 3.3 — ditutup oleh TD-074).
-///
-/// Backend BELUM punya endpoint profil driver (TD-127); login/register hanya
-/// mengembalikan {access_token, user_id, user_type}. Karena itu nama, email,
-/// phone, dan vehicle diambil dari data yang persist LOKAL saat login
-/// (email) / register (nama, phone, vehicle) di perangkat ini. Rating &
-/// total rides belum tersedia → placeholder '—'. Status driver diturunkan
-/// dari alur login: backend menolak akun non-ACTIVE (handler.go:102).
 class DriverProfileScreen extends ConsumerStatefulWidget {
   const DriverProfileScreen({super.key});
 
   @override
-  ConsumerState<DriverProfileScreen> createState() => _DriverProfileScreenState();
+  ConsumerState<DriverProfileScreen> createState() =>
+      _DriverProfileScreenState();
 }
 
 class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
@@ -41,8 +34,14 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
         title: const Text('Logout'),
         content: const Text('Yakin ingin keluar dari akun driver?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Batal')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Logout')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Logout'),
+          ),
         ],
       ),
     );
@@ -54,7 +53,9 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final profile = ref.watch(driverProfileLocalProvider).value;
+    final profile = ref.watch(driverProfileProvider).value;
+    final driverId = _driverId ?? profile?.driverId;
+    final driverIdText = driverId;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Profil Driver')),
@@ -64,7 +65,7 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
           _HeaderCard(
             name: profile?.name,
             email: profile?.email,
-            driverId: _driverId,
+            driverId: driverId,
           ),
           const SizedBox(height: 16),
           _SectionCard(
@@ -86,14 +87,18 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
               _InfoRow(
                 icon: Icons.badge_outlined,
                 label: 'ID Driver',
-                value: _driverId == null ? '—' : _shortId(_driverId!),
+                value: driverIdText == null || driverIdText.isEmpty
+                    ? '—'
+                    : _shortId(driverIdText),
               ),
               const Divider(height: 1),
               _InfoRow(
                 icon: Icons.verified_outlined,
                 label: 'Status',
-                value: 'ACTIVE',
-                trailing: const StatusChip(),
+                value: profile?.status.isNotEmpty == true
+                    ? profile!.status
+                    : '—',
+                trailing: StatusChip(status: _statusLabel(profile?.status)),
               ),
             ],
           ),
@@ -101,8 +106,8 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
           _SectionCard(
             title: 'Kendaraan',
             caption: profile?.hasVehicleInfo == true
-                ? 'Data dari pendaftaran di perangkat ini.'
-                : 'Belum tersedia: backend belum punya endpoint profil driver (TD-127).',
+                ? 'Data profil driver.'
+                : 'Data kendaraan belum tersedia.',
             children: [
               _InfoRow(
                 icon: Icons.directions_bike_outlined,
@@ -120,18 +125,18 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
           const SizedBox(height: 16),
           _SectionCard(
             title: 'Performa',
-            caption: 'Rating & total rides belum tersedia — perlu endpoint profil (TD-127).',
+            caption: 'Data performa dari server.',
             children: [
-              const _InfoRow(
+              _InfoRow(
                 icon: Icons.star_border,
                 label: 'Rating',
-                value: '—',
+                value: _formatRating(profile?.ratingAvg ?? 0),
               ),
               const Divider(height: 1),
-              const _InfoRow(
+              _InfoRow(
                 icon: Icons.route_outlined,
                 label: 'Total rides',
-                value: '—',
+                value: _formatTotalRides(profile?.totalRides ?? 0),
               ),
             ],
           ),
@@ -158,7 +163,17 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
   }
 
   static String _orDash(String? v) => (v == null || v.trim().isEmpty) ? '—' : v;
-  static String _shortId(String id) => id.length > 8 ? '${id.substring(0, 8).toUpperCase()}…' : id.toUpperCase();
+  static String _formatRating(double value) =>
+      value <= 0 ? '—' : value.toStringAsFixed(1);
+  static String _formatTotalRides(int value) => value <= 0 ? '—' : '$value';
+  static String _statusLabel(String? status) {
+    if (status == null || status.isEmpty) return 'DRIVER AKTIF';
+    if (status.toUpperCase() == 'ACTIVE') return 'DRIVER AKTIF';
+    return status;
+  }
+
+  static String _shortId(String id) =>
+      id.length > 8 ? '${id.substring(0, 8).toUpperCase()}…' : id.toUpperCase();
 
   /// Mask nomor telepon: hanya 4 digit awal + 3 digit akhir terlihat (PII).
   static String _maskPhone(String? v) {
@@ -169,7 +184,9 @@ class _DriverProfileScreenState extends ConsumerState<DriverProfileScreen> {
 }
 
 class StatusChip extends StatelessWidget {
-  const StatusChip({super.key});
+  const StatusChip({super.key, this.status = 'DRIVER AKTIF'});
+
+  final String status;
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +198,7 @@ class StatusChip extends StatelessWidget {
         border: Border.all(color: Colors.green.shade300),
       ),
       child: Text(
-        'DRIVER AKTIF',
+        status,
         style: TextStyle(
           color: Colors.green.shade800,
           fontSize: 11,
@@ -215,7 +232,11 @@ class _HeaderCard extends StatelessWidget {
           CircleAvatar(
             radius: 28,
             backgroundColor: theme.colorScheme.primaryContainer,
-            child: Icon(Icons.person, size: 32, color: theme.colorScheme.onPrimaryContainer),
+            child: Icon(
+              Icons.person,
+              size: 32,
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -223,21 +244,29 @@ class _HeaderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  (name == null || name!.trim().isEmpty) ? 'Driver G-Flow' : name!,
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  (name == null || name!.trim().isEmpty)
+                      ? 'Driver G-Flow'
+                      : name!,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Text(
                   email == null || email!.isEmpty ? '—' : email!,
-                  style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.grey,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 if (driverId != null && driverId!.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   Text(
                     'ID ${driverId!}',
-                    style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -274,7 +303,12 @@ class _SectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 8),
           ...children,
           if (caption != null) ...[
@@ -317,14 +351,19 @@ class _InfoRow extends StatelessWidget {
           const SizedBox(width: 10),
           SizedBox(
             width: 120,
-            child: Text(label, style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+            ),
           ),
           Expanded(
             child: Text(
               value,
               textAlign: TextAlign.end,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           if (trailing != null) ...[const SizedBox(width: 8), trailing!],

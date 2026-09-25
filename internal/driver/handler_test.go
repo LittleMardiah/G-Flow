@@ -20,12 +20,15 @@ import (
 
 // mockSvc adalah stub DriverService untuk unit test handler.
 type mockSvc struct {
-	res       *AvailableOrdersResult
-	err       error
-	activeRes *ActiveOrdersResult
-	activeErr error
-	gotID     uuid.UUID
-	called    bool
+	res           *AvailableOrdersResult
+	err           error
+	activeRes     *ActiveOrdersResult
+	activeErr     error
+	profileRes    *DriverProfile
+	profileErr    error
+	gotID         uuid.UUID
+	called        bool
+	profileCalled bool
 }
 
 func (m *mockSvc) GetAvailableOrders(_ context.Context, driverID uuid.UUID) (*AvailableOrdersResult, error) {
@@ -44,6 +47,15 @@ func (m *mockSvc) GetActiveOrders(_ context.Context, driverID uuid.UUID) (*Activ
 		return nil, m.activeErr
 	}
 	return m.activeRes, nil
+}
+
+func (m *mockSvc) GetDriverProfile(_ context.Context, driverID uuid.UUID) (*DriverProfile, error) {
+	m.profileCalled = true
+	m.gotID = driverID
+	if m.profileErr != nil {
+		return nil, m.profileErr
+	}
+	return m.profileRes, nil
 }
 
 func setupHandler(svc DriverService, userID string) *gin.Engine {
@@ -97,6 +109,36 @@ func doRequest(r *gin.Engine) *httptest.ResponseRecorder {
 
 func doActiveRequest(r *gin.Engine) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/drivers/orders", bytes.NewReader(nil))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func setupProfileRouter(svc DriverService, userID, userType string, withRBAC bool) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(svc)
+	r := gin.New()
+	handlers := []gin.HandlerFunc{
+		func(c *gin.Context) {
+			if userID != "" {
+				c.Set("user_id", userID)
+			}
+			if userType != "" {
+				c.Set("user_type", userType)
+			}
+			c.Next()
+		},
+	}
+	if withRBAC {
+		handlers = append(handlers, auth.RBACMiddleware("driver"))
+	}
+	handlers = append(handlers, h.GetDriverMe)
+	r.GET("/api/v1/drivers/me", handlers...)
+	return r
+}
+
+func doProfileRequest(r *gin.Engine) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/drivers/me", bytes.NewReader(nil))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
@@ -323,4 +365,75 @@ func TestHandler_GetDriverOrders_ServiceError(t *testing.T) {
 
 	w := doActiveRequest(r)
 	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandler_GetDriverMe_Success(t *testing.T) {
+	m := &mockSvc{profileRes: &DriverProfile{
+		DriverID:          driverID,
+		Name:              "Budi Santoso",
+		Email:             "budi@example.com",
+		Phone:             ptrString("081234567890"),
+		VehicleType:       ptrString("motor"),
+		VehiclePlate:      ptrString("B 1234 ABC"),
+		LicenseNumber:     ptrString("SIM-123"),
+		LicenseExpiry:     ptrString("2027-12-31"),
+		Status:            "ACTIVE",
+		RatingAvg:         4.75,
+		TotalRides:        12,
+		BankName:          ptrString("Bank Central Asia"),
+		BankAccountNumber: ptrString("9876543210"),
+	}}
+	r := setupProfileRouter(m, driverID.String(), "driver", true)
+
+	w := doProfileRequest(r)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Success bool                  `json:"success"`
+		Data    DriverProfileResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.True(t, body.Success)
+	assert.Equal(t, driverID, body.Data.DriverID)
+	assert.Equal(t, "Budi Santoso", body.Data.Name)
+	assert.Equal(t, "****3210", *body.Data.BankAccountMasked)
+	assert.Equal(t, 4.75, body.Data.RatingAvg)
+	assert.Equal(t, int64(12), body.Data.TotalRides)
+	assert.NotContains(t, w.Body.String(), "9876543210")
+	assert.True(t, m.profileCalled)
+	assert.Equal(t, driverID, m.gotID)
+}
+
+func TestHandler_GetDriverMe_Unauthorized(t *testing.T) {
+	m := &mockSvc{}
+	r := setupProfileRouter(m, "", "", false)
+
+	w := doProfileRequest(r)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.False(t, m.profileCalled)
+}
+
+func TestHandler_GetDriverMe_Forbidden(t *testing.T) {
+	m := &mockSvc{}
+	r := setupProfileRouter(m, custID.String(), "customer", true)
+
+	w := doProfileRequest(r)
+	require.Equal(t, http.StatusForbidden, w.Code)
+	assert.False(t, m.profileCalled)
+}
+
+func TestHandler_GetDriverMe_NotFound(t *testing.T) {
+	m := &mockSvc{profileErr: ErrDriverNotFound}
+	r := setupProfileRouter(m, driverID.String(), "driver", true)
+
+	w := doProfileRequest(r)
+	require.Equal(t, http.StatusNotFound, w.Code)
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "DRIVER_NOT_FOUND", body.Error.Code)
 }

@@ -5,6 +5,7 @@ import 'package:driver_app/config/constants.dart';
 import 'package:driver_app/models/driver_order.dart';
 import 'package:driver_app/models/driver_earning.dart';
 import 'package:driver_app/services/api_client.dart';
+import 'package:driver_app/services/driver_service.dart';
 import 'package:driver_app/services/earnings_service.dart';
 import 'package:driver_app/services/order_service.dart';
 
@@ -84,25 +85,28 @@ void main() {
       expect(result.orders.last.estimatedFare, 45000);
     });
 
-    test('fetchAvailableOrders reports full capacity on capacity_available=false', () async {
-      final dio = Dio(BaseOptions(baseUrl: 'http://test'));
-      interceptOkJson(dio, {
-        'success': true,
-        'data': {
-          'orders': <Map<String, dynamic>>[],
-          'capacity_available': false,
-          'active_orders': 3,
-          'max_active_orders': 3,
-          'radius_km': 5,
-        },
-      });
-      final service = OrderService(ApiClient(dio: dio));
-      final result = await service.fetchAvailableOrders();
-      expect(result.orders, isEmpty);
-      expect(result.capacityAvailable, isFalse);
-      expect(result.activeOrders, 3);
-      expect(result.radiusKm, 5);
-    });
+    test(
+      'fetchAvailableOrders reports full capacity on capacity_available=false',
+      () async {
+        final dio = Dio(BaseOptions(baseUrl: 'http://test'));
+        interceptOkJson(dio, {
+          'success': true,
+          'data': {
+            'orders': <Map<String, dynamic>>[],
+            'capacity_available': false,
+            'active_orders': 3,
+            'max_active_orders': 3,
+            'radius_km': 5,
+          },
+        });
+        final service = OrderService(ApiClient(dio: dio));
+        final result = await service.fetchAvailableOrders();
+        expect(result.orders, isEmpty);
+        expect(result.capacityAvailable, isFalse);
+        expect(result.activeOrders, 3);
+        expect(result.radiusKm, 5);
+      },
+    );
 
     test('fetchActiveOrders parses drivers/orders response (A2)', () async {
       final dio = Dio(BaseOptions(baseUrl: 'http://test'));
@@ -160,32 +164,40 @@ void main() {
       expect(orders.last.deliveryAddress, 'Jl. R');
     });
 
-    test('acceptFood posts to /food-orders/{id}/accept with idempotency key', () async {
-      final dio = Dio(BaseOptions(baseUrl: 'http://test'));
-      String? path;
-      Object? idemKey;
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (options, handler) {
-            path = options.path;
-            idemKey = options.headers['X-Idempotency-Key'];
-            handler.resolve(Response(
-              requestOptions: options,
-              statusCode: 200,
-              data: {
-                'success': true,
-                'data': {'order_id': 'food-1', 'status': 'READY_FOR_PICKUP'},
-              },
-            ));
-          },
-        ),
-      );
-      final service = OrderService(ApiClient(dio: dio));
-      final result = await service.acceptFood('food-1');
-      expect(path, '/api/v1/food-orders/food-1/accept');
-      expect(idemKey, isNotNull);
-      expect(result['status'], 'READY_FOR_PICKUP');
-    });
+    test(
+      'acceptFood posts to /food-orders/{id}/accept with idempotency key',
+      () async {
+        final dio = Dio(BaseOptions(baseUrl: 'http://test'));
+        String? path;
+        Object? idemKey;
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              path = options.path;
+              idemKey = options.headers['X-Idempotency-Key'];
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: {
+                    'success': true,
+                    'data': {
+                      'order_id': 'food-1',
+                      'status': 'READY_FOR_PICKUP',
+                    },
+                  },
+                ),
+              );
+            },
+          ),
+        );
+        final service = OrderService(ApiClient(dio: dio));
+        final result = await service.acceptFood('food-1');
+        expect(path, '/api/v1/food-orders/food-1/accept');
+        expect(idemKey, isNotNull);
+        expect(result['status'], 'READY_FOR_PICKUP');
+      },
+    );
   });
 
   group('OrderService.fetchRideDetail', () {
@@ -205,6 +217,38 @@ void main() {
       expect(order.id, 'unknown-id');
       expect(order.status, 'DRIVER_ASSIGNED');
       expect(order.isMock, isTrue);
+    });
+  });
+
+  group('DriverService profile', () {
+    test('fetchMyProfile parses /drivers/me response', () async {
+      final dio = Dio(BaseOptions(baseUrl: 'http://test'));
+      interceptOkJson(dio, {
+        'success': true,
+        'data': {
+          'driver_id': 'driver-1',
+          'name': 'Budi Driver',
+          'email': 'budi@example.com',
+          'phone': '081234567890',
+          'vehicle_type': 'MOTORCYCLE',
+          'vehicle_plate': 'B 1234 X',
+          'license_number': 'SIM-1',
+          'license_expiry': '2027-12-31',
+          'status': 'ACTIVE',
+          'rating_avg': 4.75,
+          'total_rides': 12,
+          'bank_name': 'BCA',
+          'bank_account_masked': '****7890',
+        },
+      });
+      final service = DriverService(ApiClient(dio: dio));
+      final profile = await service.fetchMyProfile();
+
+      expect(profile.driverId, 'driver-1');
+      expect(profile.name, 'Budi Driver');
+      expect(profile.ratingAvg, 4.75);
+      expect(profile.totalRides, 12);
+      expect(profile.bankAccountMasked, '****7890');
     });
   });
 
@@ -252,8 +296,12 @@ void main() {
 void intercept404(Dio dio) {
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) =>
-          handler.reject(DioException(requestOptions: options, type: DioExceptionType.connectionError)),
+      onRequest: (options, handler) => handler.reject(
+        DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionError,
+        ),
+      ),
     ),
   );
 }
@@ -261,8 +309,9 @@ void intercept404(Dio dio) {
 void interceptOkJson(Dio dio, Map<String, dynamic> body) {
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) =>
-          handler.resolve(Response(requestOptions: options, statusCode: 200, data: body)),
+      onRequest: (options, handler) => handler.resolve(
+        Response(requestOptions: options, statusCode: 200, data: body),
+      ),
     ),
   );
 }

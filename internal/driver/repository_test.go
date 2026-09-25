@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -48,6 +49,66 @@ func TestRepo_GetDriverLocation_NotFound(t *testing.T) {
 
 	_, _, err := r.GetDriverLocation(context.Background(), driverID)
 	require.ErrorIs(t, err, ErrDriverLocationNotFound)
+}
+
+func TestRepo_GetDriverProfile(t *testing.T) {
+	r, mDB := newDriverRepo(t)
+	cols := []string{
+		"driver_id", "name", "email", "phone", "vehicle_type", "vehicle_plate",
+		"license_number", "license_expiry", "status", "bank_name", "bank_account_number",
+		"rating_avg", "total_rides",
+	}
+	mDB.ExpectQuery("SELECT u.id, u.name").
+		WithArgs(driverID).
+		WillReturnRows(pgxmock.NewRows(cols).AddRow(
+			driverID, "Budi Santoso", "budi@example.com", "081234567890", "motor", "B 1234 ABC",
+			"SIM-123", "2027-12-31", "ACTIVE", "Bank Central Asia", "1234567890", 4.75, 12,
+		))
+
+	profile, err := r.GetDriverProfile(context.Background(), driverID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	assert.Equal(t, driverID, profile.DriverID)
+	assert.Equal(t, "Budi Santoso", profile.Name)
+	maskedAccount := maskBankAccount(profile.BankAccountNumber)
+	require.NotNil(t, maskedAccount)
+	assert.Equal(t, "****7890", *maskedAccount)
+	assert.Equal(t, 4.75, profile.RatingAvg)
+	assert.Equal(t, int64(12), profile.TotalRides)
+}
+
+func TestRepo_GetDriverProfile_NotFound(t *testing.T) {
+	r, mDB := newDriverRepo(t)
+	mDB.ExpectQuery("SELECT u.id, u.name").
+		WithArgs(driverID).
+		WillReturnError(pgx.ErrNoRows)
+
+	_, err := r.GetDriverProfile(context.Background(), driverID)
+	require.ErrorIs(t, err, ErrDriverNotFound)
+}
+
+func TestRepo_GetDriverProfile_RatingsTableUnavailable(t *testing.T) {
+	r, mDB := newDriverRepo(t)
+	mDB.ExpectQuery("SELECT u.id, u.name").
+		WithArgs(driverID).
+		WillReturnError(&pgconn.PgError{Code: "42P01", Message: "relation ratings_reviews does not exist"})
+	cols := []string{
+		"driver_id", "name", "email", "phone", "vehicle_type", "vehicle_plate",
+		"license_number", "license_expiry", "status", "bank_name", "bank_account_number",
+		"rating_avg", "total_rides",
+	}
+	mDB.ExpectQuery("SELECT u.id, u.name").
+		WithArgs(driverID).
+		WillReturnRows(pgxmock.NewRows(cols).AddRow(
+			driverID, "Budi Santoso", "budi@example.com", "081234567890", "motor", "B 1234 ABC",
+			"SIM-123", "2027-12-31", "ACTIVE", "Bank Central Asia", "1234567890", 0, 0,
+		))
+
+	profile, err := r.GetDriverProfile(context.Background(), driverID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	assert.Zero(t, profile.RatingAvg)
+	assert.Zero(t, profile.TotalRides)
 }
 
 func TestRepo_CountActiveOrders(t *testing.T) {

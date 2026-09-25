@@ -209,6 +209,7 @@ func main() {
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
 		// Driver available orders (TD-009): auth wajib + role driver.
 		api.GET("/drivers/available-orders", auth.RBACMiddleware("driver"), driverHandler.GetAvailableOrders)
+		api.GET("/drivers/me", auth.RBACMiddleware("driver"), driverHandler.GetDriverMe)
 		// Driver active orders (TD-077 A2): auth wajib + role driver.
 		api.GET("/drivers/orders", auth.RBACMiddleware("driver"), driverHandler.GetDriverOrders)
 	}
