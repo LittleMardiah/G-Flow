@@ -65,6 +65,89 @@ void main() {
       expect(s.allocatedFare, 0);
       expect(s.isDelivered, isFalse);
     });
+
+    // TD-126: wire backend (internal/send.SendOrderStop) memakai
+    // stop_number + dropoff_lat/lng/address; decimal jadi JSON string.
+    test('fromJson wire backend dropoff_*', () {
+      final s = SendStop.fromJson(const {
+        'id': '9f1c',
+        'order_id': 'o1',
+        'stop_number': 2,
+        'recipient_name': 'Budi',
+        'dropoff_lat': '-6.25',
+        'dropoff_lng': '106.8',
+        'dropoff_address': 'Jl. Stop 2',
+        'distance_km': '3.500',
+        'allocated_fare': '7500.00',
+        'status': 'ARRIVED',
+      });
+      expect(s.id, '9f1c');
+      expect(s.orderId, 'o1');
+      expect(s.order, 2);
+      expect(s.recipientName, 'Budi');
+      expect(s.dropoffAddress, 'Jl. Stop 2');
+      expect(s.dropoffLat, -6.25);
+      expect(s.dropoffLng, 106.8);
+      expect(s.distanceKm, 3.5);
+      expect(s.allocatedFare, 7500);
+      expect(s.status, 'ARRIVED');
+      expect(s.isDelivered, isFalse);
+    });
+
+    test('alias address/latitude/longitude ikut dropoff_*', () {
+      final s = SendStop.fromJson(const {
+        'id': 'a1',
+        'dropoff_address': 'Jl. X',
+        'dropoff_lat': '-6.1',
+        'dropoff_lng': '106.7',
+      });
+      expect(s.address, 'Jl. X');
+      expect(s.latitude, -6.1);
+      expect(s.longitude, 106.7);
+      expect(s.locationLabel, 'Jl. X');
+    });
+
+    test('dropoff_* null + locationLabel fallback koordinat', () {
+      final kosong = SendStop.fromJson(const {'id': 'b1'});
+      expect(kosong.dropoffAddress, isNull);
+      expect(kosong.dropoffLat, isNull);
+      expect(kosong.dropoffLng, isNull);
+      expect(kosong.address, isEmpty);
+      expect(kosong.latitude, 0);
+      expect(kosong.longitude, 0);
+      expect(kosong.locationLabel, isNull);
+
+      final koordinat = SendStop.fromJson(const {
+        'id': 'b2',
+        'dropoff_lat': '-6.2',
+        'dropoff_lng': '106.8',
+      });
+      expect(koordinat.locationLabel, '-6.20000, 106.80000');
+
+      final nol = SendStop.fromJson(const {
+        'id': 'b3',
+        'dropoff_lat': '0',
+        'dropoff_lng': '0',
+      });
+      expect(nol.locationLabel, isNull);
+    });
+
+    test('dropoff_address kosong/spasi jadi null', () {
+      final s = SendStop.fromJson(const {'id': 'c1', 'dropoff_address': '   '});
+      expect(s.dropoffAddress, isNull);
+    });
+
+    test('key dropoff_* diprioritaskan atas key legacy', () {
+      final s = SendStop.fromJson(const {
+        'id': 'd1',
+        'dropoff_address': 'Jl. Baru',
+        'address': 'Jl. Lama',
+        'dropoff_lat': '-6.2',
+        'location_lat': -1.0,
+      });
+      expect(s.dropoffAddress, 'Jl. Baru');
+      expect(s.dropoffLat, -6.2);
+    });
   });
 
   group('SendOrder', () {
@@ -125,6 +208,38 @@ void main() {
     test('fromJson ignores non-map stops', () {
       final o = SendOrder.fromJson(const {'id': 'd', 'stops': ['bad', 1]});
       expect(o.stops, isEmpty);
+    });
+
+    test('nested stops parse wire dropoff_* (TD-126)', () {
+      final o = SendOrder.fromJson(const {
+        'id': 'so2',
+        'status': 'IN_TRANSIT',
+        'stops': [
+          {
+            'id': 'a',
+            'stop_number': 1,
+            'dropoff_address': 'Jl A',
+            'dropoff_lat': '-6.2',
+            'dropoff_lng': '106.8',
+            'status': 'COMPLETED',
+          },
+          {
+            'id': 'b',
+            'stop_number': 2,
+            'dropoff_address': 'Jl B',
+            'status': 'PENDING',
+          },
+        ],
+      });
+      expect(o.stops.length, 2);
+      expect(o.stopsCompleted, 1);
+      expect(o.stops.first.order, 1);
+      expect(o.stops.first.dropoffAddress, 'Jl A');
+      expect(o.stops.first.dropoffLat, -6.2);
+      expect(o.stops.first.dropoffLng, 106.8);
+      expect(o.stops.last.order, 2);
+      expect(o.stops.last.dropoffAddress, 'Jl B');
+      expect(o.stops.last.dropoffLat, isNull);
     });
 
     test('SendOrderTrackingArgs defaults', () {

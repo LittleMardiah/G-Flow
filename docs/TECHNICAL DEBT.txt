@@ -1541,7 +1541,25 @@ Dampak     : Detail stop di tracking/history tampil tanpa alamat → UX
 Solusi     : Tambah field parsing di SendStop.fromJson (dropoff_address,
              dropoff_lat, dropoff_lng) — mirror driver Stop model.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-26, commit TD-126)
+Note   : Akar masalahnya LEBIH LUAS dari "field belum ada": parser mobile
+         memakai key yang TIDAK PERNAH dikirim backend, jadi 4 field kosong
+         di UI. Bukti wire = internal/send/repository.go:116-133
+         (SendOrderStop json tag: stop_number, dropoff_lat, dropoff_lng,
+         dropoff_address — dipanggil handler.go:141-147 untuk
+         GET /send-orders/{id}), sedangkan parser lama
+         (apps/customer_app/lib/models/send_stop.dart, sebelum commit ini)
+         hanya baca `address` / `location_lat` / `location_lng` / `order` /
+         `stop_order` — semuanya absen di wire → order = 0 ("Stop 0: Budi"),
+         address = '' (baris kosong), lat/lng = 0. Fixed: parser menerima
+         wire shape (dropoff_*/stop_number) + alias lama, decimal string
+         ("7500.00") ditoleransi, tracking screen tampilkan
+         dropoffAddress (fallback koordinat via locationLabel).
+         Di luar scope (belum disentuh, kandidat TD baru): (a)
+         CreateSendOrderResponse.fare_breakdown_per_stop
+         (internal/send/service.go:255-273) tidak pernah diparse mobile —
+         SendOrder.fromJson hanya baca `stops`; (b) recipient_name nullable
+         → "Stop 1: " (kolom kosong) di tile.
 Referensi  : Send chain fix (temuan OpenCode)
 
 ID         : TD-127
@@ -1968,19 +1986,105 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-147 (temuan OpenCode)
 
+ID         : TD-151
+Kategori   : MOBILE / FITUR
+Judul      : fare_breakdown_per_stop (POST /send-orders response) tidak
+             di-parse mobile. Ongkos per stop setelah create tidak tampil
+             di UI customer.
+Bukti      : internal/send/service.go:271 — CreateSendOrderResponse punya
+             FareBreakdownPerStop []SendStopResponse
+             `json:"fare_breakdown_per_stop"` (blok :258-273, ROADMAP 3.5.1
+             response + API CONTRACT 9.1). Mobile parse response create
+             dengan SendOrder.fromJson
+             (apps/customer_app/lib/services/send_order_service.dart:46) dan
+             fromJson hanya membaca key `stops`
+             (apps/customer_app/lib/models/send_order.dart:65) — grep
+             `fare_breakdown` di *.dart = 0 hasil (repo-wide). Akibatnya
+             alokasi per stop (allocated_fare per stop) hilang di UI; yang
+             tampil hanya total fare.
+Dampak     : Customer tidak lihat alokasi fare per stop setelah booking
+             (hanya total).
+Solusi     : Parse field di send_order_service atau model; tampilkan di
+             tracking/detail. Catatan: shopspring/decimal v1.4.0 marshal
+             sebagai JSON STRING ("7500.00") — parser harus tolerate string
+             (pola yang sudah dipakai TD-126 untuk allocated_fare), kalau
+             tidak nilainya Rp 0 per stop.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-126 (temuan OpenCode)
+
+ID         : TD-152
+Kategori   : MOBILE / UX
+Judul      : recipient_name nullable di SendOrderStop → UI "Stop 1: "
+             dengan kolom nama kosong.
+Bukti      : internal/send/repository.go:120 — RecipientName *string
+             `json:"recipient_name,omitempty"`; kolom DB nullable
+             (migrations/005_food_send_schema.up.sql:528 — recipient_name
+             VARCHAR(255), tanpa NOT NULL). Saat NULL key tidak ada di wire
+             → mobile fallback ke string kosong
+             (apps/customer_app/lib/models/send_stop.dart:57
+             `_str(j['recipient_name'] ?? j['name']) ?? ''`). Tile tracking
+             merender 'Stop ${stop.order}: ${stop.recipientName}'
+             (apps/customer_app/lib/screens/send/send_tracking_screen.dart:304)
+             → teks berhenti di titik dua dengan nama kosong.
+Dampak     : Confusing UX; customer bingung stop mana.
+Solusi     : Fallback display (address atau "Penerima N") kalau nama null.
+             Reuse helper locationLabel yang sudah ada (dipakai
+             send_tracking_screen.dart:307) atau getter displayName baru di
+             SendStop.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-126 (temuan OpenCode)
+
+ID         : TD-153
+Kategori   : BACKEND / FITUR
+Judul      : GET /send-orders (history) tidak include `stops` — customer
+             send history tidak punya detail per-stop. GetSendOrderHistory
+             return []*SendOrder tanpa join stops.
+Bukti      : internal/send/service.go:905 GetSendOrderHistory →
+             repo.GetSendOrdersBySender (internal/send/repository.go:564),
+             query-nya `SELECT sendOrderColumns FROM send_orders WHERE
+             sender_id = $1 ORDER BY created_at DESC LIMIT/OFFSET`
+             (:565-571) — tidak ada JOIN/SELECT ke send_order_stops. Struct
+             SendOrder (internal/send/repository.go:79-113) tidak punya
+             field Stops, jadi handler (internal/send/handler.go:182-193)
+             marshal `orders` tanpa `stops`. Bandingkan endpoint detail yang
+             memang ambil stops terpisah (GetSendOrderStops, service.go:897
+             → SendOrderDetail{Order, Stops}). Dampak mobile terukur:
+             send_order_service.dart:88 parse tiap order via
+             SendOrder.fromJson (stops → []) sehingga
+             apps/customer_app/lib/screens/send/send_history_screen.dart:114
+             selalu render "0 stop" untuk order multi-stop.
+Dampak     : History screen customer tidak bisa tampil stop (hanya order
+             level).
+Solusi     : Extend GetSendOrderHistory untuk include stops batch (mirror
+             TD-137 items batch pattern: internal/food/repository.go:836
+             GetItemsByOrderIDs + attach di service.go:1878) ATAU endpoint
+             baru. Catatan: dua hal — (a) SendOrder tidak punya field
+             Stops, jadi perlu field baru di struct atau DTO wrapper history
+             (dampaknya serialisasi response, cek dulu consumer lain);
+             (b) wajib page-invariant: 1 query untuk N order, JANGAN loop
+             GetSendOrderStops per order (N+1).
+             [PERLU VERIFIKASI]-before-fix: cek semua consumer
+             GET /send-orders (admin/driver/customer) sebelum pilih
+             breakdown di response yang sama vs endpoint terpisah.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-126, TD-137 (temuan OpenCode)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 144 item (TD-051 di-reserve/skip)
-                                       (39 FIXED + 14 CLOSED + 7 DEFERRED + 84 OPEN = 144)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 147 item (TD-051 di-reserve/skip)
+                                       (40 FIXED + 14 CLOSED + 7 DEFERRED + 86 OPEN = 147)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 67 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150)
+- SEDANG  : 69 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
              (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
@@ -1995,12 +2099,28 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 144 item (TD-051 di-reserve/skip)
              BEDA dari kasus TD-147: TD-147 hanya berubah Status (OPEN → FIXED)
              sehingga `Prioritas :`-nya tetap dan bucket SEDANG tidak bergerak.
              Menambah entry baru dengan Prioritas SEDANG memang menggerakkan
-             bucket — sama seperti TINGGI/KRITIS/RENDAH yang juga bertambah
-             saat entry baru ditambahkan.]
-- RENDAH  : 29 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149)
+              bucket — sama seperti TINGGI/KRITIS/RENDAH yang juga bertambah
+              saat entry baru ditambahkan.]
+              [67 TETAP pada 2026-09-26 (TD-126 FIXED): bucket SEDANG
+              mengikuti `Prioritas :`, dan TD-126 tetap `Prioritas : SEDANG`
+              (hanya Status OPEN → FIXED), jadi bucket tidak bergerak —
+              preseden TD-113, TD-127, TD-144, TD-147. Yang berubah hanya
+               bucket Status: FIXED 39 → 40, FIXED/CLOSED 53 → 54,
+               OPEN 84 → 83; Total tetap 144.]
+              [69 pada 2026-09-26: TD-151 (MOBILE / FITUR — fare_breakdown_
+              per_stop tidak di-parse mobile) dan TD-153 (BACKEND / FITUR —
+              GET /send-orders history tidak include `stops`) adalah entry
+              BARU dengan `Prioritas : SEDANG`, jadi bucket SEDANG 67 → 69
+              (+2). Keduanya Status OPEN dari awal, jadi bucket Status
+              OPEN juga bergerak 83 → 86 bersama TD-152. Total 144 → 147:
+              8 + 40 + 69 + 30 = 147 ✓ dan 40 + 14 + 7 + 86 = 147 ✓.
+              Alasan: ketiga item adalah gap lanjutan dari TD-126 yang
+              sebelumnya dicatat "REGISTERED = 0" di Note sesi TD-126
+              (line ~2627) menunggu instruksi reviewer.]
+- RENDAH  : 30 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152)
 
-STATUS: ✅ FIXED 39 item, 14 item CLOSED (FIXED/CLOSED 53), 7 item DEFERRED,
-        82 item OPEN.  [39 + 14 + 7 + 84 = 144 = TOTAL]
+STATUS: ✅ FIXED 40 item, 14 item CLOSED (FIXED/CLOSED 54), 7 item DEFERRED,
+        86 item OPEN.  [40 + 14 + 7 + 86 = 147 = TOTAL]
 
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
@@ -2027,16 +2147,16 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-26):
-   - Total hutang teridentifikasi      : 144 item (TD-051 di-reserve/skip; 144 item aktif terdaftar).
-   - ✅ FIXED                           : 39 item
+   - Total hutang teridentifikasi      : 147 item (TD-051 di-reserve/skip; 147 item aktif terdaftar).
+   - ✅ FIXED                           : 40 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 53 item
+   - FIXED/CLOSED                       : 54 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 84 item (bukan hanya TD-058 s/d TD-150 — masih ada
+   - ❌ OPEN                              : 86 item (bukan hanya TD-058 s/d TD-153 — masih ada
                                           TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst.).
-     [39 + 14 + 7 + 84 = 144 = TOTAL]
+     [40 + 14 + 7 + 86 = 147 = TOTAL]
      [Perubahan 2026-09-26 — TD-147 FIXED: FIXED 38 → 39, FIXED/CLOSED 52 → 53,
      OPEN 83 → 82, Total tetap 142. Bucket Prioritas (§2) TIDAK berubah:
      KRITIS 8 + TINGGI 40 + SEDANG 66 + RENDAH 28 = 142 — SEDANG tetap 66
@@ -2047,6 +2167,16 @@ REKOMENDASI:
      RENDAH 28 → 29 (TD-149) dan SEDANG 66 → 67 (TD-150). Konsisten:
      8 + 40 + 67 + 29 = 144 = TOTAL. Parser atas 144 field `ID :`
      mengonfirmasi sum Prioritas = sum Status = 144.]
+     [Perubahan 2026-09-26 — TD-151 + TD-152 + TD-153 (ketiganya entry BARU,
+     hasil gap lanjutan TD-126 yang tadinya "REGISTERED = 0" di Note sesi
+     TD-126): OPEN 83 → 86; FIXED 40, CLOSED 14, DEFERRED 7,
+     FIXED/CLOSED 54 tetap; Total 144 → 147. Bucket Prioritas BERGERAK:
+     SEDANG 67 → 69 (TD-151, TD-153) dan RENDAH 29 → 30 (TD-152).
+     Konsisten: 8 + 40 + 69 + 30 = 147 = TOTAL dan 40 + 14 + 7 + 86 = 147.
+     Range SECTION F: TD-058 s/d TD-150 → TD-058 s/d TD-153.
+     Parser atas 147 field `ID :` mengonfirmasi sum Prioritas = sum Status
+     = 147 (V1/V2/V3 sesi ini). Tidak ada kode yang diubah — register
+     dokumentasi saja. Tidak commit (R10).]
 
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
@@ -2539,5 +2669,118 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         sekadar klaim prompt. Sesi ini tidak mengubah kode apa pun — register
         dokumentasi saja. Tidak commit (R10).
 
+================================================================================
+        [2026-09-26 — SESI TD-126] Parse dropoff_address/lat/lng di SendStop
+        (customer_app). Root cause (CEK, bukan asumsi): wire stop di
+        GET /api/v1/send-orders/{id} = internal/send.SendOrderStop
+        (internal/send/repository.go:116-133; dipanggil handler.go:141-147 →
+        data.stops). Tag json: stop_number, dropoff_lat, dropoff_lng,
+        dropoff_address. Parser mobile lama (send_stop.dart) hanya membaca
+        key `address`, `location_lat`, `location_lng`, `order`, `stop_order`
+        — TIDAK ADA di wire, jadi bukan "field belum ditambahkan" tapi
+        "key salah nama": order → 0 ("Stop 0: Budi"), address → '' (baris
+        kosong di tile, send_tracking_screen.dart:307 lama), lat/lng → 0.
+        Bukti tambahan: shopspring/decimal v1.4.0 marshal sebagai JSON
+        STRING (decimal.go:1783-1791, default MarshalJSONWithoutQuotes=false;
+        tidak ada yang meng-set flag itu di internal/) → allocated_fare
+        "7500.00" tidak bisa di-int.tryParse → Rp 0 per stop.
+        Fix (3 file, semua di scope): (1) send_stop.dart — field nullable
+        dropoffAddress/dropoffLat/dropoffLng + helper _optStr/_optNum, key
+        wire jadi primer dengan alias lama (address/location_*/delivery_*)
+        sebagai fallback; `address`/`latitude`/`longitude` jadi getter alias
+        ke dropoff_* (tidak ada call site constructor SendStop(...) di luar
+        fromJson — grep 0 hasil di 3 app); `stop_number` masuk rantai parse
+        order; _int tolerate decimal string; getter locationLabel (alamat,
+        else koordinat) untuk UI. (2) send_tracking_screen.dart:307 — tile
+        stop pakai locationLabel (alamat dulu, fallback koordinat, hide kalau
+        null). (3) test/models_extended_test.dart — 6 test baru: wire shape
+        dropoff_*, alias getter, null + fallback koordinat + guard 0/0,
+        address spasi → null, prioritas key dropoff_* > legacy, dan nested
+        stops di SendOrder.
+        Verifikasi: V1 `flutter analyze` (customer_app) "No issues found!";
+        V2 `flutter test` 109/109 PASS (baseline sebelum change = 103/103
+        PASS, jadi +6 test baru, 0 failure lama); V3 grep
+        `dropoffAddress|dropoff_address` di lib/ → send_stop.dart:59 dst;
+        V4 `git status --short` = 3 file modifikasi, semuanya in-scope
+        (backend/driver/merchant TIDAK disentuh). Catatan env: Flutter SDK
+        Windows via cmd.exe (Dart 3.13.4) — SDK Linux di ~/flutter (3.22.3)
+        tidak bisa dipakai karena pubspec butuh sdk ^3.13.2.
+        Status TD-126: OPEN → ✅ FIXED. FIXED 39 → 40; FIXED/CLOSED 53 → 54;
+        OPEN 84 → 83; Total tetap 144.
+        [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "SEDANG 67→66" — itu
+        SALAH untuk konteks ini. Bucket Prioritas §2 mengikuti `Prioritas :`,
+        bukan `Status :`; TD-126 tetap `Prioritas : SEDANG` (yang berubah
+        hanya Status OPEN → FIXED). Bukti: (a) parser atas 144 field `ID :`
+        di file ini → Prioritas KRITIS 8 + TINGGI 40 + SEDANG 67 + RENDAH 29
+        = 144 SEBELUM edit; (b) presedenTD-147 (OVERRIDE-1 sesi
+        sebelumnya) + catatan register §2 ("bucket ini berdasarkan
+        Prioritas, bukan Status; TD-113/TD-127/TD-144/TD-147 semuanya FIXED
+        tapi tetap terdaftar di SEDANG"); (c) aritmetika — kalau SEDANG
+        turun ke 66 maka sum Prioritas = 143 ≠ 144 (parser "sum = total"
+        GAGAL), sedangkan 67 menghasilkan 144 ✓. Dipakai: SEDANG TETAP 67,
+        hanya bucket Status yang bergerak. Konfirmasi versi prompt yang lain
+        (FIXED 39→40, FIXED/CLOSED 53→54, OPEN 84→83, Total 144) sudah
+        cocok dengan angka sebelum-edit hasil parser (39/14/7/84 = 144).
+        Sisa (di luar scope TD-126, R8 — dicatat di Note entry TD-126, tidak
+        disentuh): (a) fare_breakdown_per_stop di response create order
+        (internal/send/service.go:255-273) tidak pernah diparse mobile
+        (SendOrder.fromJson hanya baca `stops`), jadi ongkos per stop
+        langsung setelah create tidak tampil; (b) recipient_name nullable →
+        "Stop 1: " dengan kolom kosong; (c) send_history_screen.dart tidak
+        menampilkan stop sama sekali — dan history memang tidak mengirim
+        stops (GetSendOrderHistory → []*SendOrder, service.go:905), jadi
+        tidak bisa ditampilkan tanpa perubahan backend. Ketiganya kandidat
+        TD baru; REGISTERED = 0 agar Total tetap 144 (menunggu instruksi
+        reviewer). Tidak commit (R10).
+        [RESOLVED 2026-09-26] Ketiga gap di atas SUDAH di-register sebagai
+        TD-151 (MOBILE / FITUR, SEDANG — fare_breakdown_per_stop), TD-152
+        (MOBILE / UX, RENDAH — recipient_name nullable), TD-153 (BACKEND /
+        FITUR, SEDANG — history tanpa `stops`), sesuai instruksi reviewer.
+        Register: Total 144 → 147; OPEN 83 → 86; SEDANG 67 → 69; RENDAH
+        29 → 30; FIXED 40 / CLOSED 14 / DEFERRED 7 / FIXED-CLOSED 54 tetap.
+        Range SECTION F: TD-058 s/d TD-150 → TD-058 s/d TD-153. Bukti
+        tambahan yang diverifikasi ulang saat registrasi: service.go:271
+        (FareBreakdownPerStop), repository.go:120 (*string + omitempty) &
+        migrations/005:528 (kolom nullable), repository.go:564-571 (query
+        history tanpa join stops), send_history_screen.dart:114 (render
+        "0 stop").
+
+================================================================================
+        [2026-09-26 — SESI TD-151 + TD-152 + TD-153] Registrasi 3 gap
+        lanjutan TD-126 (lihat [RESOLVED] di atas). Sesi ini HANYA mengubah
+        docs/TECHNICAL DEBT.txt — tidak ada file kode yang disentuh (R8).
+        Angka prompt ReviewerCEK ulang dulu dengan parser atas 144 blok `ID :`
+        dan hasilnya COCOK SEMUA: Total 144, Prioritas KRITIS 8 + TINGGI 40
+        + SEDANG 67 + RENDAH 29 = 144; Status FIXED 40 + CLOSED 14 + DEFERRED
+        7 + OPEN 83 = 144. Jadi TIDAK ada override faktual yang diperlukan
+        (§11.2 tidak dipicu) — yang dipakai adalah angka prompt apa adanya.
+        Konsekuensi: karena ketiganya entry BARU (bukan perubahan Status),
+        bucket Prioritas ikut bergerak: SEDANG 67 + 2 (TD-151, TD-153) = 69;
+        RENDAH 29 + 1 (TD-152) = 30; OPEN 83 + 3 = 86. Total 147.
+        Aritmetika: 8 + 40 + 69 + 30 = 147 ✓; 40 + 14 + 7 + 86 = 147 ✓.
+        Bukti TD-151: internal/send/service.go:271 `json:"fare_breakdown_
+        per_stop"` (blok CreateSendOrderResponse :258-273); mobile parse
+        create via send_order_service.dart:46 → SendOrder.fromJson yang
+        hanya baca `stops` (send_order.dart:65); grep `fare_breakdown` di
+        *.dart = 0 hasil.
+        Bukti TD-152: internal/send/repository.go:120 RecipientName *string
+        + `omitempty`; migrations/005_food_send_schema.up.sql:528
+        recipient_name VARCHAR(255) tanpa NOT NULL; send_stop.dart:57
+        fallback `?? ''`; tile 'Stop ${stop.order}: ${stop.recipientName}'
+        di send_tracking_screen.dart:304.
+        Bukti TD-153: internal/send/service.go:905 GetSendOrderHistory →
+        GetSendOrdersBySender (repository.go:564) query :565-571 tanpa JOIN
+        send_order_stops; struct SendOrder (repository.go:79-113) tanpa
+        field Stops; handler.go:182-193 marshal `orders` apa adanya; efek
+        mobile terukur di send_order_service.dart:88 + send_history_screen.
+        dart:114 → "0 stop". Preseden reuse: pola batch TD-137
+        (internal/food/repository.go:836 GetItemsByOrderIDs + attach
+        service.go:1878).
+        Verifikasi pasca-edit: V1 grep hit TD-151/152/153 = 12 baris (≥6);
+        V2 "TOTAL HUTANG" = 147; V3 parser atas 147 blok `ID :` →
+        Prioritas 8 + 40 + 69 + 30 = 147 dan Status 40 + 14 + 7 + 86 = 147.
+        Tidak commit (R10).
+
+================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ================================================================================

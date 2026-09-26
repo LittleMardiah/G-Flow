@@ -304,9 +304,10 @@ class _StopsCard extends StatelessWidget {
                   'Stop ${stop.order}: ${stop.recipientName}',
                   style: theme.textTheme.bodyMedium,
                 ),
-                Text(stop.address,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
+                if (stop.locationLabel case final location?)
+                  Text(location,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant)),
                 if (stop.distanceKm > 0)
                   Text('${stop.distanceKm.toStringAsFixed(1)} km · ${_formatRupiah(stop.allocatedFare)}',
                       style: theme.textTheme.bodySmall),
