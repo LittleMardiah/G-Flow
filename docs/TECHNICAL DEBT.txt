@@ -1884,8 +1884,20 @@ Solusi     : Samakan dengan fix TD-144: ambil wallet DRIVER via
              Catatan: internal/food/integration_test.go:442-447 sudah memakai
              pola benar (getWalletID) — dipakai sebagai referensi.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-26, commit TD-147)
 Referensi  : TD-144 (temuan OpenCode 2026-09-26)
+Fixed      : 2026-09-26 — newDriver (internal/send/integration_test.go:382-393)
+             tidak lagi INSERT wallet; ambil wallet DRIVER hasil auto-create
+             /auth/register via getWalletID lalu set saldo awal dengan
+             setWalletBalance. Helper createWallet (INSERT) DIHAPUS karena
+             tidak dipakai lagi — digantikan setWalletBalance (UPDATE).
+             Bukti: V1 go build PASS, V2 go vet bersih, V3 integration 5/5
+             PASS (sebelumnya 4 FAIL + 1 PASS, semuanya 23505
+             wallet_user_type_unique), V4 unit test PASS,
+             V5 coverage 95.0%. Catatan: signature newDriver tetap
+             `initialBalance int` (tidak diubah ke decimal.Decimal seperti
+             ride) karena keempat call site mengirim 0 — adaptasi, bukan
+             copy buta.
 
 ID         : TD-148
 Kategori   : TESTING
@@ -1911,27 +1923,84 @@ Solusi     : (a) ulangi dengan output penuh tersimpan (jangan `tail -1`)
 Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-142, TD-143 (temuan OpenCode 2026-09-26)
+ID         : TD-149
+Kategori   : HYGIENE
+Judul      : internal/food/integration_test.go:212 — helper createWallet
+             (INSERT) jadi dead code; 0 call site repo-wide (food sudah
+             pakai getWalletID line 442-447).
+Bukti      : grep -rn "\.createWallet(" --include=*.go . → 0 hasil (exit 1).
+             Satu-satunya definisi: internal/food/integration_test.go:212
+             `func (e *testEnv) createWallet(...)`. Wrapper auth
+             createWalletsForUser (internal/auth/handler.go:303) adalah
+             fungsi BERBEDA, bukan call site. Food aktif memakai getWalletID
+             (definisi :223) di 10 call site: :445, :470, :538, :577, :616,
+             :640, :681, :748, :815 (newDriver di :442-447). Helper
+             createWallet di package send sudah dihapus saat TD-147; copy
+             di package food tertinggal.
+Dampak     : Dead code confusion; developer baru bisa salah pakai.
+Solusi     : Hapus helper createWallet.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-147 (temuan OpenCode)
+
+ID         : TD-150
+Kategori   : ARSITEKTUR
+Judul      : Coupling test integration ↔ auth auto-create wallet
+             (TD-128 createWalletsForUser). Kalau TD-128 di-revert,
+             ride + send integration FAIL lagi (23505).
+Bukti      : internal/auth/handler.go:232 memanggil createWalletsForUser
+             (:303) pada /auth/register. Helper newDriver di
+             internal/ride/integration_test.go:181-192 dan
+             internal/send/integration_test.go:382-392 TIDAK lagi INSERT
+             wallet — memakai getWalletID + setWalletBalance pada wallet
+             hasil auto-create, dengan komentar eksplisit "Helper ini TIDAK
+             boleh INSERT wallet lagi — wallet_user_type_unique akan menolak
+             (SQLSTATE 23505)". Bukti historis: 12/12 test ride FAIL 23505
+             (TD-144) dan 4/4 test send FAIL 23505 (TD-147). Catatan
+             coupling sudah disebut di TD-144 (Solusi: "Coupling: test ride
+             bergantung pada perilaku auto-create wallet auth — pertimbangkan
+             helper setup bersama") tapi belum pernah lifted menjadi item
+             debt terpisah.
+Dampak     : Fragile test; refactor auth behavior ≠ isolated.
+Solusi     : Shared test helper cross-package (mis. testutil.Wallet)
+             ATAU fixture terpisah yang independen dari auth behavior.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-147 (temuan OpenCode)
 
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 142 item (TD-051 di-reserve/skip)
-                                       (38 FIXED + 14 CLOSED + 7 DEFERRED + 83 OPEN = 142)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 144 item (TD-051 di-reserve/skip)
+                                       (39 FIXED + 14 CLOSED + 7 DEFERRED + 84 OPEN = 144)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 66 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148)
+- SEDANG  : 67 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
-             (FIXED) juga tetap terdaftar di sini.]
-- RENDAH  : 28 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140)
+             (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
+             TD-147 juga TETAP di SEDANG karena Prioritas-nya tidak berubah —
+             jumlah bucket SEDANG tidak bergerak saat Status OPEN→FIXED
+             (bandingkan TD-113, TD-127, TD-144: semuanya FIXED tapi tetap
+             terdaftar). Yang berubah hanya bucket Status (lihat §2 STATUS
+             dan §3).]
+             [67 pada 2026-09-26: TD-150 (ARSITEKTUR — coupling test integrasi
+             ↔ auto-create wallet auth) adalah entry BARU dengan
+             `Prioritas : SEDANG`, jadi bucket SEDANG bertambah satu: 66 → 67.
+             BEDA dari kasus TD-147: TD-147 hanya berubah Status (OPEN → FIXED)
+             sehingga `Prioritas :`-nya tetap dan bucket SEDANG tidak bergerak.
+             Menambah entry baru dengan Prioritas SEDANG memang menggerakkan
+             bucket — sama seperti TINGGI/KRITIS/RENDAH yang juga bertambah
+             saat entry baru ditambahkan.]
+- RENDAH  : 29 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149)
 
-STATUS: ✅ FIXED 38 item, 14 item CLOSED (FIXED/CLOSED 52), 7 item DEFERRED,
-        83 item OPEN.  [38 + 14 + 7 + 83 = 142 = TOTAL]
+STATUS: ✅ FIXED 39 item, 14 item CLOSED (FIXED/CLOSED 53), 7 item DEFERRED,
+        82 item OPEN.  [39 + 14 + 7 + 84 = 144 = TOTAL]
 
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
@@ -1958,16 +2027,26 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-26):
-   - Total hutang teridentifikasi      : 142 item (TD-051 di-reserve/skip; 142 item aktif terdaftar).
-   - ✅ FIXED                           : 38 item
+   - Total hutang teridentifikasi      : 144 item (TD-051 di-reserve/skip; 144 item aktif terdaftar).
+   - ✅ FIXED                           : 39 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 52 item
+   - FIXED/CLOSED                       : 53 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 83 item (bukan hanya TD-058 s/d TD-148 — masih ada
+   - ❌ OPEN                              : 84 item (bukan hanya TD-058 s/d TD-150 — masih ada
                                           TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst.).
-     [38 + 14 + 7 + 83 = 142 = TOTAL]
+     [39 + 14 + 7 + 84 = 144 = TOTAL]
+     [Perubahan 2026-09-26 — TD-147 FIXED: FIXED 38 → 39, FIXED/CLOSED 52 → 53,
+     OPEN 83 → 82, Total tetap 142. Bucket Prioritas (§2) TIDAK berubah:
+     KRITIS 8 + TINGGI 40 + SEDANG 66 + RENDAH 28 = 142 — SEDANG tetap 66
+     karena bucket itu mengikuti `Prioritas :`, bukan `Status :`.]
+     [Perubahan 2026-09-26 — TD-149 + TD-150 (keduanya entry BARU, Status OPEN):
+     OPEN 82 → 84; FIXED 39, CLOSED 14, DEFERRED 7, FIXED/CLOSED 53 tetap;
+     Total 142 → 144. Bucket Prioritas BERGERAK karena ada entry baru:
+     RENDAH 28 → 29 (TD-149) dan SEDANG 66 → 67 (TD-150). Konsisten:
+     8 + 40 + 67 + 29 = 144 = TOTAL. Parser atas 144 field `ID :`
+     mengonfirmasi sum Prioritas = sum Status = 144.]
 
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
@@ -2390,6 +2469,75 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         (79 setelah TD-144 FIXED, +4 item baru). FIXED/CLOSED 52 + DEFERRED 7
         + OPEN 83 = 142; KRITIS 8 + TINGGI 40 + SEDANG 66 + RENDAH 28 = 142.
 
+      - TD-147 FIX (2026-09-26): akar masalah PERSIS sama dengan TD-144 —
+        /auth/register sudah auto-create wallet DRIVER via createWalletsForUser
+        (internal/auth/handler.go:300-311), sedangkan newDriver di
+        internal/send/integration_test.go:388 tetap INSERT wallet DRIVER kedua
+        untuk user yang sama → 23505 wallet_user_type_unique
+        (migrations/001_initial_schema.up.sql:124).
+        Baseline DIBUKTIKAN sebelum fix: `go test -tags integration
+        ./internal/send/... -run TestIntegrationSend` → 4 FAIL (TC_SEND_001
+        E2EWalletSingleStop, TC_SEND_002 MultiStopSettlement, TC_SEND_003
+        DriverCapacity, TC_SEND_004 DriverEmergencyCancel) + 1 PASS
+        (TC_SEND_005 AutoCancelExpired, tidak memakai newDriver).
+        [KRITIK PROMPT] Prompt menyebut "4/4 test" — aktual ada 5 test
+        integrasi send; 4 FAIL + 1 PASS.
+        Fix: newDriver (internal/send/integration_test.go:382-393) tidak lagi
+        INSERT wallet; ambil wallet DRIVER hasil auto-create lewat getWalletID
+        lalu set saldo awal dengan setWalletBalance (helper baru, UPDATE
+        wallets SET balance = $2, updated_at = NOW()). Helper createWallet
+        (INSERT) DIHAPUS — setelah grep repo-wide tidak ada call site lain di
+        package send. Helper getWalletID SUDAH ADA (tidak diduplikasi).
+        ADAPTASI, bukan copy buta dari ride: signature newDriver di ride
+        `initialBalance decimal.Decimal`, sedangkan di send `int` dan keempat
+        call site (line 423, 476, 545, 616) mengirim 0 — signature `int`
+        dipertahankan agar diff tetap minimal (R8).
+        Bukti pasca-fix: V1 go build ./... PASS, V2 go vet ./... PASS
+        (plus go vet -tags integration ./internal/send/... PASS), V3 integrasi
+        5/5 PASS, V4 unit test send PASS, V5 coverage send 95.0%.
+        Status TD-147: OPEN → ✅ FIXED. FIXED 38 → 39; FIXED/CLOSED 52 → 53;
+        OPEN 83 → 82; Total tetap 142.
+        [OVERRIDE-1 / §11.2] Prompt menyebut "SEDANG 66→65" — itu SALAH.
+        Bucket SEDANG di §2 mengikuti `Prioritas :`, bukan `Status :`
+        (bukti: catatan register line ~1928 + preseden TD-113 FIXED, TD-127
+        FIXED, TD-144 FIXED — semuanya tetap terdaftar di daftar SEDANG).
+        Divergence diverifikasi dengan parser atas 142 field `ID :` /
+        `Status :` / `Prioritas :` di file ini: sebelum fix FIXED 38, CLOSED
+        14, DEFERRED 7, OPEN 83; Prioritas KRITIS 8, TINGGI 40, SEDANG 66,
+        RENDAH 28. Maka dipakai: SEDANG TETAP 66, hanya bucket Status yang
+        bergerak. Total tetap 142 (39 + 14 + 7 + 82 = 142 = 8 + 40 + 66 + 28).
+        Sisa (di luar scope TD-147, R8 — tidak disentuh): helper
+        createWallet di internal/food/integration_test.go:212 sekarang DEAD
+        CODE — grep `\.createWallet(` repo-wide = 0 call site (food sudah
+        pakai pola benar getWalletID di line 442-447). Go masih compile
+        karena unused METHOD tidak error. Kandidat penghapusan TD kecil nanti.
+
 ================================================================================
+        [OVERRIDE-1 / §11.2 — 2026-09-26, sesi TD-149 + TD-150] Prompt
+        Reviewer FIX 4 menulis "SEDANG TETAP 66" — itu SALAH untuk konteks
+        penambahan entry baru. Bukti konkret: TD-150 didefinisikan oleh
+        prompt yang sama dengan `Prioritas : SEDANG`, sehingga mengabadikannya
+        sebagai entry baru WAJIB menambah bucket SEDANG 66 → 67. Aritmetika:
+        dengan SEDANG 66 hasil bucket = 8 + 40 + 66 + 29 = 143 ≠ 144 (V4
+        "parser sum = total" GAGAL); dengan SEDANG 67 hasil = 144 ✓.
+        Catatan: koreksi "SEDANG 66→65" di OVERRIDE-1 sesi sebelumnya
+        (TD-147) tidak bisa disalin ke sini — reason-nya berbeda: TD-147
+        hanya berubah Status, sedangkan TD-149/TD-150 menambah entry baru.
+        Fix yang dipakai: SEDANG 67, RENDAH 29, Total 144, OPEN 84.
+        Verifikasi pasca-edit: parser atas 144 field `ID :` → Prioritas
+        KRITIS 8 + TINGGI 40 + SEDANG 67 + RENDAH 29 = 144; Status FIXED 39
+        + CLOSED 14 + DEFERRED 7 + OPEN 84 = 144. Dua-duanya = 144.
+        Bukti TD-149 (dead code, diverifikasi ulang sesi ini): grep
+        `\.createWallet(` repo-wide = 0 hasil; definisi tunggal di
+        internal/food/integration_test.go:212; getWalletID (:223) dipakai di
+        10 call site (:445, :470, :538, :577, :616, :640, :681, :748, :815).
+        Bukti TD-150 (coupling): internal/auth/handler.go:232 → :303
+        createWalletsForUser; newDriver ride (:181-192) dan send (:382-392)
+        bergantung pada wallet hasil auto-create /auth/register; historis
+        12/12 ride + 4/4 send FAIL 23505 (TD-144, TD-147).
+        Catatan R2/R3: kedua item DIVERIFIKASI ke kode sebelum ditulis, bukan
+        sekadar klaim prompt. Sesi ini tidak mengubah kode apa pun — register
+        dokumentasi saja. Tidak commit (R10).
+
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ================================================================================

@@ -192,15 +192,13 @@ func registerAndLogin(t *testing.T, r *gin.Engine, userType string) (string, uui
 
 // --- helpers akses DB ---
 
-func (e *testEnv) createWallet(t *testing.T, ctx context.Context, userID uuid.UUID, walletType string, balance decimal.Decimal) uuid.UUID {
+// setWalletBalance menimpa saldo wallet yang sudah ada (dipakai untuk
+// memberi saldo awal pada wallet hasil auto-create /auth/register).
+func (e *testEnv) setWalletBalance(t *testing.T, ctx context.Context, walletID uuid.UUID, balance decimal.Decimal) {
 	t.Helper()
-	var id uuid.UUID
-	err := e.pool.QueryRow(ctx, `
-		INSERT INTO wallets (user_id, wallet_type, balance, status)
-		VALUES ($1, $2, $3, 'ACTIVE')
-		RETURNING id`, userID, walletType, balance).Scan(&id)
+	_, err := e.pool.Exec(ctx,
+		`UPDATE wallets SET balance = $2, updated_at = NOW() WHERE id = $1`, walletID, balance)
 	require.NoError(t, err)
-	return id
 }
 
 func (e *testEnv) getWalletID(t *testing.T, ctx context.Context, userID uuid.UUID, walletType string) uuid.UUID {
@@ -381,11 +379,16 @@ func completeSendStop(t *testing.T, e *testEnv, driverToken string, orderID, sto
 	return data.OrderStatus, data.Settled
 }
 
-// newDriver mendaftarkan driver + wallet DRIVER dengan saldo awal.
+// newDriver mendaftarkan driver lalu memakai wallet DRIVER yang sudah dibuat
+// otomatis oleh /auth/register (createWalletsForUser di internal/auth).
+// Helper ini TIDAK boleh INSERT wallet lagi — wallet_user_type_unique akan
+// menolak (SQLSTATE 23505). Saldo awal di-set pada wallet yang sudah ada.
 func newDriver(t *testing.T, e *testEnv, initialBalance int) (string, uuid.UUID, uuid.UUID) {
 	t.Helper()
+	ctx := context.Background()
 	token, driverID := registerAndLogin(t, e.r, "driver")
-	walletID := e.createWallet(t, context.Background(), driverID, "DRIVER", decimal.NewFromInt(int64(initialBalance)))
+	walletID := e.getWalletID(t, ctx, driverID, "DRIVER")
+	e.setWalletBalance(t, ctx, walletID, decimal.NewFromInt(int64(initialBalance)))
 	return token, driverID, walletID
 }
 
