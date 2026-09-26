@@ -12,6 +12,7 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -22,20 +23,33 @@ var (
 	repoEscrowID = uuid.MustParse("85555555-5555-5555-5555-555555555555")
 )
 
-// orderRowSet membangun pgxmock rows untuk kolom lengkap ride_orders.
-func orderRowSet(o *RideOrder) *pgxmock.Rows {
-	return pgxmock.NewRows([]string{
-		"id", "customer_id", "driver_id",
-		"customer_wallet_id", "driver_wallet_id",
-		"pickup_lat", "pickup_lng", "pickup_address",
-		"dropoff_lat", "dropoff_lng", "dropoff_address",
-		"distance_km", "base_fare", "per_km_rate", "estimated_fare", "actual_fare",
-		"surge_multiplier", "toll_fee", "cancellation_fee", "discount_amount", "voucher_id",
-		"payment_method", "platform_commission", "driver_earning",
-		"status", "cancellation_reason",
-		"created_at", "expires_at", "assigned_at", "pickup_at", "completed_at", "settled_at",
-		"is_settled", "settlement_notes",
-	}).AddRow(
+// ptrString helper pembungkus literal string jadi *string (dipakai test
+// kolom driver nullable).
+func ptrString(s string) *string { return &s }
+
+// orderColumnNames daftar kolom hasil SELECT ride_orders tanpa JOIN (34).
+var orderColumnNames = []string{
+	"id", "customer_id", "driver_id",
+	"customer_wallet_id", "driver_wallet_id",
+	"pickup_lat", "pickup_lng", "pickup_address",
+	"dropoff_lat", "dropoff_lng", "dropoff_address",
+	"distance_km", "base_fare", "per_km_rate", "estimated_fare", "actual_fare",
+	"surge_multiplier", "toll_fee", "cancellation_fee", "discount_amount", "voucher_id",
+	"payment_method", "platform_commission", "driver_earning",
+	"status", "cancellation_reason",
+	"created_at", "expires_at", "assigned_at", "pickup_at", "completed_at", "settled_at",
+	"is_settled", "settlement_notes",
+}
+
+// orderWithDriverColumnNames = orderColumnNames + 4 kolom users yang di-LEFT
+// JOIN GetOrderByID (users.name/phone/vehicle_type/vehicle_plate) → 38 kolom.
+// Urutannya WAJIB sama dengan append di scanOrderValues(repository.go).
+var orderWithDriverColumnNames = append(append([]string{}, orderColumnNames...),
+	"driver_name", "driver_phone", "vehicle_type", "vehicle_plate")
+
+// orderRowValues urutan nilai yang cocok dengan orderColumnNames.
+func orderRowValues(o *RideOrder) []any {
+	return []any{
 		o.ID, o.CustomerID, o.DriverID,
 		o.CustomerWalletID, o.DriverWalletID,
 		o.PickupLat, o.PickupLng, o.PickupAddress,
@@ -46,7 +60,19 @@ func orderRowSet(o *RideOrder) *pgxmock.Rows {
 		o.Status, o.CancellationReason,
 		o.CreatedAt, o.ExpiresAt, o.AssignedAt, o.PickupAt, o.CompletedAt, o.SettledAt,
 		o.IsSettled, o.SettlementNotes,
-	)
+	}
+}
+
+// orderRowSet membangun pgxmock rows untuk kolom lengkap ride_orders.
+func orderRowSet(o *RideOrder) *pgxmock.Rows {
+	return pgxmock.NewRows(orderColumnNames).AddRow(orderRowValues(o)...)
+}
+
+// orderRowSetWithDriver membangun pgxmock rows 38 kolom (ride_orders LEFT JOIN
+// users) sesuai yang diminta scanOrderWithDriverRow.
+func orderRowSetWithDriver(o *RideOrder) *pgxmock.Rows {
+	return pgxmock.NewRows(orderWithDriverColumnNames).
+		AddRow(append(orderRowValues(o), o.DriverName, o.DriverPhone, o.DriverVehicleType, o.DriverVehiclePlate)...)
 }
 
 func repoOrder(status string, driver *uuid.UUID) *RideOrder {
@@ -220,9 +246,9 @@ func TestRepository_GetOrderByID_Success(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 	o := repoOrder(statusSearchingDriver, nil)
-	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
 		WithArgs(repoOrderID).
-		WillReturnRows(orderRowSet(o))
+		WillReturnRows(orderRowSetWithDriver(o))
 
 	repo := NewRepository(mDB)
 	got, err := repo.GetOrderByID(context.Background(), repoOrderID)
@@ -235,7 +261,7 @@ func TestRepository_GetOrderByID_Success(t *testing.T) {
 func TestRepository_GetOrderByID_NotFound(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
-	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
 		WithArgs(repoOrderID).
 		WillReturnError(pgx.ErrNoRows)
 
@@ -245,11 +271,95 @@ func TestRepository_GetOrderByID_NotFound(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// ---- TD-113: GetOrderByID LEFT JOIN users untuk info driver ----
+
+// TestRepo_GetOrderByID_WithDriver memverifikasi query meng-JOIN users
+// (bukan hanya ride_orders) dan 4 kolom driver ter-scan ke RideOrder.
+func TestRepo_GetOrderByID_WithDriver(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	o := repoOrder(statusDriverAssigned, &repoDriverID)
+	o.DriverName = ptrString("Budi Santoso")
+	o.DriverPhone = ptrString("+628123456789")
+	o.DriverVehicleType = ptrString("MOTORCYCLE")
+	o.DriverVehiclePlate = ptrString("B 1234 ABC")
+
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
+		WithArgs(repoOrderID).
+		WillReturnRows(orderRowSetWithDriver(o))
+
+	repo := NewRepository(mDB)
+	got, err := repo.GetOrderByID(context.Background(), repoOrderID)
+	require.NoError(t, err)
+
+	assert.Equal(t, repoDriverID, *got.DriverID)
+	require.NotNil(t, got.DriverName)
+	assert.Equal(t, "Budi Santoso", *got.DriverName)
+	require.NotNil(t, got.DriverPhone)
+	// PENTING: repository TIDAK melakukan masking — itu urusan service.GetOrder.
+	assert.Equal(t, "+628123456789", *got.DriverPhone)
+	require.NotNil(t, got.DriverVehicleType)
+	assert.Equal(t, "MOTORCYCLE", *got.DriverVehicleType)
+	require.NotNil(t, got.DriverVehiclePlate)
+	assert.Equal(t, "B 1234 ABC", *got.DriverVehiclePlate)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepo_GetOrderByID_NoDriver Order SEARCHING_DRIVER: driver_id NULL →
+// kolom users NULL semua (LEFT JOIN tidak match) → pointer driver nil, bukan error.
+func TestRepo_GetOrderByID_NoDriver(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	o := repoOrder(statusSearchingDriver, nil)
+
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
+		WithArgs(repoOrderID).
+		WillReturnRows(orderRowSetWithDriver(o))
+
+	repo := NewRepository(mDB)
+	got, err := repo.GetOrderByID(context.Background(), repoOrderID)
+	require.NoError(t, err)
+
+	assert.Nil(t, got.DriverID)
+	assert.Nil(t, got.DriverName)
+	assert.Nil(t, got.DriverPhone)
+	assert.Nil(t, got.DriverVehicleType)
+	assert.Nil(t, got.DriverVehiclePlate)
+	assert.Equal(t, statusSearchingDriver, got.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepo_GetOrderByID_JoinQueryShape mengunci bentuk SQL: wajib LEFT JOIN
+// users (bukan INNER — order tanpa driver harus tetap terbaca) dan wajib
+// men-select 4 kolom driver. Guard terhadap regresi ke SELECT ride_orders saja.
+func TestRepo_GetOrderByID_JoinQueryShape(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	o := repoOrder(statusDriverAssigned, &repoDriverID)
+
+	mDB.ExpectQuery("(?s)LEFT JOIN users ON users.id = ride_orders.driver_id").
+		WithArgs(repoOrderID).
+		WillReturnRows(orderRowSetWithDriver(o))
+	mDB.ExpectQuery("users\\.name, users\\.phone, users\\.vehicle_type, users\\.vehicle_plate").
+		WithArgs(repoOrderID).
+		WillReturnRows(orderRowSetWithDriver(o))
+
+	repo := NewRepository(mDB)
+	// Dua panggilan: expectation pgxmock bersifat ordered, satu per query.
+	_, err = repo.GetOrderByID(context.Background(), repoOrderID)
+	require.NoError(t, err)
+	_, err = repo.GetOrderByID(context.Background(), repoOrderID)
+	require.NoError(t, err)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 func TestRepository_ListOrdersByCustomer_NoStatus(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 	o := repoOrder(statusSettled, &repoDriverID)
-	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
 		WithArgs(repoCustID, 20, 0).
 		WillReturnRows(orderRowSet(o))
 
@@ -266,7 +376,7 @@ func TestRepository_ListOrdersByCustomer_WithStatus(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 	o := repoOrder(statusCompleted, &repoDriverID)
-	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
 		WithArgs(repoCustID, "COMPLETED", 10, 10).
 		WillReturnRows(orderRowSet(o))
 
@@ -310,7 +420,7 @@ func TestRepository_LockOrderForUpdate(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 	o := repoOrder(statusDriverAssigned, &repoDriverID)
-	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
 		WithArgs(repoOrderID).
 		WillReturnRows(orderRowSet(o))
 
@@ -606,7 +716,7 @@ func TestRepository_MarkDriverBusy(t *testing.T) {
 func TestScanOrderRow_QueryError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
-	mDB.ExpectQuery("SELECT id, customer_id, driver_id").
+	mDB.ExpectQuery("SELECT ride_orders.id, ride_orders.customer_id, ride_orders.driver_id").
 		WithArgs(repoOrderID).
 		WillReturnError(errors.New("conn refused"))
 

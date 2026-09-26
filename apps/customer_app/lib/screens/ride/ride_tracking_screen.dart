@@ -177,6 +177,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   ) {
     final order = tracking.order!;
     final theme = Theme.of(context);
+    final driver = tracking.driver ?? order.driver;
 
     return Material(
       color: Colors.white,
@@ -188,9 +189,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
           children: [
             _StatusCard(order: order, driverLocation: tracking.driverLocation),
             const SizedBox(height: 12),
-            if (tracking.driver != null) ...[
+            if (driver != null) ...[
               _DriverCard(
-                driver: tracking.driver!,
+                driver: driver,
                 onCall: () => _notImplemented('Hubungi driver'),
                 onMessage: () => _notImplemented('Chat driver'),
               ),
@@ -529,6 +530,16 @@ class _DriverCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (driver.phone.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(Icons.phone, size: 16, color: theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Text(driver.phone, style: theme.textTheme.bodyMedium),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             Row(
               children: [

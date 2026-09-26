@@ -574,6 +574,120 @@ func TestGetOrder(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+// ---- TD-113: GetOrder enrich driver info + masking phone ----
+
+// TestService_GetOrder_EnrichesDriver Order punya driver: GetOrder harus
+// mengembalikan name/vehicle apa adanya, phone dalam bentuk MASKED, dan
+// TIDAK boleh memutasikan objek order dari repository.
+func TestService_GetOrder_EnrichesDriver(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	o := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	o.DriverName = ptrString("Budi Santoso")
+	o.DriverPhone = ptrString("+628123456789")
+	o.DriverVehicleType = ptrString("MOTORCYCLE")
+	o.DriverVehiclePlate = ptrString("B 1234 ABC")
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(o, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrder(context.Background(), svcOrderID)
+	require.NoError(t, err)
+
+	// Masking: +62 + 4 digit terakhir disembunyikan -> "+62****6789".
+	require.NotNil(t, got.DriverPhone)
+	assert.Equal(t, "+62****6789", *got.DriverPhone)
+	assert.NotEqual(t, "+628123456789", *got.DriverPhone, "phone mentah tidak boleh bocor ke consumer")
+
+	// Field lain driver diteruskan tanpa modifikasi.
+	require.NotNil(t, got.DriverName)
+	assert.Equal(t, "Budi Santoso", *got.DriverName)
+	require.NotNil(t, got.DriverVehicleType)
+	assert.Equal(t, "MOTORCYCLE", *got.DriverVehicleType)
+	require.NotNil(t, got.DriverVehiclePlate)
+	assert.Equal(t, "B 1234 ABC", *got.DriverVehiclePlate)
+	assert.Equal(t, svcDriverID, *got.DriverID)
+
+	// Objek order milik repository tidak boleh termutasi (masking via copy).
+	require.NotNil(t, o.DriverPhone)
+	assert.Equal(t, "+628123456789", *o.DriverPhone)
+
+	repo.AssertExpectations(t)
+}
+
+// TestService_GetOrder_NoDriver Order SEARCHING_DRIVER: driver_id NULL dan
+// semua kolom driver NULL. GetOrder harus graceful — tidak error, tidak panic,
+// pointer tetap nil.
+func TestService_GetOrder_NoDriver(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	o := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(o, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrder(context.Background(), svcOrderID)
+	require.NoError(t, err)
+
+	assert.Nil(t, got.DriverID)
+	assert.Nil(t, got.DriverName)
+	assert.Nil(t, got.DriverPhone)
+	assert.Nil(t, got.DriverVehicleType)
+	assert.Nil(t, got.DriverVehiclePlate)
+	assert.Equal(t, statusSearchingDriver, got.Status)
+	repo.AssertExpectations(t)
+}
+
+// TestService_GetOrder_RepoError Error repository diteruskan apa adanya, tanpa
+// attempting masking pada order nil.
+func TestService_GetOrder_RepoError(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(nil, ErrOrderNotFound)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrder(context.Background(), svcOrderID)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrOrderNotFound)
+	repo.AssertExpectations(t)
+}
+
+// TestMaskDriverPhone_Table menutupi seluruh cabang maskDriverPhone
+// (service.go): prefix +62 / 0 / tanpa prefix, terpotong, kosong, dan nil.
+func TestMaskDriverPhone_Table(t *testing.T) {
+	cases := []struct {
+		name  string
+		input *string
+		want  *string
+	}{
+		{"nil", nil, nil},
+		{"empty string", ptrString(""), nil},
+		{"whitespace only", ptrString("   "), nil},
+		{"<=4 digits", ptrString("1234"), ptrString("****")},
+		{"+62 normal", ptrString("+628123456789"), ptrString("+62****6789")},
+		{"+62 panjang", ptrString("+6281234567890"), ptrString("+62****7890")},
+		{"0 normal", ptrString("08123456789"), ptrString("0812****6789")},
+		{"tanpa prefix", ptrString("8123456789"), ptrString("****6789")},
+		{"+62 pendek (tidak muat)", ptrString("+628123"), ptrString("****8123")},
+		{"0 pendek (tidak muat)", ptrString("08123456"), ptrString("****3456")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := maskDriverPhone(tc.input)
+			if tc.want == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, *tc.want, *got)
+		})
+	}
+}
+
 // GetRidesHistory
 
 func TestGetRidesHistory_Success(t *testing.T) {

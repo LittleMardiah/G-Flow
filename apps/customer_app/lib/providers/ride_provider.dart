@@ -103,7 +103,12 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
       // TODO: setelah backend mengembalikan info driver & lokasi driver,
       // tambahkan pemanggilan definitf di sini (order + driver + lokasi).
       final order = await _service.getRideDetails(_args.orderId);
-      state = RideTrackingState(isLoading: false, isMock: false, order: order);
+      state = RideTrackingState(
+        isLoading: false,
+        isMock: false,
+        order: order,
+        driver: order.driver,
+      );
       if (order.isTerminal) stopPolling();
     } catch (_) {
       state = state.copyWith(
@@ -133,6 +138,7 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
     final order = RideOrder(
       id: _args.orderId,
       driverId: driver?.id,
+      driver: driver,
       status: status,
       pickupLat: _args.pickupLat,
       pickupLng: _args.pickupLng,
@@ -173,6 +179,7 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
         isLoading: false,
         isMock: kUseMockRideData,
         order: current?.copyWith(status: 'CANCELLED', cancellationReason: 'CUSTOMER_CANCEL'),
+        driver: current?.driver,
         message: 'Ride berhasil dibatalkan',
       );
       stopPolling();

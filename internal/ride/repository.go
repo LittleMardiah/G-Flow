@@ -70,6 +70,10 @@ type RideOrder struct {
 	ID                 uuid.UUID
 	CustomerID         uuid.UUID
 	DriverID           *uuid.UUID
+	DriverName         *string
+	DriverPhone        *string
+	DriverVehicleType  *string
+	DriverVehiclePlate *string
 	CustomerWalletID   *uuid.UUID
 	DriverWalletID     *uuid.UUID
 	PickupLat          float64
@@ -353,22 +357,30 @@ func (r *Repository) InsertUserVoucher(ctx context.Context, q Querier, uv *UserV
 
 // rideOrderColumns daftar kolom ride_orders untuk SELECT lengkap. Dipakai
 // bersama oleh GetOrderByID dan LockOrderForUpdate agar tetap satu sumber.
-const rideOrderColumns = `id, customer_id, driver_id,
-	customer_wallet_id, driver_wallet_id,
-	pickup_lat, pickup_lng, pickup_address,
-	dropoff_lat, dropoff_lng, dropoff_address,
-	distance_km, base_fare, per_km_rate, estimated_fare, actual_fare,
-	surge_multiplier, toll_fee, cancellation_fee, discount_amount, voucher_id,
-	payment_method, platform_commission, driver_earning,
-	status, cancellation_reason,
-	created_at, expires_at, assigned_at, pickup_at, completed_at, settled_at,
-	is_settled, settlement_notes`
+const rideOrderColumns = `ride_orders.id, ride_orders.customer_id, ride_orders.driver_id,
+	ride_orders.customer_wallet_id, ride_orders.driver_wallet_id,
+	ride_orders.pickup_lat, ride_orders.pickup_lng, ride_orders.pickup_address,
+	ride_orders.dropoff_lat, ride_orders.dropoff_lng, ride_orders.dropoff_address,
+	ride_orders.distance_km, ride_orders.base_fare, ride_orders.per_km_rate, ride_orders.estimated_fare, ride_orders.actual_fare,
+	ride_orders.surge_multiplier, ride_orders.toll_fee, ride_orders.cancellation_fee, ride_orders.discount_amount, ride_orders.voucher_id,
+	ride_orders.payment_method, ride_orders.platform_commission, ride_orders.driver_earning,
+	ride_orders.status, ride_orders.cancellation_reason,
+	ride_orders.created_at, ride_orders.expires_at, ride_orders.assigned_at, ride_orders.pickup_at, ride_orders.completed_at, ride_orders.settled_at,
+	ride_orders.is_settled, ride_orders.settlement_notes`
 
 // scanOrderRow memindahkan satu baris ride_orders ke *RideOrder.
 // Mengembalikan ErrOrderNotFound jika tidak ada baris.
 func scanOrderRow(row pgx.Row) (*RideOrder, error) {
+	return scanOrderValues(row, false)
+}
+
+func scanOrderWithDriverRow(row pgx.Row) (*RideOrder, error) {
+	return scanOrderValues(row, true)
+}
+
+func scanOrderValues(row interface{ Scan(dest ...any) error }, includeDriver bool) (*RideOrder, error) {
 	var o RideOrder
-	err := row.Scan(
+	values := []any{
 		&o.ID,
 		&o.CustomerID, &o.DriverID,
 		&o.CustomerWalletID, &o.DriverWalletID,
@@ -380,7 +392,11 @@ func scanOrderRow(row pgx.Row) (*RideOrder, error) {
 		&o.Status, &o.CancellationReason,
 		&o.CreatedAt, &o.ExpiresAt, &o.AssignedAt, &o.PickupAt, &o.CompletedAt, &o.SettledAt,
 		&o.IsSettled, &o.SettlementNotes,
-	)
+	}
+	if includeDriver {
+		values = append(values, &o.DriverName, &o.DriverPhone, &o.DriverVehicleType, &o.DriverVehiclePlate)
+	}
+	err := row.Scan(values...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrOrderNotFound
 	}
@@ -393,7 +409,13 @@ func scanOrderRow(row pgx.Row) (*RideOrder, error) {
 // GetOrderByID mengambil order lengkap berdasarkan id.
 // Mengembalikan ErrOrderNotFound jika tidak ada.
 func (r *Repository) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*RideOrder, error) {
-	return scanOrderRow(r.db.QueryRow(ctx, `SELECT `+rideOrderColumns+` FROM ride_orders WHERE id = $1`, orderID))
+	return scanOrderWithDriverRow(r.db.QueryRow(ctx, `
+		SELECT `+rideOrderColumns+`,
+			users.name, users.phone, users.vehicle_type, users.vehicle_plate
+		FROM ride_orders
+		LEFT JOIN users ON users.id = ride_orders.driver_id
+		WHERE ride_orders.id = $1
+	`, orderID))
 }
 
 // ListOrdersByCustomer mengambil riwayat order milik customer (pagination,

@@ -132,7 +132,19 @@ class _DriverCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final driver = order.driver;
     final driverId = order.driverId;
+    final name = driver?.name.trim() ?? '';
+    final displayName = name.isNotEmpty
+        ? name
+        : driverId != null
+            ? 'Driver #${_shortId(driverId)}'
+            : 'Belum ada driver';
+    final vehicle = [
+      driver?.vehicleType.trim() ?? '',
+      driver?.vehiclePlate.trim() ?? '',
+    ].where((value) => value.isNotEmpty).join(' • ');
+
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
@@ -141,11 +153,15 @@ class _DriverCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             CircleAvatar(
               radius: 24,
-              child: driverId != null
-                  ? Text(_shortId(driverId).substring(0, 1), style: const TextStyle(fontWeight: FontWeight.bold))
+              child: driverId != null || driver != null
+                  ? Text(
+                      name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    )
                   : const Icon(Icons.person_off_outlined),
             ),
             const SizedBox(width: 12),
@@ -153,19 +169,38 @@ class _DriverCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    driverId != null ? 'Driver #${_shortId(driverId)}' : 'Belum ada driver',
-                    style: theme.textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    driverId != null
-                        ? 'Info nama/telepon/kendaraan belum tersedia di endpoint detail.'
-                        : 'Ride sedang mencari driver terdekat.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                  Text(displayName, style: theme.textTheme.titleSmall),
+                  if (driver?.phone.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.phone, size: 15, color: theme.colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 5),
+                        Text(driver!.phone, style: theme.textTheme.bodySmall),
+                      ],
                     ),
-                  ),
+                  ],
+                  if (vehicle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.car_rental, size: 15, color: theme.colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 5),
+                        Expanded(child: Text(vehicle, style: theme.textTheme.bodySmall)),
+                      ],
+                    ),
+                  ],
+                  if (driver == null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      driverId != null
+                          ? 'Info nama/telepon/kendaraan belum tersedia di endpoint detail.'
+                          : 'Ride sedang mencari driver terdekat.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

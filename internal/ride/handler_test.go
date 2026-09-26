@@ -546,6 +546,136 @@ func TestHandler_GetRide_DriverAssigned_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// ---- TD-113: response GET /rides/{id} memuat object "driver" ----
+
+// TestHandler_GetRide_WithDriver Memverifikasi body JSON memuat object
+// `driver` lengkap (id, name, phone_masked, vehicle_type, vehicle_plate).
+// Nilai phone yang diberi SUDAH dimasking (memang begitu svc.GetOrder
+// memasking) dan handler harus meneruskannya apa adanya.
+func TestHandler_GetRide_WithDriver(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	order.DriverName = ptrString("Budi Santoso")
+	order.DriverPhone = ptrString("+62****6789")
+	order.DriverVehicleType = ptrString("MOTORCYCLE")
+	order.DriverVehiclePlate = ptrString("B 1234 ABC")
+
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Bentuk JSON mentah: kunci "driver" harus benar-benar ada di body.
+	var raw struct {
+		Success bool `json:"success"`
+		Data    struct {
+			DriverID string          `json:"driver_id"`
+			Driver   json.RawMessage `json:"driver"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	assert.True(t, raw.Success)
+	assert.Equal(t, svcDriverID.String(), raw.Data.DriverID)
+	assert.NotEqual(t, "null", string(raw.Data.Driver), "driver tidak boleh null saat driver assigned")
+	assert.Contains(t, string(raw.Data.Driver), `"phone_masked"`)
+
+	// Isi object driver.
+	var out struct {
+		Success bool               `json:"success"`
+		Data    rideDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.NotNil(t, out.Data.Driver)
+	assert.Equal(t, svcDriverID, *out.Data.Driver.ID)
+	require.NotNil(t, out.Data.Driver.Name)
+	assert.Equal(t, "Budi Santoso", *out.Data.Driver.Name)
+	require.NotNil(t, out.Data.Driver.PhoneMasked)
+	assert.Equal(t, "+62****6789", *out.Data.Driver.PhoneMasked)
+	require.NotNil(t, out.Data.Driver.VehicleType)
+	assert.Equal(t, "MOTORCYCLE", *out.Data.Driver.VehicleType)
+	require.NotNil(t, out.Data.Driver.VehiclePlate)
+	assert.Equal(t, "B 1234 ABC", *out.Data.Driver.VehiclePlate)
+	svc.AssertExpectations(t)
+}
+
+// TestHandler_GetRide_NoDriver Order SEARCHING_DRIVER → `driver` harus
+// diserialisasi sebagai JSON null (bukan object kosong, bukan key hilang),
+// karena Flutter membaca `j['driver'] is Map`.
+func TestHandler_GetRide_NoDriver(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	data, ok := raw["data"].(map[string]any)
+	require.True(t, ok)
+
+	// Kunci "driver" HARUS ada (rideDetailResponse tanpa omitempty) dan null.
+	driverVal, present := data["driver"]
+	assert.True(t, present, "kunci driver harus tetap ada di response")
+	assert.Nil(t, driverVal)
+	assert.Nil(t, data["driver_id"])
+
+	var out struct {
+		Data rideDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Nil(t, out.Data.Driver)
+	assert.Nil(t, out.Data.DriverID)
+	svc.AssertExpectations(t)
+}
+
+// TestHandler_GetRide_DriverPartial Driver ada tapi users kolom null
+// (mis. data driver belum lengkap). Tidak boleh panic; field null individu.
+func TestHandler_GetRide_DriverPartial(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	order.DriverName = ptrString("Budi Santoso")
+	// DriverPhone/Vehicle* sengaja nil.
+
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out struct {
+		Data rideDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.NotNil(t, out.Data.Driver)
+	assert.Equal(t, svcDriverID, *out.Data.Driver.ID)
+	assert.NotNil(t, out.Data.Driver.Name)
+	assert.Equal(t, "Budi Santoso", *out.Data.Driver.Name)
+	assert.Nil(t, out.Data.Driver.PhoneMasked)
+	assert.Nil(t, out.Data.Driver.VehicleType)
+	assert.Nil(t, out.Data.Driver.VehiclePlate)
+	svc.AssertExpectations(t)
+}
+
 func TestHandler_GetRide_Forbidden(t *testing.T) {
 	_, c, w := setupGin()
 	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}

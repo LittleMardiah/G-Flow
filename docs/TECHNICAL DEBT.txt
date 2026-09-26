@@ -1369,8 +1369,15 @@ Solusi     : Entahkan driver_name, driver_phone, vehicle_type,
              vehicle_plate (atau driver object) di rideDetailResponse
              (internal/ride/handler.go:211). Backend punya GetDriver
              (repository.go:435) tapi belum join user driver.
+             [2026-09-25 DONE] GetOrderByID (repository.go:410) LEFT JOIN
+             users + 4 kolom driver di-scan (repository.go:73-76, 397).
+             svc.GetOrder (service.go:523) masking phone via
+             maskDriverPhone (service.go:534). Handler expose object
+             `driver` (handler.go:247, 258, 317-334). 12 unit test baru
+             (repository/service/handler + tabel masking), coverage
+             internal/ride 84.5%. Flutter tinggal verifikasi PowerShell.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-25, commit TD-113)
 Referensi  : TD-077 C2 (temuan OpenCode)
 
 ID         : TD-114
@@ -1789,24 +1796,143 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-127 (temuan OpenCode)
 
+ID         : TD-144
+Kategori   : TESTING
+Judul      : 12 dari 12 test integration ride GAGAG: helper createWallet
+             (internal/ride/integration_test.go:193-198) insert wallet
+             DRIVER padahal /auth/register sudah auto-create wallet
+             (internal/auth/handler.go:303-306) → 23505
+             wallet_user_type_unique.
+Dampak     : `go test -tags integration ./internal/ride/...` 100% FAIL
+             total. Tidak ada verifikasi integrasi ride yang valid —
+             regression ride/fare/settlement tidak terdeteksi. 12 test:
+             E2EWalletSettlement, ConcurrentAccept, SameDriverDoubleAccept,
+             CustomerCancelAfterAssigned, CustomerCancelAfterArrived,
+             NoShowCancel, CustomerNoShowForbidden, DriverEmergencyCancel,
+             CashSettlement, DeltaFareSurplus, DeltaFareShortfall,
+             VoucherBookingSettlement.
+             PRE-EXISTING (bukan regression): dibuktikan 2026-09-26 —
+             run di worktree HEAD e735568 (tanpa TD-113) gagal identik.
+Solusi     : Ubah newDriver (integration_test.go:182-187) agar TIDAK
+             insert wallet; ambil wallet hasil auto-create lewat
+             getWalletID(userID, "DRIVER") lalu top-up balance via UPDATE
+             (atau pakai helper wallet yang sudah ada di food/send).
+             Verifikasi ulang: 12 test PASS.
+             Coupling: test ride bergantung pada perilaku auto-create
+             wallet auth — pertimbangkan helper setup bersama.
+Prioritas  : SEDANG
+Status     : FIXED
+Referensi  : TD-113 (temuan OpenCode 2026-09-26, V5)
+Fixed      : 2026-09-26 — newDriver (internal/ride/integration_test.go:181-192)
+             tidak lagi INSERT wallet; ambil wallet DRIVER hasil auto-create
+             /auth/register via getWalletID lalu set saldo dengan setWalletBalance
+             (helper createWallet → setWalletBalance). Bukti: V3 15/15 PASS
+             (sebelumnya 12 FAIL / 3 PASS, semua 23505).
+
+ID         : TD-145
+Kategori   : DOKUMENTASI
+Judul      : "API CONTRACT.txt" §7.4 GET RIDE DETAILS (baris 748-777) belum
+             di-update — endpoint sekarang mengembalikan objek `driver`
+             (id/name/phone_masked/vehicle_type/vehicle_plate) plus field
+             baru (pickup_address, dropoff_address, base_fare, per_km_rate,
+             cancellation_reason, cancellation_fee, expires_at, assigned_at,
+             pickup_at, is_settled), tapi contoh response di contract masih
+             versi lama tanpa `driver`.
+Dampak     : R6 KONSISTENSI violated. Consumer (mobile app / integrasi
+             pihak ketiga) yang membaca contract bisa salah parse response
+             GET /rides/{order_id} dan mengira driver info tidak tersedia.
+Solusi     : Update §7.4 "API CONTRACT" agar sama dengan
+             rideDetailResponse (internal/ride/handler.go:258-287) dan
+             rideDriverResponse (internal/ride/handler.go:247-253).
+             Kode = source of truth (R2).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-113 (temuan OpenCode)
+
+ID         : TD-146
+Kategori   : KODE
+Judul      : Masking nomor HP driver hanya di service layer (maskDriverPhone
+             pada svc.GetOrder, internal/ride/service.go:530,534). Handler
+             hanya menyalin order.DriverPhone ke DTO
+             (internal/ride/handler.go:322) tanpa masking kedua.
+Dampak     : Tidak defense-in-depth. Kalau ada caller masa depan yang
+             melewati service (mis. expose RideOrder mentah, atau GetOrder
+             di-refactor tanpa masking), nomor HP mentah bisa bocor ke
+             response API.
+Solusi     : Mask di layer handler/DTO (defense-in-depth) — tetap baca dari
+             order.DriverPhone mentah, atau sediakan accessor terpusat.
+             Jangan andalkan satu-satunya mask di service.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-113 (temuan OpenCode)
+
+ID         : TD-147
+Kategori   : TESTING
+Judul      : internal/send/integration_test.go:388 newDriver masih INSERT
+             wallet DRIVER manual padahal /auth/register sudah auto-create
+             wallet DRIVER (internal/auth/handler.go:303-306) → 23505
+             wallet_user_type_unique. Pola sama dengan TD-144 (ride) yang
+             sudah diperbaiki.
+Dampak     : `go test -tags integration ./internal/send/...` gagal total —
+             DIBUKTIKAN 2026-09-26: 4 dari 4 test FAIL dengan error yang sama
+             (23505 wallet_user_type_unique) — TC_SEND_001 E2EWalletSingleStop,
+             TC_SEND_002 MultiStopSettlement, TC_SEND_003 DriverCapacity,
+             TC_SEND_004 DriverEmergencyCancel. Verifikasi integrasi send
+             (matching, capacity, status) tidak valid.
+Solusi     : Samakan dengan fix TD-144: ambil wallet DRIVER via
+             getWalletID(userID, "DRIVER") lalu set saldo via UPDATE.
+             Catatan: internal/food/integration_test.go:442-447 sudah memakai
+             pola benar (getWalletID) — dipakai sebagai referensi.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-144 (temuan OpenCode 2026-09-26)
+
+ID         : TD-148
+Kategori   : TESTING
+Judul      : Test integration ride FLAKY — 1 dari ~35 run `go test -tags
+             integration ./internal/ride/... -run TestIntegrationRide` gagal,
+             tidak dapat direproduksi (20 run berturut-turut subsequent PASS).
+Dampak     : CI integrasi bisa merah sewaktu-waktu (false negative) dan
+             developer bisa salah menduga regression.
+             [PERLU VERIFIKASI] Test yang gagal & penyebabnya belum diketahui.
+Bukti      : 2026-09-26 — run pertama pada loop 2x menghasilkan `FAIL`
+             (baris output yang tertangkap hanya "FAIL" karena di-pipe
+             `tail -1`, jadi nama test tidak terekam); 20 run berikutnya
+             (2x2 + 4x + 2 sequence + 10x + 2x) semua PASS 15/15.
+             Hipotesis yang SUDAH DIELIMINASI: `go test ./...` (unit suite)
+             tidak menyentuh DB nyata — hanya file *integration_test.go yang
+             membaca DATABASE_URL (grep evidence), jadi bukan cross-package
+             pollution dari unit test.
+Solusi     : (a) ulangi dengan output penuh tersimpan (jangan `tail -1`)
+             sampai gagal again, lalu perbaiki test yang flakiness-nya;
+             (b) audit assertion berbasis waktu/urutan (AutoCancelExpired,
+             ConcurrentAccept) dan isolation state antar test — kemungkinan
+             masih terkait TD-142 (state pollution antar run).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-142, TD-143 (temuan OpenCode 2026-09-26)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 137 item (TD-051 di-reserve/skip)
-                                       (36 FIXED + 14 CLOSED + 7 DEFERRED + 80 OPEN = 137)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 142 item (TD-051 di-reserve/skip)
+                                       (38 FIXED + 14 CLOSED + 7 DEFERRED + 83 OPEN = 142)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 61 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143)
-             [61 pada 2026-09-25: TD-127 selesai, TD-143 ditambahkan]
+- SEDANG  : 66 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148)
+             [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
+             SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
+             (FIXED) juga tetap terdaftar di sini.]
 - RENDAH  : 28 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140)
 
-STATUS: ✅ FIXED 36 item, 14 item CLOSED (FIXED/CLOSED 50), 7 item DEFERRED,
-        80 item OPEN.  [36 + 14 + 7 + 80 = 137 = TOTAL]
+STATUS: ✅ FIXED 38 item, 14 item CLOSED (FIXED/CLOSED 52), 7 item DEFERRED,
+        83 item OPEN.  [38 + 14 + 7 + 83 = 142 = TOTAL]
+
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
 1. Endpoint "available" backend yang hilang (TD-008) — mematikan fungsionalitas
@@ -1831,17 +1957,18 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-25):
-   - Total hutang teridentifikasi      : 137 item (TD-051 di-reserve/skip; 137 item aktif terdaftar).
-   - ✅ FIXED                           : 36 item
+3. RINGKASAN STATUS TERKINI (2026-09-26):
+   - Total hutang teridentifikasi      : 142 item (TD-051 di-reserve/skip; 142 item aktif terdaftar).
+   - ✅ FIXED                           : 38 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 50 item
+   - FIXED/CLOSED                       : 52 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 80 item (bukan hanya TD-058 s/d TD-143 — masih ada
+   - ❌ OPEN                              : 83 item (bukan hanya TD-058 s/d TD-148 — masih ada
                                           TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst.).
-     [36 + 14 + 7 + 80 = 137 = TOTAL]
+     [38 + 14 + 7 + 83 = 142 = TOTAL]
+
    RINCIAN 25 item lama (sengaja diringkas; detail di atas): TD-007 (belum deploy),
                                           TD-022 (language toggle UI), TD-026
                                           (admin lockout refactor), TD-030 (password
@@ -2193,6 +2320,75 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
        bersih. Status TD-127 → ✅ FIXED (2026-09-25, commit TD-127). FIXED
        35 → 36; FIXED/CLOSED 49 → 50; SEDANG 60 → 59; OPEN 80 → 79;
        total register tetap 136.
+     - TD-113 (2026-09-26 RESUME STEP E): TD-113 done — driver info
+       (name/phone masked/vehicle) di GET /rides/{id}. Backend tests PASS.
+       Flutter verify pending user PS. Detail: GetOrderByID LEFT JOIN users
+       (repository.go:410) + scan 4 kolom driver (repository.go:73-76, 397);
+       svc.GetOrder masking phone (service.go:523, 534); handler expose object
+       `driver` (handler.go:247, 258, 317-334). STEP E menambah 12 unit test
+       (repository 3, service 3 + tabel masking 10 subtest, handler 3) dan
+       memperbaiki 6 test existing yang rusak karena SQL jadi table-qualified.
+       V1 go build PASS, V2 go vet bersih, V3 187 test PASS 0 FAIL,
+       V4 coverage 84.5%. FIXED 36 → 37; FIXED/CLOSED 50 → 51; OPEN 79 → 80.
+       CATATAN: SEDANG TIDAK turun (tetap 61, lalu 62 setelah TD-144) —
+       bucket SEDANG mengikuti `Prioritas :`, bukan `Status :`. TD-113
+       berubah Status (OPEN→FIXED) tetapi Prioritas-nya tetap SEDANG, jadi
+       tetap terdaftar di daftar SEDANG; bukti pembanding: TD-127 statusnya
+       FIXED namun tetap ada di daftar SEDANG.
+       V5 (integration) BUKAN SKIP tapi FAIL TOTAL:
+       12 dari 12 TestIntegrationRide_* gagal dengan 23505
+       "duplicate key value violates unique constraint
+       wallet_user_type_unique". DB hidup (bukan connection refused).
+       Akar masalah: internal/auth/handler.go:303-306 createWalletsForUser
+       sudah auto-create wallet DRIVER saat /auth/register, sedangkan helper
+       newDriver → createWallet (internal/ride/integration_test.go:182-198)
+       tetap INSERT wallet DRIVER kedua untuk user yang sama.
+       Dibuktikan PRE-EXISTING (R3): run di git worktree HEAD e735568 tanpa
+       TD-113 → 12 test gagal identik. Bukan regression TD-113.
+       → dicatat sebagai TD-144 (TESTING, SEDANG, OPEN). Karena itu total
+       register menjadi 138, bukan 137: FIXED 37 + CLOSED 14 + DEFERRED 7 +
+       OPEN 80 = 138 (OPEN 79 → 80 setelah TD-113 FIXED, lalu +1 TD-144 = 80;
+       SEDANG 61 → 62 setelah TD-144).
+       Angka register diverifikasi ulang dengan parser terhadap 138 field
+       `ID :` / `Status :` / `Prioritas :` di file ini (source of truth, R2):
+       FIXED 37, CLOSED 14, DEFERRED 7, OPEN 80, dan KRITIS 8 + TINGGI 40 +
+       SEDANG 61 + RENDAH 28 = 138.
+        Mutation check: 3 test repository + 2 test handler terbukti FAIL saat
+        JOIN users / objek `driver` sengaja dimatikan → test tidak vacuous.
+        Flutter V6/V7 = PENDING USER PS RUN (Flutter SDK di WSL shared.sh
+        ber-CRLF; dart/flutter tidak bisa jalan dari WSL).
+
+      - TD-144 FIX (2026-09-26): newDriver (internal/ride/integration_test.go)
+        diubah agar TIDAK INSERT wallet DRIVER. Auth sudah auto-create wallet
+        DRIVER saat /auth/register (internal/auth/handler.go:303-306
+        createWalletsForUser), jadi helper sekarang ambil wallet tersebut
+        lewat getWalletID(userID, "DRIVER") lalu set saldo awal dengan
+        UPDATE (helper createWallet → setWalletBalance, tidak ada INSERT
+        lagi). Bukti V1 go build PASS, V2 go vet bersih, V3 15/15 PASS
+        (sebelumnya 12 FAIL / 3 PASS, semuanya 23505
+        wallet_user_type_unique), V4 unit test ride PASS.
+        Status TD-144: OPEN → ✅ FIXED. FIXED 37 → 38; FIXED/CLOSED 51 → 52;
+        OPEN 80 → 79.
+        Menambahkan 3 item baru hasil temuan sesi ini:
+        TD-145 (DOKUMENTASI, SEDANG) — "API CONTRACT" §7.4 baris 748-777
+        GET RIDE DETAILS belum menampilkan objek `driver` (id/name/
+        phone_masked/vehicle_type/vehicle_plate) yang sudah ada di kode
+        (internal/ride/handler.go:247-253, 258-287, 317-326).
+        TD-146 (KODE, SEDANG) — masking phone driver hanya di service layer
+        (internal/ride/service.go:530,534 maskDriverPhone); handler
+        (internal/ride/handler.go:322) hanya menyalin nilai sudah-masked
+        tanpa masking kedua → belum defense-in-depth.
+        TD-147 (TESTING, SEDANG) — internal/send/integration_test.go:388
+        newDriver punya pola INSERT wallet DRIVER yang sama seperti TD-144.
+        DIBUKTIKAN: 4 dari 4 test integrasi send FAIL 23505 (belum
+        diperbaiki; di luar scope sesi ini, R8).
+        TD-148 (TESTING, SEDANG) — 1 dari ~35 run integration ride FAIL tanpa
+        bisa direproduksi (20 run berikutnya PASS 15/15); hipotesis pollution
+        dari unit suite sudah dieliminasi (hanya *integration_test.go yang
+        baca DATABASE_URL). Root cause [PERLU VERIFIKASI].
+        Register: total 138 → 142; SEDANG 62 → 66; OPEN 79 → 83
+        (79 setelah TD-144 FIXED, +4 item baru). FIXED/CLOSED 52 + DEFERRED 7
+        + OPEN 83 = 142; KRITIS 8 + TINGGI 40 + SEDANG 66 + RENDAH 28 = 142.
 
 ================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

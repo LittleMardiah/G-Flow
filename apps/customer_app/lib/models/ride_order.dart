@@ -21,6 +21,7 @@ class RideOrder {
   const RideOrder({
     required this.id,
     this.driverId,
+    this.driver,
     required this.status,
     required this.pickupLat,
     required this.pickupLng,
@@ -43,6 +44,7 @@ class RideOrder {
 
   final String id;
   final String? driverId;
+  final DriverInfo? driver;
   final String status;
   final double pickupLat;
   final double pickupLng;
@@ -63,9 +65,19 @@ class RideOrder {
   final String? cancellationReason;
 
   factory RideOrder.fromJson(Map<String, dynamic> j) {
+    final driverJson = j['driver'];
+    final driver = driverJson is Map
+        ? DriverInfo.fromJson(driverJson.cast<String, dynamic>())
+        : null;
+    final rawDriverId = _str(j['driver_id']);
+    final driverId = rawDriverId != null && rawDriverId.isNotEmpty
+        ? rawDriverId
+        : (driver != null && driver.id.isNotEmpty ? driver.id : null);
+
     return RideOrder(
       id: _str(j['order_id']) ?? _str(j['id']) ?? '',
-      driverId: _str(j['driver_id']),
+      driverId: driverId,
+      driver: driver,
       status: _str(j['status']) ?? 'SEARCHING_DRIVER',
       pickupLat: _num(j['pickup_lat']),
       pickupLng: _num(j['pickup_lng']),
@@ -87,10 +99,15 @@ class RideOrder {
     );
   }
 
-  RideOrder copyWith({String? status, String? cancellationReason}) {
+  RideOrder copyWith({
+    String? status,
+    String? cancellationReason,
+    DriverInfo? driver,
+  }) {
     return RideOrder(
       id: id,
       driverId: driverId,
+      driver: driver ?? this.driver,
       status: status ?? this.status,
       pickupLat: pickupLat,
       pickupLng: pickupLng,
@@ -161,9 +178,9 @@ class DriverInfo {
 
   factory DriverInfo.fromJson(Map<String, dynamic> j) {
     return DriverInfo(
-      id: (j['driver_id'] ?? j['id'] ?? '').toString(),
+      id: (j['id'] ?? j['driver_id'] ?? '').toString(),
       name: (j['name'] ?? j['full_name'] ?? '').toString(),
-      phone: (j['phone'] ?? '').toString(),
+      phone: (j['phone_masked'] ?? j['phone'] ?? '').toString(),
       vehicleType: (j['vehicle_type'] ?? '').toString(),
       vehiclePlate: (j['vehicle_plate'] ?? '').toString(),
       photoUrl: j['photo_url']?.toString(),

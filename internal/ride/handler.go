@@ -54,14 +54,14 @@ type bookRideRequestBody struct {
 // dijanjikan API_CONTRACT 7.1 untuk respons booking. DiscountAmount &
 // VoucherCode hanya muncul saat booking memakai voucher (TD-070).
 type bookRideResponse struct {
-	OrderID       uuid.UUID       `json:"order_id"`
-	Status        string          `json:"status"`
-	DistanceKm    decimal.Decimal `json:"distance_km"`
-	EstimatedFare decimal.Decimal `json:"estimated_fare"`
+	OrderID        uuid.UUID       `json:"order_id"`
+	Status         string          `json:"status"`
+	DistanceKm     decimal.Decimal `json:"distance_km"`
+	EstimatedFare  decimal.Decimal `json:"estimated_fare"`
 	DiscountAmount decimal.Decimal `json:"discount_amount"`
-	VoucherCode   *string         `json:"voucher_code"`
-	PaymentMethod string          `json:"payment_method"`
-	ExpiresAt     time.Time       `json:"expires_at"`
+	VoucherCode    *string         `json:"voucher_code"`
+	PaymentMethod  string          `json:"payment_method"`
+	ExpiresAt      time.Time       `json:"expires_at"`
 }
 
 // BookRide POST /api/v1/rides/book
@@ -244,37 +244,46 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	})
 }
 
+type rideDriverResponse struct {
+	ID           *uuid.UUID `json:"id"`
+	Name         *string    `json:"name"`
+	PhoneMasked  *string    `json:"phone_masked"`
+	VehicleType  *string    `json:"vehicle_type"`
+	VehiclePlate *string    `json:"vehicle_plate"`
+}
+
 // rideDetailResponse memotong RideOrder ke field yang dijanjikan
 // API_CONTRACT 7.4 (GET /rides/{order_id}). Kolom internal (wallet_id,
 // voucher_id, surge, settlement_notes) tidak diekspos ke konsumen.
 type rideDetailResponse struct {
-	OrderID            uuid.UUID        `json:"order_id"`
-	CustomerID         uuid.UUID        `json:"customer_id"`
-	DriverID           *uuid.UUID       `json:"driver_id"`
-	Status             string           `json:"status"`
-	PickupLat          float64          `json:"pickup_lat"`
-	PickupLng          float64          `json:"pickup_lng"`
-	PickupAddress      string           `json:"pickup_address"`
-	DropoffLat         float64          `json:"dropoff_lat"`
-	DropoffLng         float64          `json:"dropoff_lng"`
-	DropoffAddress     string           `json:"dropoff_address"`
-	DistanceKm         decimal.Decimal  `json:"distance_km"`
-	BaseFare           decimal.Decimal  `json:"base_fare"`
-	PerKmRate          decimal.Decimal  `json:"per_km_rate"`
-	EstimatedFare      decimal.Decimal  `json:"estimated_fare"`
-	ActualFare         *decimal.Decimal `json:"actual_fare"`
-	DriverEarning      *decimal.Decimal `json:"driver_earning"`
-	DiscountAmount     *decimal.Decimal `json:"discount_amount"`
-	PaymentMethod      string           `json:"payment_method"`
-	CancellationReason *string          `json:"cancellation_reason"`
-	CancellationFee    *decimal.Decimal `json:"cancellation_fee"`
-	CreatedAt          time.Time        `json:"created_at"`
-	ExpiresAt          *time.Time       `json:"expires_at"`
-	AssignedAt         *time.Time       `json:"assigned_at"`
-	PickupAt           *time.Time       `json:"pickup_at"`
-	CompletedAt        *time.Time       `json:"completed_at"`
-	SettledAt          *time.Time       `json:"settled_at"`
-	IsSettled          bool             `json:"is_settled"`
+	OrderID            uuid.UUID           `json:"order_id"`
+	CustomerID         uuid.UUID           `json:"customer_id"`
+	DriverID           *uuid.UUID          `json:"driver_id"`
+	Driver             *rideDriverResponse `json:"driver"`
+	Status             string              `json:"status"`
+	PickupLat          float64             `json:"pickup_lat"`
+	PickupLng          float64             `json:"pickup_lng"`
+	PickupAddress      string              `json:"pickup_address"`
+	DropoffLat         float64             `json:"dropoff_lat"`
+	DropoffLng         float64             `json:"dropoff_lng"`
+	DropoffAddress     string              `json:"dropoff_address"`
+	DistanceKm         decimal.Decimal     `json:"distance_km"`
+	BaseFare           decimal.Decimal     `json:"base_fare"`
+	PerKmRate          decimal.Decimal     `json:"per_km_rate"`
+	EstimatedFare      decimal.Decimal     `json:"estimated_fare"`
+	ActualFare         *decimal.Decimal    `json:"actual_fare"`
+	DriverEarning      *decimal.Decimal    `json:"driver_earning"`
+	DiscountAmount     *decimal.Decimal    `json:"discount_amount"`
+	PaymentMethod      string              `json:"payment_method"`
+	CancellationReason *string             `json:"cancellation_reason"`
+	CancellationFee    *decimal.Decimal    `json:"cancellation_fee"`
+	CreatedAt          time.Time           `json:"created_at"`
+	ExpiresAt          *time.Time          `json:"expires_at"`
+	AssignedAt         *time.Time          `json:"assigned_at"`
+	PickupAt           *time.Time          `json:"pickup_at"`
+	CompletedAt        *time.Time          `json:"completed_at"`
+	SettledAt          *time.Time          `json:"settled_at"`
+	IsSettled          bool                `json:"is_settled"`
 }
 
 // GetRide GET /api/v1/rides/:order_id
@@ -305,12 +314,24 @@ func (h *Handler) GetRide(c *gin.Context) {
 		return
 	}
 
+	var driver *rideDriverResponse
+	if order.DriverID != nil {
+		driver = &rideDriverResponse{
+			ID:           order.DriverID,
+			Name:         order.DriverName,
+			PhoneMasked:  order.DriverPhone,
+			VehicleType:  order.DriverVehicleType,
+			VehiclePlate: order.DriverVehiclePlate,
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": rideDetailResponse{
 			OrderID:            order.ID,
 			CustomerID:         order.CustomerID,
 			DriverID:           order.DriverID,
+			Driver:             driver,
 			Status:             order.Status,
 			PickupLat:          order.PickupLat,
 			PickupLng:          order.PickupLng,

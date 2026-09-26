@@ -153,9 +153,9 @@ var (
 
 	// Voucher discount (TD-070). ErrVoucherNotFound dideklarasikan di
 	// repository.go (dikembalikan saat scan baris voucher tidak ditemukan).
-	ErrVoucherInvalid     = errors.New("voucher is not valid for ride service")
-	ErrVoucherExpired     = errors.New("voucher has expired or not yet valid")
-	ErrVoucherMinOrder    = errors.New("order amount does not meet voucher minimum")
+	ErrVoucherInvalid      = errors.New("voucher is not valid for ride service")
+	ErrVoucherExpired      = errors.New("voucher has expired or not yet valid")
+	ErrVoucherMinOrder     = errors.New("order amount does not meet voucher minimum")
 	ErrVoucherPerUserLimit = errors.New("voucher per-user usage limit reached")
 )
 
@@ -521,7 +521,41 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 
 // GetOrder mengambil order lengkap berdasarkan id.
 func (s *Service) GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error) {
-	return s.repo.GetOrderByID(ctx, orderID)
+	order, err := s.repo.GetOrderByID(ctx, orderID)
+	if err != nil || order == nil {
+		return order, err
+	}
+
+	masked := *order
+	masked.DriverPhone = maskDriverPhone(order.DriverPhone)
+	return &masked, nil
+}
+
+func maskDriverPhone(phone *string) *string {
+	if phone == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*phone)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) <= 4 {
+		masked := "****"
+		return &masked
+	}
+
+	prefixLength := 0
+	if strings.HasPrefix(trimmed, "+62") {
+		prefixLength = 3
+	} else if strings.HasPrefix(trimmed, "0") {
+		prefixLength = 4
+	}
+	if prefixLength > 0 && len(trimmed) > prefixLength+4 {
+		masked := trimmed[:prefixLength] + "****" + trimmed[len(trimmed)-4:]
+		return &masked
+	}
+	masked := "****" + trimmed[len(trimmed)-4:]
+	return &masked
 }
 
 // GetRidesHistory mengembalikan riwayat ride customer dengan pagination
