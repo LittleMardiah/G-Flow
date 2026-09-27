@@ -1256,14 +1256,43 @@ Judul      : Worker coverage 66.4% (dari TD-104) < 85% target.
              rollback, LockOrder 55P03 timeout, CAS cancel false
              → rollback.
 Dampak     : Handler refund uang (ride+food+send) tanpa test guard
-             untuk error path → bug refund gagal tidak terdeteksi
-             → risiko kerugian finansial + ledger inconsistency.
+              untuk error path → bug refund gagal tidak terdeteksi
+              → risiko kerugian finansial + ledger inconsistency.
 Solusi     : Tambah error-path tests di internal/worker/worker_test.go
              (mirror pola pgxmock internal/ride/service_test.go).
              Target: coverage ≥ 80%.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit TD-106, 2026-09-27)
+Note       : internal/worker/worker_test.go 9 → 61 test case (semua PASS),
+             coverage 66.4% → 97.4% (target ≥85% ✓). Error path yang
+             DICAKUP: (a) query ID expired error + rows.Err + rows.Scan
+             error → return 0 tanpa crash; (b) Begin error; (c) SET LOCAL
+             statement_timeout error; (d) LockOrder PgError 55P03 → skip
+             order lalu LANJUT order berikutnya (ErrLockTimeout);
+             (e) lock generic PgError / ErrNoRows / scan error;
+             (f) refund ledger CreateLedgerEntries error → ROLLBACK tx
+             (no partial: tidak ada UPDATE cancel / INSERT event yang
+             lolos); (g) SystemWalletID ErrNoRows (→ErrWalletNotFound) &
+             query error; (h) lockWalletsAsc deadlock 40P01;
+             (i) customer_wallet_id NULL → ErrWalletNotFound;
+             (j) CAS cancel false (UPDATE 0) → ROLLBACK; (k) CAS exec
+             error; (l) InsertOrderEvent error → ROLLBACK; (m) Commit
+             error; (n) multi-order partial failure 3 order
+             (1 OK / 1 error / 1 OK → 2 diproses); (o) guard idempoten
+             is_refunded & is_settled (food/send) → refund di-skip;
+             (p) releaseLock sukses + Redis down (no panic);
+             (q) purgeIdempotencyCache sukses (RowsAffected) + error;
+             (r) Run loop: tick, purge, context cancel. Test helper
+             baru di file test: seqLedger (double Ledger berurutan, untuk
+             skenario multi-order) + purgeSignalDB (sinyal saat purge
+             dieksekusi, supaya Run test deterministik tanpa sleep).
+            go build ./... OK, go vet ./... clean, go test -race PASS.
+             TIDAK ada file produksi yang diubah (R8) — hanya
+             internal/worker/worker_test.go.
+Note       : Target di Solusi tertulis "≥ 80%", prompt sesi ini menyebut
+             ≥ 85% — hasil aktual 97.4% memenuhi keduanya.
 Referensi  : TD-104 (coverage 66.4%)
+
 
 ID         : TD-107
 Kategori   : KODE
@@ -2191,27 +2220,98 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-114 (temuan OpenCode)
 
+ID         : TD-156
+Kategori   : TESTING
+Judul      : Worker coverage 97.4% dicapai via pgxmock (unit). Semantics
+             PostgreSQL nyata (NOWAIT 55P03, is_refunded CAS, escrow lock
+             ORDER BY id) belum ter-cover integration test untuk worker.
+Bukti      : `go test ./internal/worker/ -cover` = 97.4% of statements, tapi
+             100%-nya dari mock: worker_test.go:15 import
+             "github.com/pashagolub/pgxmock/v4", dan package worker tidak punya
+             integration_test.go sama sekali (ls internal/worker/ =
+             repository.go, types.go, worker.go, worker_test.go — bandingkan
+             ride/food/send/wallet/auth yang semuanya punya integration_test.go
+             ber-build-tag `integration`). Semantics DB saat ini hanya
+             "dibuktikan" lewat ekspektasi mock:
+             - NOWAIT → 55P03: LockOrder ride/food/send memakai `FOR UPDATE
+               NOWAIT` (repository.go:234 ride, :89 food, :170 send) dan
+               dipetakan ke ErrLockTimeout di worker.go:185 (food), :298
+               (send), :408 (ride). Di test 55P03 hanya disimulasikan:
+               WillReturnError(&pgconn.PgError{Code: "55P03"})
+               (worker_test.go:342, :720, :988, :1322).
+             - is_refunded CAS: CancelFoodOrder (repository.go:97-110) --
+               `WHERE id = $1 AND status = $2` + `is_refunded =
+               COALESCE($3, is_refunded)`, hasil lewat tag.RowsAffected() > 0.
+             - Lock wallet ORDER BY id: worker.go:511 `SELECT id FROM wallets
+               WHERE id = ANY($1) ORDER BY id ASC FOR UPDATE` (komentar
+               worker.go:505: ORDER BY id ASC mencegah deadlock antar
+               transaksi). Deadlock 40P01 di test juga simulasi, bukan dua
+               transaksi nyata yang lock berlawanan urutan.
+Dampak     : Error path refund escrow (uang) lolos unit test tapi belum
+             diverifikasi terhadap DB real; risiko false-confidence. pgxmock
+             tidak mengeksekusi SQL sungguhan: nama kolom, tipe,
+             CHECK/constraint, dan rencana lock tidak divalidasi — query yang
+             salah tulis (mis. guard status, urutan lock wallet, atau CAS
+             is_refunded) tetap hijau di unit test.
+Solusi     : internal/worker/integration_test.go dengan DB nyata — 4-5
+             scenario (ride expired + refund, food expired, send expired,
+             concurrent worker race, lock timeout true 55P03).
+             [PERLU VERIFIKASI]-before-fix: (a) harness — package lain memakai
+             `//go:build integration` + `DATABASE_URL` dari docker-compose
+             (internal/ride/integration_test.go:1, :60), bukan testcontainers
+             (grep testcontainers di *.go = 0 hasil), jadi worker sebaiknya
+             ikuti pola yang sama; (b) CI tidak pernah menjalankan integration
+             test — .github/workflows/ci.yml:79 hanya `go test -short -race
+             ...`, jadi file baru hanya terverifikasi lokal/CI job khusus,
+             jangan dihitung sebagai regression gate.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-106 (temuan OpenCode)
+
+ID         : TD-157
+Kategori   : KODE
+Judul      : `defer tx.Rollback(ctx)` dijalankan setelah Commit sukses di
+             worker.go:175/288/398. pgx aman (rollback post-commit = no-op
+             error), tapi rapuh kalau nanti error Rollback di-log → spam.
+Bukti      : `grep -n "tx.Rollback" internal/worker/worker.go` = 3 hasil,
+             persis baris 175 (cancelOneFoodOrder), 288 (cancelOneSendOrder),
+             398 (cancelOneRideOrder) — masing-masing tepat setelah
+             `tx, err := w.db.Begin(ctx)` + return err, tanpa guard, dan
+             return value-nya diabaikan (tidak di-log). Satu order = satu
+             transaksi, jadi tidak ada risiko defer menumpuk per loop.
+Dampak     : Low impact; pattern anti-pola common Go.
+Solusi     : Guard `if tx != nil` sebelum rollback ATAU ubah pattern
+             (defer di dalam if success block). Catatan faktual: guard
+             `tx != nil` sendiri TIDAK mencegah Rollback post-commit (tx
+             tidak pernah nil di defer di atas) — yang mencegah adalah tidak
+             memanggil Rollback setelah Commit sukses, mis. flag `committed`
+             yang di-set sebelum Commit lalu dicek di defer.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-106 (temuan OpenCode)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 149 item (TD-051 di-reserve/skip)
-                                       (41 FIXED + 14 CLOSED + 7 DEFERRED + 87 OPEN = 149)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 151 item (TD-051 di-reserve/skip)
+                                       (42 FIXED + 14 CLOSED + 7 DEFERRED + 88 OPEN = 151)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-            [TETAP 40 pada 2026-09-27 (TD-114 FIXED): bucket Prioritas
-            mengikuti `Prioritas :`, bukan `Status :` — TD-114 tetap
-            `Prioritas : TINGGI` (yang berubah hanya Status OPEN → FIXED)
-            jadi bucket TINGGI tidak bergerak. Preseden: TD-113, TD-127,
-            TD-144, TD-147, TD-126 semuanya FIXED tapi tetap terdaftar di
-            bucket Prioritasnya. Aritmetika: kalau TINGGI turun ke 39 maka
-            sum Prioritas = 146 ≠ 147, sedangkan 40 menghasilkan
-            8 + 40 + 69 + 30 = 147 ✓.]
-- SEDANG  : 71 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155)
+            [TETAP 40 pada 2026-09-27 (TD-106 FIXED): prompt Reviewer menulis
+            "TINGGI 40→39", tapi bucket TINGGI mengikuti `Prioritas :`, bukan
+            `Status :` — TD-106 tetap `Prioritas : TINGGI` (yang berubah hanya
+            Status OPEN → FIXED) jadi bucket TINGGI TIDAK bergerak. Bukti:
+            parser atas 149 field `ID :` → KRITIS 8 + TINGGI 40 + SEDANG 71 +
+            RENDAH 30 = 149 ✓; kalau TINGGI 39 maka sum = 148 ≠ 149.
+            Preseden: TD-114, TD-113, TD-127, TD-144, TD-147, TD-126
+            semuanya FIXED tapi tetap terdaftar di bucket Prioritasnya.
+            Lihat [OVERRIDE-1] di changelog sesi ini.]
+- SEDANG  : 72 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
              (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
@@ -2260,10 +2360,20 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 149 item (TD-051 di-reserve/skip)
               "lockout.go:196", aktual baris INCR = lockout.go:195;
               :196 adalah baris `if err != nil {` — lihat
               [OVERRIDE-3].]
-- RENDAH  : 30 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152)
+               [72 pada 2026-09-27: TD-156 (TESTING — worker 97.4% via
+             pgxmock, semantics PostgreSQL nyata belum ter-cover integration
+             test) adalah entry BARU dengan `Prioritas : SEDANG`, jadi bucket
+             SEDANG 71 → 72 (+1). Keduanya Status OPEN dari awal, jadi bucket
+             Status OPEN 86 → 88 (+2, bersama TD-157). Total 149 → 151.]
+- RENDAH  : 31 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157)
+              [31 pada 2026-09-27: TD-157 (KODE — `defer tx.Rollback(ctx)`
+             dijalankan setelah Commit sukses di worker.go:175/288/398) adalah
+             entry BARU dengan `Prioritas : RENDAH`, jadi bucket RENDAH
+             30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
+             42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 41 item, 14 item CLOSED (FIXED/CLOSED 55), 7 item DEFERRED,
-        87 item OPEN.  [41 + 14 + 7 + 87 = 149 = TOTAL]
+STATUS: ✅ FIXED 42 item, 14 item CLOSED (FIXED/CLOSED 56), 7 item DEFERRED,
+        88 item OPEN.  [42 + 14 + 7 + 88 = 151 = TOTAL]
 
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
@@ -2290,16 +2400,35 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-27):
-   - Total hutang teridentifikasi      : 149 item (TD-051 di-reserve/skip; 149 item aktif terdaftar).
-   - ✅ FIXED                           : 41 item
+   - Total hutang teridentifikasi      : 151 item (TD-051 di-reserve/skip; 151 item aktif terdaftar).
+   - ✅ FIXED                           : 42 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 55 item
+   - FIXED/CLOSED                       : 56 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 87 item (bukan hanya TD-058 s/d TD-155 — masih ada
+   - ❌ OPEN                              : 88 item (bukan hanya TD-058 s/d TD-157 — masih ada
                                           TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
-                                          TD-052 s/d TD-057, dst.).
-     [41 + 14 + 7 + 87 = 149 = TOTAL]
+                                          TD-052 s/d TD-057, dst/).
+     [42 + 14 + 7 + 88 = 151 = TOTAL]
+     [Perubahan 2026-09-27 — TD-156 + TD-157 (keduanya entry BARU, Status
+     OPEN, gap lanjutan TD-106 yang sudah FIXED): OPEN 86 → 88; FIXED 42,
+     CLOSED 14, DEFERRED 7, FIXED/CLOSED 56 tetap; Total 149 → 151. Bucket
+     Prioritas BERGERAK karena keduanya entry baru: SEDANG 71 → 72 (TD-156)
+     dan RENDAH 30 → 31 (TD-157). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL
+     dan 42 + 14 + 7 + 88 = 151. Range SECTION F: TD-058 s/d TD-155 →
+     TD-058 s/d TD-157. Parser atas 151 field `ID :` mengonfirmasi sum
+     Prioritas = sum Status = 151 (V1/V2/V3 sesi ini). Tidak ada kode yang
+     diubah — register dokumentasi saja. Tidak commit (R10).]
+     [Perubahan 2026-09-27 — TD-106 FIXED (worker error-path tests,
+     internal/worker/worker_test.go): FIXED 41 → 42, FIXED/CLOSED 55 → 56,
+     OPEN 87 → 86, Total tetap 149. Bucket Prioritas (§2) TIDAK berubah:
+     KRITIS 8 + TINGGI 40 + SEDANG 71 + RENDAH 30 = 149 — TINGGI tetap 40
+     karena bucket itu mengikuti `Prioritas :` dan TD-106 tetap
+     `Prioritas : TINGGI` (hanya Status OPEN → FIXED). Preseden: TD-114,
+     TD-113, TD-126, TD-127, TD-144, TD-147. Parser atas 149 field `ID :`
+     mengonfirmasi sum Prioritas = sum Status = 149 (V1/V2/V3 sesi ini).
+     Coverage worker 66.4% → 97.4%, 9 → 61 test case. Tidak commit (R10).]
+
      [Perubahan 2026-09-27 — TD-154 + TD-155 (keduanya entry BARU, Status OPEN,
      hasil gap lanjutan TD-114 yang sudah FIXED): OPEN 85 → 87; FIXED 41,
      CLOSED 14, DEFERRED 7, FIXED/CLOSED 55 tetap; Total 147 → 149. Bucket
@@ -3113,6 +3242,179 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         (docs/TECHNICAL DEBT.txt). Tidak commit (R10).
 
 ================================================================================
+        [2026-09-27 — SESI TD-106] Worker error-path tests
+        (internal/worker/worker_test.go). TD-104 sudah memberi 9 test happy
+        path dengan coverage 66.4%; TD-106 menutup sisanya. Baseline diverifikasi
+        dulu: `go test ./internal/worker/... -cover` = 66.4%,
+        `go tool cover -func` menunjukkan `Run` 0.0% dan
+        `purgeIdempotencyCache` 0.0% sebagai dualubang terbesar.
+        Hasil akhir: 61 test case (9 → 61, +52), SEMUA PASS, coverage
+        66.4% → 97.4% (target ≥85% ✓; target tertulis di Solusi TD-106
+        adalah ≥80%, juga ✓). Verifikasi: V1 `go build ./...` exit 0;
+        V2 `go vet ./...` exit 0; V3 `go test ./internal/worker/... -v` =
+        61× `--- PASS`, `ok`; V4 `-cover` = 97.4%; V5
+        `-coverprofile=/tmp/w.out` + `go tool cover -func` = total 97.4%;
+        V6 `git status --short` = hanya ` M internal/worker/worker_test.go`
+        + ` M docs/TECHNICAL DEBT.txt`. Tambahan di luar V1-V6:
+        `go test -race` PASS dan `-count=5` pada test Run/purge/lock PASS
+        (cek flakiness).
+        Error path yang dicakup (semua pakai pgxmock, mirror pola
+        internal/ride/service_test.go:2092-2104 & 918-919):
+        - Query ID expired: WillReturnError (→ return 0), rows.CloseError
+          (→ rows.Err() != nil), AddRow(42) (→ rows.Scan error) — ride,
+          food, send.
+        - `w.db.Begin` error; `SET LOCAL statement_timeout` error.
+        - LockOrder PgError Code "55P03" → ErrLockTimeout, order di-skip
+          dan sweep LANJUT ke order berikutnya (dibuktikan 2 order:
+          1st lock timeout, 2nd sukses → hasil 1).
+        - LockOrder PgError non-55P03 (mis. 57014), ErrNoRows, dan scan
+          error → order di-skip.
+        - Refund: `CreateLedgerEntries` error → ROLLBACK (ExpectRollback
+          dipenuhi, tidak ada UPDATE cancel / INSERT event → no partial);
+          `SystemWalletID` ErrNoRows (→ErrWalletNotFound) & query error;
+          `lockWalletsAsc` deadlock 40P01; `customer_wallet_id`/`sender_
+          wallet_id` NULL → ErrWalletNotFound.
+        - CAS cancel `UPDATE ... 0` → ROLLBACK (sudah refund escrow di
+          tx yang sama, jadi rollback mencegah refund orphan); CAS exec
+          error.
+        - `Insert{Ride,Food,Send}OrderEvent` error → ROLLBACK.
+        - `tx.Commit` error.
+        - Multi-order partial failure: 3 order (1 OK / 1 error / 1 OK) →
+          2 diproses, tanpa crash. Ride (lock 55P03 di tengah) + food
+          (ledger error di tengah, pakai seqLedger).
+        - Guard idempoten: food `is_refunded=TRUE` dan `is_settled=TRUE`
+          → refund di-skip; send `is_settled=TRUE` → refund di-skip.
+        - `releaseLock`: sukses (lock hilang setelah sweep) + Redis down
+          (AssertNotPanics).
+        - `purgeIdempotencyCache`: RowsAffected dikembalikan + exec error
+          → 0.
+        - `Run`: loop ticker, purge idempotency, dan return saat
+          context dibatalkan (PollInterval/IdempotencyPurgeInterval
+          dikecilkan sementara lalu dipulihkan via t.Cleanup).
+        Dua helper baru di file test (bukan produksi): `seqLedger` (double
+        Ledger yang mengembalikan error berurutan per pemanggilan —
+        diperlukan karena testify selalu memilih ekspektasi pertama yang
+        belum habis, jadi satu mockLedger tidak bisa menyatukan "sukses"
+        lalu "gagal") dan `purgeSignalDB` (membungkus pgxmock, memberi
+        sinyal channel saat DELETE idempotency_cache dieksekusi, supaya
+        test `Run` deterministik tanpa menebak sleep).
+        SCOPE: hanya internal/worker/worker_test.go. worker.go,
+        repository.go, dan types.go TIDAK disentuh (R8) — diverifikasi
+        `git diff --name-only` = 1 file Go. Tidak commit/push (R10).
+        [OVERRIDE-1 / §11.2] Prompt Reviewer menulis ringkasan "TINGGI
+        40→39". Angka itu SALAH. Bucket Prioritas mengikuti `Prioritas :`
+        per entry, bukan `Status :` — TD-106 tetap `Prioritas : TINGGI`
+        (yang berubah hanya Status OPEN → FIXED), jadi bucket TINGGI TETAP
+        40. Bukti konkret: parser atas 149 field `ID :` di §1 (dijalankan
+        SEBELUM edit) → KRITIS 8 + TINGGI 40 + SEDANG 71 + RENDAH 30 = 149;
+        kalau TINGGI 39 maka sum Prioritas = 148 ≠ 149 = Total. Preseden
+        yang sudah tertulis di dokumen ini: TD-114, TD-113, TD-126,
+        TD-127, TD-144, TD-147. Yang DIGERAKKAN hanya bucket Status:
+        FIXED 41 → 42, FIXED/CLOSED 55 → 56, OPEN 87 → 86, Total tetap
+        149. Prompt Reviewer sendiri sudah memberi peringatan
+        "[NOTE: verify dengan parser!]" — verifikasi dilakukan, hasilnya
+        memang TINGGI TETAP 40.
+        [OVERRIDE-2 / §11.2] Prompt Reviewer menyebut error path
+        "MarkSettled error". Tidak ada method `MarkSettled`/`markSettled`
+        di package worker — `grep -n "MarkSettled|markSettled" internal/
+        worker/` = 0 hasil. Yang ada hanyalah kolom `is_settled` yang
+        dibaca pada baris ter-lock (worker.go:197 food, worker.go:308 send)
+        sebagai guard "sudah settled → jangan refund", bukan error return.
+        Joy: 2 test guard `is_settled` ditambahkan
+        (TestCancelFoodOrders_RefundSkipped_WhenSettled,
+        TestCancelSendOrders_RefundSkipped_WhenSettled) sehingga cabang
+        guard tersebut tetap ter-cover.
+        [OVERRIDE-3 / §11.2] Prompt Reviewer menulis "worker_test.go punya
+        9 test (happy path + 1 edge)". Angka 9 benar (terverifikasi
+        `grep -c "^func Test" internal/worker/worker_test.go` pada HEAD
+        = 9), tapi karakterisasinya
+        kurang tepat: dari 9 itu, 4 adalah bukan-happy-path
+        (NoExpiredOrders, CashNoRefund, AlreadyCancelled_Skip,
+        DistributedLockHeldByAnother_NoOp) + 1 redis-unavailable. Angka 9
+        dipakai apa adanya; tidak ada konsekuensi ke scope/count.
+        TEMUAN DI LUAR SCOPE (dicatat, tidak diperbaiki — R8):
+        `gofmt -l internal/worker/` men-flag `worker.go` (baris 502 berisi
+        `// ` dengan trailing whitespace, sebelum
+        `// lockWalletsAsc ...`). File itu produksi dan di luar scope TD-106
+        (test-only), jadi TIDAK disentuh. Impact: nol secara fungsional
+        (hanya formatting), tapi `gofmt -l` tidak akan bersih untuk package
+        ini — item debt kecil mirip TD-116 (wallet) & catatan gofmt
+        internal/admin di sesi TD-154/TD-155. Rekomendasi: hapus trailing
+        whitespace di worker.go:502 pada sesi berikutnya (1 karakter,
+        tapi menyentuh file produksi → perlu izin eksplisit).
+        Changelog historis tidak diubah (§ consistency); entri ini
+        ditambahkan di akhir sebelum penanda END OF.
+
+================================================================================
+        [2026-09-27 — SESI TD-156 + TD-157] Gap lanjutan TD-106 (temuan
+        OpenCode pada sesi worker error-path test; TD-106 sendiri sudah
+        ✅ FIXED 2026-09-27). Dua entry BARU, keduanya Status OPEN, tidak ada
+        satu pun file `.go` yang disentuh — register dokumentasi saja (R8).
+        TD-156 (TESTING, SEDANG): worker 97.4% coverage tercapai lewat
+        pgxmock, tapi semantics PostgreSQL nyata belum ter-cover. Bukti sesi
+        ini: `go test ./internal/worker/ -cover` = "ok ... coverage: 97.4% of
+        statements"; worker_test.go:15 import
+        "github.com/pashagolub/pgxmock/v4"; package worker TIDAK punya
+        integration_test.go (`ls internal/worker/` = repository.go, types.go,
+        worker.go, worker_test.go) sementara ride/food/send/wallet/auth punya
+        (semuanya ber-build-tag `//go:build integration` dengan
+        `DATABASE_URL`). Detail semantics yang belum diverifikasi DB nyata:
+        NOWAIT → 55P03 (repository.go:234 ride, :89 food, :170 send;
+        dipetakan di worker.go:185 food / :298 send / :408 ride; di test
+        hanya disimulasikan `&pgconn.PgError{Code: "55P03"}` di
+        worker_test.go:342, :720, :988, :1322), CAS is_refunded
+        (repository.go:97-110: `WHERE id = $1 AND status = $2` +
+        `is_refunded = COALESCE($3, is_refunded)` + RowsAffected), dan lock
+        wallet `ORDER BY id ASC FOR UPDATE` (worker.go:511, komentar
+        worker.go:505) yang jadi proteksi deadlock. Risk register: false
+        confidence pada error path refund escrow (uang) — pgxmock tidak
+        memvalidasi nama kolom, tipe, CHECK/constraint, atau rencana lock.
+        Solusi: internal/worker/integration_test.go dengan DB nyata, 4-5
+        scenario (ride/food/send expired + refund, concurrent worker race,
+        lock timeout 55P03 TRUE). [PERLU VERIFIKASI]-before-fix: harness
+        mengikuti pola `//go:build integration` + `DATABASE_URL` (bukan
+        testcontainers — grep testcontainers di *.go = 0 hasil), dan catatan
+        bahwa .github/workflows/ci.yml:79 hanya menjalankan `go test -short
+        -race -coverprofile=... ./...` tanpa `-tags integration`, jadi file
+        integrasi baru TIDAK otomatis jadi regression gate.
+        TD-157 (KODE, RENDAH): `defer tx.Rollback(ctx)` di worker.go:175
+        (cancelOneFoodOrder), :288 (cancelOneSendOrder), :398
+        (cancelOneRideOrder) — `grep -n "tx.Rollback" internal/worker/
+        worker.go` = tepat 3 hasil, masing-masing tepat setelah `tx, err :=
+        w.db.Begin(ctx)` tanpa guard dan return value-nya diabaikan. pgx
+        memperlakukan Rollback post-commit sebagai no-op yang mengembalikan
+        error, jadi tidak ada dampak fungsional sekarang; rapuh hanya kalau
+        suatu saat error Rollback mulai di-log (spam). Catatan faktual yang
+        ditambahkan di entry: guard `if tx != nil` TIDAK mencegah rollback
+        post-commit (tx tidak pernah nil di defer tersebut) — yang mencegah
+        adalah flag `committed` yang di-set sebelum Commit lalu dicek di defer.
+        Dampak register: entry BARU Prioritas SEDANG (TD-156) dan RENDAH
+        (TD-157), keduanya OPEN → SEDANG 71 → 72, RENDAH 30 → 31, OPEN 86
+        → 88, Total 149 → 151. FIXED 42, CLOSED 14, DEFERRED 7,
+        FIXED/CLOSED 56 tetap. Konsisten: 8 + 40 + 72 + 31 = 151 dan
+        42 + 14 + 7 + 88 = 151. Range SECTION F: TD-058 s/d TD-155 →
+        TD-058 s/d TD-157. Tidak commit (R10).
+        [OVERRIDE-1 / §11.2] Tidak ada koreksi factual yang dibutuhkan: semua
+        angka ringkasan di prompt Reviewer (Total 149→151, SEDANG 71→72,
+        RENDAH 30→31, OPEN 86→88) diverifikasi BENAR oleh parser yang
+        dijalankan SEBELUM edit atas 149 field `ID :` → Prioritas KRITIS 8 +
+        TINGGI 40 + SEDANG 71 + RENDAH 30 = 149 dan Status OPEN 86 (FIXED 42
+        + CLOSED 14 + DEFERRED 7 = 63; 63 + 86 = 149). Bucket TINGGI tetap 40
+        karena tidak ada entry baru `Prioritas : TINGGI` dan TD-106 (yang
+        FIXED) tetap di bucketnya. Yang DIVERIFIKASI ke kode sebelum ditulis
+        (R3): coverage 97.4% (go test -cover), 3 call site tx.Rollback
+        (grep), tidak adanya integration_test.go di package worker (ls), dan
+        baris CI (grep "go test" .github/workflows/).
+        Verifikasi sesi ini: V1 `grep -c "TD-156\|TD-157"` (>=4 OK); V2
+        `grep -A3 "TOTAL HUTANG"` menunjukkan 151; V3 parser atas 151 field
+        `ID :` → sum Prioritas = 151 (KRITIS 8 + TINGGI 40 + SEDANG 72 +
+        RENDAH 31) dan sum Status = 151 (OPEN 88); V4 `git status --short` =
+        hanya ` M docs/TECHNICAL DEBT.txt`. Tidak ada build/test Go yang
+        perlu diulang karena tidak ada file `.go` yang berubah.
+        Changelog historis tidak diubah; entri ini ditambahkan di akhir
+        sebelum penanda END OF.
+
+============================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ================================================================================
 
