@@ -12,13 +12,17 @@
 //	401 UNAUTHORIZED_2FA  — token 2FA tidak valid / tidak ada
 //	403 FORBIDDEN         — role bukan admin (ditangani RBAC middleware)
 //	422 INVALID_REQUEST   — body/reason tidak valid
-//	429 LOCKOUT           — akun terkunci
+//	429 LOCKOUT           — akun terkunci karena terlalu banyak percobaan 2FA
+//	429 ACCOUNT_LOCKED    — akun terkunci karena terlalu banyak percobaan login
+//	                        gagal (retry_after di error.details + header
+//	                        Retry-After)
 package admin
 
 import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,8 +46,16 @@ type Handler struct {
 }
 
 // NewHandler membuat Handler baru dengan dependency injection.
+//
+// Handler juga mengimplementasikan LockoutGuard, jadi NewHandler menyuntikkannya
+// ke Service (setLockoutGuard) — dengan begitu Service.Login bisa menerapkan
+// brute-force protection (TD-114) tanpa diduplikasi infrastructure Redis/PG.
 func NewHandler(svc *Service, db DB, rdb *redis.Client, logger *slog.Logger, twoFA TwoFactorValidator, jwtService *auth.JWTService) *Handler {
-	return &Handler{svc: svc, db: db, redis: rdb, logger: logger, twoFA: twoFA, jwt: jwtService}
+	h := &Handler{svc: svc, db: db, redis: rdb, logger: logger, twoFA: twoFA, jwt: jwtService}
+	if svc != nil {
+		svc.setLockoutGuard(h)
+	}
+	return h
 }
 
 // reverseRequestBody adalah body request POST .../reverse.
@@ -219,6 +231,8 @@ func (h *Handler) GetDashboardTransactions(c *gin.Context) {
 
 // AdminLogin POST /admin/login (publik, tanpa auth middleware)
 // Memvalidasi kredensial admin lalu menerbitkan access + refresh token JWT.
+// Brute-force protection (TD-114): 3x password salah -> akun terkunci 15 menit
+// (counter Redis + PostgreSQL, di-check SEBELUM verifikasi password).
 func (h *Handler) AdminLogin(c *gin.Context) {
 	var body adminLoginRequestBody
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -235,6 +249,8 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrInvalidCredentials):
 			writeError(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "email atau password salah")
+		case errors.Is(err, ErrAccountLocked):
+			writeAccountLockedError(c, err)
 		case errors.Is(err, ErrNotAdmin):
 			writeError(c, http.StatusForbidden, "FORBIDDEN", "akun bukan admin")
 		case errors.Is(err, ErrAccountInactive):
@@ -551,6 +567,34 @@ func writeError(c *gin.Context, status int, code string, message string) {
 		"error": gin.H{
 			"code":    code,
 			"message": message,
+		},
+	})
+}
+
+// writeAccountLockedError memetakan ErrAccountLocked ke 429 TOO_MANY_REQUESTS
+// dengan detail retry_after (detik) sesuai API_CONTRACT (error.details opsional)
+// plus header Retry-After standar RFC 9110. Sisa durasi diambil dari TTL
+// lockout (Redis) atau locked_until (PostgreSQL), default lockoutDuration.
+func writeAccountLockedError(c *gin.Context, err error) {
+	retryAfter := lockoutDuration
+	var lockedErr *AccountLockedError
+	if errors.As(err, &lockedErr) && lockedErr.RetryAfter > 0 {
+		retryAfter = lockedErr.RetryAfter
+	}
+	retryAfterSeconds := int(math.Ceil(retryAfter.Seconds()))
+	if retryAfterSeconds < 1 {
+		retryAfterSeconds = 1
+	}
+	c.Header("Retry-After", strconv.Itoa(retryAfterSeconds))
+	c.JSON(http.StatusTooManyRequests, gin.H{
+		"success": false,
+		"error": gin.H{
+			"code": "ACCOUNT_LOCKED",
+			"message": fmt.Sprintf(
+				"akun terkunci karena terlalu banyak percobaan login gagal; coba lagi dalam %d detik",
+				retryAfterSeconds,
+			),
+			"details": gin.H{"retry_after": retryAfterSeconds},
 		},
 	})
 }

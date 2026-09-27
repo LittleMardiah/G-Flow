@@ -2,7 +2,8 @@
 //
 // Menyediakan validasi 2FA header X-Admin-2FA-Token (simulasi untuk MVP,
 // token statis admin-2fa-secret) serta penguncian akun admin setelah 3 kali
-// percobaan 2FA gagal (lockout 15 menit).
+// percobaan 2FA gagal (lockout 15 menit). Sejak TD-114 infra yang sama
+// juga dipakai Service.Login untuk mengunci 3x percobaan LOGIN gagal.
 //
 // Penyimpanan lockout bersifat DUAL-WRITE:
 //   - Redis (L1): counter percobaan (INCR, TTL) + lock flag (TTL 15 menit).
@@ -72,6 +73,74 @@ func NewStaticTwoFactorValidator(secret string) *StaticTwoFactorValidator {
 // Validate mengembalikan true jika token cocok dengan secret.
 func (v *StaticTwoFactorValidator) Validate(token string) bool {
 	return token != "" && token == v.secret
+}
+
+// LockoutGuard adalah seam lockout yang dibutuhkan Service.Login untuk
+// melindungi endpoint POST /admin/login dari brute-force password (TD-114).
+// Implementasi nyatanya adalah Handler — infra Redis (L1) + PostgreSQL (L2)
+// di file ini dipakai ulang, tidak diduplikasi.
+//
+// Catatan: counter dan lock flag yang dipakai login SAMA dengan counter 2FA
+// (admin:2fa_attempts:*). Ini disengaja: 3x kegagalan (password ATAU 2FA)
+// mengunci akun selama lockoutDuration, sehingga vektor brute-force di kedua
+// jalur tertutup oleh satu threshold yang sama.
+type LockoutGuard interface {
+	CheckLockout(ctx context.Context, adminID uuid.UUID) (bool, error)
+	RecordFailedAttempt(ctx context.Context, adminID uuid.UUID) (int64, error)
+	ResetAttempts(ctx context.Context, adminID uuid.UUID)
+	LockoutRetryAfter(ctx context.Context, adminID uuid.UUID) time.Duration
+}
+
+// Handler mengimplementasikan LockoutGuard (wrapper tipis di atas method
+// internal yang sudah dipakai endpoint reversal).
+func (h *Handler) CheckLockout(ctx context.Context, adminID uuid.UUID) (bool, error) {
+	return h.checkLockout(ctx, adminID)
+}
+
+func (h *Handler) RecordFailedAttempt(ctx context.Context, adminID uuid.UUID) (int64, error) {
+	return h.recordFailedAttempt(ctx, adminID)
+}
+
+func (h *Handler) ResetAttempts(ctx context.Context, adminID uuid.UUID) {
+	h.resetAttempts(ctx, adminID)
+}
+
+func (h *Handler) LockoutRetryAfter(ctx context.Context, adminID uuid.UUID) time.Duration {
+	return h.lockoutRetryAfter(ctx, adminID)
+}
+
+// lockoutRetryAfter menghitung sisa durasi lockout untuk detail retry_after
+// pada response 429. Sumber: TTL Redis (L1) → locked_until PostgreSQL (L2) →
+// lockoutDuration sebagai fallback konservatif.
+func (h *Handler) lockoutRetryAfter(ctx context.Context, adminID uuid.UUID) time.Duration {
+	if h.redis != nil {
+		redisCtx, cancel := context.WithTimeout(ctx, redisReadTimeout)
+		ttl, err := h.redis.TTL(redisCtx, lockoutKeyPrefix+adminID.String()).Result()
+		cancel()
+		if err == nil && ttl > 0 {
+			return ttl
+		}
+		if err != nil {
+			h.logger.Warn("Redis TTL read failed, falling back to PostgreSQL for retry_after",
+				"admin_id", adminID, "error", err)
+		}
+	}
+
+	var lockedUntil time.Time
+	pgErr := h.db.QueryRow(ctx, `
+		SELECT locked_until FROM admin_lockouts
+		WHERE admin_id = $1 AND locked_until > NOW()
+	`, adminID).Scan(&lockedUntil)
+	if pgErr == nil {
+		if remaining := time.Until(lockedUntil); remaining > 0 {
+			return remaining
+		}
+		return lockoutDuration
+	}
+	if !errors.Is(pgErr, pgx.ErrNoRows) {
+		h.logger.Warn("PostgreSQL retry_after read failed", "admin_id", adminID, "error", pgErr)
+	}
+	return lockoutDuration
 }
 
 // checkLockout memeriksa apakah admin sedang terkunci.

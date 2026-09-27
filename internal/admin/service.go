@@ -75,7 +75,22 @@ var (
 	ErrInvalidCredentials = errors.New("admin: email atau password salah")
 	ErrNotAdmin           = errors.New("admin: akun bukan admin")
 	ErrAccountInactive    = errors.New("admin: akun tidak aktif")
+	ErrAccountLocked      = errors.New("admin: akun terkunci karena terlalu banyak percobaan login gagal")
 )
+
+// AccountLockedError membawa sisa durasi lockout agar HTTP layer bisa
+// melaporkan detail retry_after. errors.Is(err, ErrAccountLocked) tetap true
+// lewat Unwrap.
+type AccountLockedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *AccountLockedError) Error() string {
+	return fmt.Sprintf("%v (retry_after=%s)", ErrAccountLocked, e.RetryAfter)
+}
+
+// Unwrap ekspos ErrAccountLocked supaya errors.Is/As bekerja.
+func (e *AccountLockedError) Unwrap() error { return ErrAccountLocked }
 
 // Share adalah bagian partai (merchant/driver/platform) yang harus di-clawback.
 type Share struct {
@@ -112,11 +127,21 @@ type Service struct {
 	repo   *Repository
 	db     DB
 	logger *slog.Logger
+	// lockout protecting login admin (TD-114). Nil = lockout nonaktif; diisi
+	// oleh NewHandler lewat setLockoutGuard (Handler mengimplementasikan
+	// LockoutGuard dengan infra Redis + PostgreSQL di lockout.go).
+	lockout LockoutGuard
 }
 
 // NewService membuat Service reversal baru.
 func NewService(repo *Repository, db DB, logger *slog.Logger) *Service {
 	return &Service{repo: repo, db: db, logger: logger}
+}
+
+// setLockoutGuard menyuntikkan implementasi lockout ke Service. Dipanggil
+// sekali dari NewHandler supaya infra lockout tidak perlu diduplikasi.
+func (s *Service) setLockoutGuard(g LockoutGuard) {
+	s.lockout = g
 }
 
 // bcryptCost adalah cost hash password admin (12), sama dengan seed admin di
@@ -145,11 +170,14 @@ var dummyPasswordHash = func() string {
 // account-type oracle / enumerasi email):
 //
 //	1. Format email (minimal "@" dan ".").
-//	2. bcrypt match password (ErrInvalidCredentials). Email yang tidak
+//	2. Lockout check (TD-114, OWASP A07) — baru bisa dilakukan setelah email
+//	   ter-resolve menjadi user id, tapi tetap SEBELUM bcrypt compare.
+//	3. bcrypt match password (ErrInvalidCredentials). Email yang tidak
 //	   terdaftar tetap melewati bcrypt compare dengan dummy hash supaya durasi
-//	   respon seragam.
-//	3. user_type == "admin" (akun lain -> ErrNotAdmin).
-//	4. status == "ACTIVE" (ErrAccountInactive).
+//	   respon seragam; password yang salah menambah counter percobaan.
+//	4. user_type == "admin" (akun lain -> ErrNotAdmin).
+//	5. status == "ACTIVE" (ErrAccountInactive).
+//	6. Login sukses -> reset counter percobaan (Redis + PostgreSQL).
 func (s *Service) Login(ctx context.Context, email, password string) (*LoginResult, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if !validEmail(email) {
@@ -167,7 +195,15 @@ func (s *Service) Login(ctx context.Context, email, password string) (*LoginResu
 		return nil, err
 	}
 
+	// TD-114: akun terkunci (3x gagal) -> tolak sebelum verifikasi password,
+	// sehingga password benar tidak bisa dipakai melewati lock (jawaban 429
+	// + retry_after, bukan 401).
+	if s.isLocked(ctx, user.UserID) {
+		return nil, &AccountLockedError{RetryAfter: s.lockoutRetryAfter(ctx, user.UserID)}
+	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Hash), []byte(password)); err != nil {
+		s.recordLoginFailure(ctx, user.UserID)
 		return nil, ErrInvalidCredentials
 	}
 	if user.UserType != "admin" {
@@ -177,7 +213,77 @@ func (s *Service) Login(ctx context.Context, email, password string) (*LoginResu
 		return nil, ErrAccountInactive
 	}
 
+	s.resetLoginAttempts(ctx, user.UserID)
 	return &LoginResult{UserID: user.UserID, Email: user.Email, UserType: user.UserType}, nil
+}
+
+// isLocked mengecek lockout akun sebelum verifikasi password.
+//
+// Fail-open: error saat pengecekan lockout tidak memblokir login (hanya
+// dicatat). Konsisten dengan handler.go ReverseTransaction yang juga
+// fail-open atas error checkLockout, dan mencegah seluruh admin terkunci
+// hanya karena Redis/PostgreSQL bermasalah.
+func (s *Service) isLocked(ctx context.Context, userID uuid.UUID) bool {
+	if s.lockout == nil {
+		return false
+	}
+	locked, err := s.lockout.CheckLockout(ctx, userID)
+	if err != nil {
+		s.warnLogin("admin login lockout check failed", "user_id", userID, "error", err)
+		return false
+	}
+	return locked
+}
+
+// recordLoginFailure mencatat satu percobaan login gagal; percobaan ke
+// maxFailedAttempts akan mengunci akun (lihat lockout.go).
+//
+// Catatan anti-enumerasi: pencatatan sengaja TIDAK dibatasi user_type ==
+// "admin". Bila hanya akun admin yang dikunci, response 429 menjadi oracle
+// "email ini pasti admin" (akun non-admin selalu 401). Kunci di-key
+// berdasarkan user id hasil lookup DB, jadi email acak tidak pernah membuat
+// baris baru (tidak ada risiko tabel membesar dari brute force).
+func (s *Service) recordLoginFailure(ctx context.Context, userID uuid.UUID) {
+	if s.lockout == nil {
+		return
+	}
+	attempts, err := s.lockout.RecordFailedAttempt(ctx, userID)
+	if err != nil {
+		s.warnLogin("admin login record failed attempt failed", "user_id", userID, "error", err)
+		return
+	}
+	if attempts >= maxFailedAttempts {
+		s.warnLogin("admin account locked after failed login attempts",
+			"user_id", userID, "failed_attempts", attempts, "lockout", lockoutDuration.String())
+	}
+}
+
+// resetLoginAttempts menghapus counter percobaan setelah login berhasil.
+func (s *Service) resetLoginAttempts(ctx context.Context, userID uuid.UUID) {
+	if s.lockout == nil {
+		return
+	}
+	s.lockout.ResetAttempts(ctx, userID)
+}
+
+// lockoutRetryAfter mengambil sisa durasi lockout dari infra lockout.
+func (s *Service) lockoutRetryAfter(ctx context.Context, userID uuid.UUID) time.Duration {
+	if s.lockout == nil {
+		return lockoutDuration
+	}
+	retryAfter := s.lockout.LockoutRetryAfter(ctx, userID)
+	if retryAfter <= 0 {
+		return lockoutDuration
+	}
+	return retryAfter
+}
+
+// warnLogin menulis log warning pada flow login. Endpoint ini publik dan
+// sering dipanggil attacker, jadi logger nil tidak boleh jadi panic.
+func (s *Service) warnLogin(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Warn(msg, args...)
+	}
 }
 
 // ReverseTransaction membalikkan transaksi dengan clawback proporsional.

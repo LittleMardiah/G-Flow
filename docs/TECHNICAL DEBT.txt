@@ -1392,7 +1392,55 @@ Dampak     : Brute-force password admin tidak dibatasi → risiko penyusupan
 Solusi     : Implementasi failed-attempt counter + lockout (mis. 5x → 15
              menit), pola lockout.go for reversal, diterapkan di AdminLogin.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-27, commit TD-114)
+Note   : Fix: Service.Login (internal/admin/service.go:180) memakai infra
+         lockout yang SUDAH ADA (Redis L1 + PostgreSQL L2 di lockout.go) —
+         tidak ada infra/migration baru. Alur: (1) lookup user by email,
+         (2) checkLockout SEBELUM bcrypt compare → kalau terkunci return
+         AccountLockedError, (3) bcrypt gagal → recordFailedAttempt,
+         (4) login sukses → resetAttempts. Handler mengimplementasikan
+         interface LockoutGuard (lockout.go:87-91) dan menyuntikkannya ke
+         Service lewat NewHandler (handler.go:55-58) sehingga cmd/api/main.go
+         tidak berubah. Threshold reuse maxFailedAttempts=3 +
+         lockoutDuration=15m (lockout.go:29-30) — TIDAK ada konstanta
+         `lockoutThreshold` (nama itu tidak ada di kode).
+         Response: 429 TOO_MANY_REQUESTS code ACCOUNT_LOCKED +
+         error.details.retry_after (detik) + header Retry-After
+         (API_CONTRACT §1 mengizinkan `details` opsional); 401
+         INVALID_CREDENTIALS untuk password salah tetap. retry_after dari
+         TTL Redis → locked_until PostgreSQL → default 15m
+         (lockout.go:112-143). Counter login memakai key yang sama dengan
+         counter 2FA (admin:2fa_attempts:*) — disengaja, 3x gagal (password
+         ATAU 2FA) mengunci akun.
+         Verifikasi: V1 `go build ./...` PASS; V2 `go vet ./...` PASS;
+         V3 `go test ./internal/admin/... -v` 80 test PASS / 0 FAIL (baseline
+         72, +8 test baru di login_lockout_test.go); V4 coverage 82.9% →
+         83.6%; V5 `go test -tags integration ./internal/admin/...` PASS;
+         V6 grep primer lockout = 3 call site handler (reversal, tidak
+         berubah) + 4 call site service (login); V7 git status = 3 file
+         modifikasi + 1 file baru, semua in-scope. `go test ./...` seluruh
+         repo PASS (auth/ride/food/send/wallet/worker) → tanpa regresi.
+         Test baru: 3x gagal → lock (percobaan ke-4 429 walau password
+         benar), login sukses reset counter, 2x gagal belum terkunci,
+         akun terkunci tidak bisa login dengan password benar, lockout
+         kedaluwarsa setelah TTL (miniredis FastForward), fallback ke
+         PostgreSQL saat Redis mati, akun non-admin juga dikunci
+         (anti-enumerasi role: kalau hanya admin yang dikunci, 429 jadi
+         oracle "email ini admin"), service tanpa guard tetap jalan.
+         Di luar scope (belum disentuh, REGISTERED = 0): (a) counter
+         attempts Redis tidak diberi TTL sama sekali (lockout.go:196 hanya
+         INCR tanpa EXPIRE) → counter tidak pernah kadaluarsa, policy
+         efektif "3x gagal sejak login/reversal sukses TERAKHIR", bukan
+         "3x dalam 15 menit"; pre-existing, juga berlaku di jalur 2FA
+         dan BUKAN diperbaiki di sesi ini (mengubahnya = mengubah
+         security behavior yang akan di-review terpisah); (b) `INTERVAL
+         '15 minutes'` masih hardcoded di SQL (lockout.go:216, :242)
+         terpisah dari konstanta lockoutDuration — sudah jadi TD-026
+         (OPEN); (c) customer login (/auth/login) tidak punya lockout
+         sama sekali — baseline konsisten, TD terpisah; (d) gofmt -l masih
+         men-flag internal/admin/*.go (pre-existing, pola doc-comment lama
+         + const alignment, sama seperti TD-116 untuk wallet).
+Referensi  : OWASP A07:2021, pola lockout.go (reversal 2FA)
 
 ID         : TD-115
 Kategori   : KODE
@@ -2072,19 +2120,98 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-126, TD-137 (temuan OpenCode)
 
+ID         : TD-154
+Kategori   : SECURITY
+Judul      : Redis attempts counter (admin:2fa_attempts:*) tanpa TTL —
+             INCR tanpa EXPIRE (lockout.go:195). Policy efektif = "3x gagal
+             sejak login/reversal sukses terakhir", bukan "3x dalam 15
+             menit".
+Bukti      : internal/admin/lockout.go:195 — recordFailedAttempt memanggil
+             `h.redis.Incr(ctx, attemptKey)` pada key
+             attemptKeyPrefix+adminID (prefix `admin:2fa_attempts:`,
+             lockout.go:33) dan TIDAK PERNAH memanggil Expire pada key itu
+             (grep `\.Expire(|EXPIRE\b` di internal/admin/ = 0 hasil;
+             satu-satunya TTL di file ini untuk lock flag, lockout.go:214
+             `h.redis.Set(ctx, lockoutKey, "1", lockoutDuration)`).
+             Komentar fungsi lockout.go:186 mengklaim "Dual-write Redis
+             (INCR + TTL)" — tidak akurat untuk counter attempt. Reset
+             HANYA lewat resetAttempts (lockout.go:251-263: Del attemptKey
+             + Del lockoutKey + UPDATE failed_attempts = 0), yang dipanggil
+             hanya pada login/reversal 2FA sukses. Jalur PostgreSQL L2
+             (recordFailedAttemptPG, lockout.go:225-248) juga increment
+             tanpa time-window. Test
+             internal/admin/login_lockout_test.go:238
+             (TestAdminLogin_LockoutExpiresAfterTTL) hanya membuktikan TTL
+             pada lock flag, bukan pada attempt counter.
+Dampak     : Failed attempt lama tetap dihitung; user bisa terkunci lebih
+             cepat dari intended; policy tidak sesuai komentar lockout.
+             Arah residual risk-nya konservatif (lebih sulit masuk, bukan
+             lebih mudah), tapi admin yang salah ketik password 3x lalu
+             tidak pernah login berhasil tidak punya jalur recovery selain
+             reset counter manual.
+Solusi     : Set EXPIRE lockoutDuration setelah INCR (atau sliding window
+             proper). [PERLU VERIFIKASI]-before-fix: (a) EXPIRE di-refresh
+             setiap INCR (sliding window) atau hanya saat key dibuat
+             (fixed window)? Sliding window yang bisa di-refresh terus
+             oleh penyerang adalah behavior yang tidak diinginkan;
+             (b) counter PG L2 tidak punya
+             kolom waktu, jadi reset berbasis waktu di sana butuh kolom
+             baru (skip) atau cukup andalkan EXPIRE Redis sebagai sumber
+             kebenaran threshold.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-114 (temuan OpenCode)
+
+ID         : TD-155
+Kategori   : SECURITY
+Judul      : Rate limit per-IP admin login belum ada — OWASP A07
+             recommends rate limit selain lockout per-account. Brute-force
+             terdistribusi lintas IP belum tertutup.
+Bukti      : grep repo-wide `ratelimit|RateLimit|rate_limit` pada *.go = 0
+             hasil (internal/middleware/ tidak punya rate limiter) sehingga
+             tidak ada layer pembatas per-IP di POST /api/v1/admin/login
+             (route cmd/api/main.go:179 → Handler.AdminLogin
+             internal/admin/handler.go:232 → Service.Login
+             internal/admin/service.go:181). Yang ada HANYA lockout
+             per-account: checkLockout + recordFailedAttempt
+             (internal/admin/lockout.go:96-102, disuntik via LockoutGuard
+             handler.go:55-58). Tidak ada throttle volume request sebelum
+             lookup/bcrypt compare.
+Dampak     : Attacker bisa rotate IP untuk bypass account-based lockout.
+Solusi     : Token bucket per-IP di admin login (mirror TD-083 pattern untuk
+             order submit). Lockout per-account (TD-114) tetap
+             dipertahankan sebagai lapisan kedua — keduanya saling
+             menutup: per-IP menahan volume dari satu sumber, per-account
+             menahan slow distributed guess. [PERLU VERIFIKASI]-before-fix:
+             sumber IP belum TrustedIP-validated di repo (grep
+             `X-Forwarded-For|RemoteAddr|TrustedProxies` = 0 hasil), jadi
+             pakai remote addr socket atau set allowlist proxy dulu supaya
+             IP tidak bisa dipalsukan lewat header.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-114 (temuan OpenCode)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 147 item (TD-051 di-reserve/skip)
-                                       (40 FIXED + 14 CLOSED + 7 DEFERRED + 86 OPEN = 147)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 149 item (TD-051 di-reserve/skip)
+                                       (41 FIXED + 14 CLOSED + 7 DEFERRED + 87 OPEN = 149)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
-- SEDANG  : 69 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153)
+            [TETAP 40 pada 2026-09-27 (TD-114 FIXED): bucket Prioritas
+            mengikuti `Prioritas :`, bukan `Status :` — TD-114 tetap
+            `Prioritas : TINGGI` (yang berubah hanya Status OPEN → FIXED)
+            jadi bucket TINGGI tidak bergerak. Preseden: TD-113, TD-127,
+            TD-144, TD-147, TD-126 semuanya FIXED tapi tetap terdaftar di
+            bucket Prioritasnya. Aritmetika: kalau TINGGI turun ke 39 maka
+            sum Prioritas = 146 ≠ 147, sedangkan 40 menghasilkan
+            8 + 40 + 69 + 30 = 147 ✓.]
+- SEDANG  : 71 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
              (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
@@ -2117,10 +2244,26 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 147 item (TD-051 di-reserve/skip)
               Alasan: ketiga item adalah gap lanjutan dari TD-126 yang
               sebelumnya dicatat "REGISTERED = 0" di Note sesi TD-126
               (line ~2627) menunggu instruksi reviewer.]
+               [71 pada 2026-09-27: TD-154 (SECURITY — Redis attempts
+              counter `admin:2fa_attempts:*` di-INCR tanpa EXPIRE,
+              internal/admin/lockout.go:195) dan TD-155 (SECURITY — rate
+              limit per-IP admin login belum ada) adalah entry BARU hasil
+              gap lanjutan TD-114 yang sudah FIXED, keduanya `Prioritas :
+              SEDANG` dan Status OPEN dari awal, jadi bucket SEDANG 69 → 71
+              (+2) dan bucket Status OPEN 85 → 87 (+2); FIXED 41, CLOSED 14,
+              DEFERRED 7 tetap. Total 147 → 149. Konsisten:
+              8 + 40 + 71 + 30 = 149 = TOTAL dan 41 + 14 + 7 + 87 = 149.
+              TD-114 TIDAK mengubah bucket TINGGI meski berakar dari
+              TD-114 (`Prioritas : TINGGI`) karena TD-154 punya
+              `Prioritas : SEDANG` sendiri — bucket mengikuti `Prioritas :`
+              per entry, bukan ID;[koreksi factual: prompt Reviewer menulis
+              "lockout.go:196", aktual baris INCR = lockout.go:195;
+              :196 adalah baris `if err != nil {` — lihat
+              [OVERRIDE-3].]
 - RENDAH  : 30 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152)
 
-STATUS: ✅ FIXED 40 item, 14 item CLOSED (FIXED/CLOSED 54), 7 item DEFERRED,
-        86 item OPEN.  [40 + 14 + 7 + 86 = 147 = TOTAL]
+STATUS: ✅ FIXED 41 item, 14 item CLOSED (FIXED/CLOSED 55), 7 item DEFERRED,
+        87 item OPEN.  [41 + 14 + 7 + 87 = 149 = TOTAL]
 
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
@@ -2146,17 +2289,35 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-26):
-   - Total hutang teridentifikasi      : 147 item (TD-051 di-reserve/skip; 147 item aktif terdaftar).
-   - ✅ FIXED                           : 40 item
+3. RINGKASAN STATUS TERKINI (2026-09-27):
+   - Total hutang teridentifikasi      : 149 item (TD-051 di-reserve/skip; 149 item aktif terdaftar).
+   - ✅ FIXED                           : 41 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 54 item
+   - FIXED/CLOSED                       : 55 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 86 item (bukan hanya TD-058 s/d TD-153 — masih ada
+   - ❌ OPEN                              : 87 item (bukan hanya TD-058 s/d TD-155 — masih ada
                                           TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst.).
-     [40 + 14 + 7 + 86 = 147 = TOTAL]
+     [41 + 14 + 7 + 87 = 149 = TOTAL]
+     [Perubahan 2026-09-27 — TD-154 + TD-155 (keduanya entry BARU, Status OPEN,
+     hasil gap lanjutan TD-114 yang sudah FIXED): OPEN 85 → 87; FIXED 41,
+     CLOSED 14, DEFERRED 7, FIXED/CLOSED 55 tetap; Total 147 → 149. Bucket
+     Prioritas BERGERAK karena keduanya entry baru `Prioritas : SEDANG`:
+     SEDANG 69 → 71. Konsisten: 8 + 40 + 71 + 30 = 149 = TOTAL dan
+     41 + 14 + 7 + 87 = 149. Range SECTION F: TD-058 s/d TD-153 → TD-058
+     s/d TD-155. Parser atas 149 field `ID :` mengonfirmasi sum Prioritas =
+     sum Status = 149 (V1/V2/V3 sesi ini). Tidak ada kode yang diubah —
+     register dokumentasi saja. Tidak commit (R10).]
+     [Perubahan 2026-09-27 — TD-114 FIXED (login lockout admin): FIXED 40 → 41,
+     FIXED/CLOSED 54 → 55, OPEN 86 → 85, Total tetap 147. Bucket Prioritas
+     (§2) TIDAK berubah: KRITIS 8 + TINGGI 40 + SEDANG 69 + RENDAH 30 = 147 —
+     TINGGI tetap 40 karena bucket itu mengikuti `Prioritas :` dan TD-114 tetap
+     `Prioritas : TINGGI` (hanya Status OPEN → FIXED). Preseden: TD-113,
+     TD-126, TD-127, TD-144, TD-147. Parser atas 147 field `ID :`
+     mengonfirmasi sum Prioritas = sum Status = 147 (V1/V2/V3 sesi ini).
+     Tanggal sesi = 2026-09-27 (bukan 2026-09-26 seperti tertulis di prompt
+     Reviewer) — lihat [OVERRIDE-2] di changelog sesi ini.]
      [Perubahan 2026-09-26 — TD-147 FIXED: FIXED 38 → 39, FIXED/CLOSED 52 → 53,
      OPEN 83 → 82, Total tetap 142. Bucket Prioritas (§2) TIDAK berubah:
      KRITIS 8 + TINGGI 40 + SEDANG 66 + RENDAH 28 = 142 — SEDANG tetap 66
@@ -2782,5 +2943,176 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         Tidak commit (R10).
 
 ================================================================================
+        [2026-09-27 — SESI TD-114] Login lockout (brute-force protection)
+        endpoint POST /api/v1/admin/login. Root cause (CEK, bukan asumsi):
+        AdminLogin (internal/admin/handler.go:222) langsung memanggil
+        svc.Login yang hanya memvalidasi kredensial; `recordFailedAttempt`
+        HANYA dipanggil dari ReverseTransaction (handler.go:95, jalur 2FA).
+        Artinya 3x password salah di /admin/login tidak pernah menambah
+        counter lockout sama sekali — brute-force password admin unbounded
+        (OWASP A07:2021). Bukti: grep `checkLockout|recordFailedAttempt|
+        resetAttempts` di internal/admin/ sebelum perubahan = 3 call site,
+        semua di ReverseTransaction.
+        Fix (3 file kode in-scope + 1 file test, TIDAK ada infra/migration
+        baru — reuse dual-write Redis+PostgreSQL yang sudah ada):
+        (1) lockout.go — interface `LockoutGuard` (4 metode) +
+        wrapper exported di Handler + `lockoutRetryAfter` (TTL Redis →
+        locked_until PG → default 15m) untuk menyuplai retry_after.
+        (2) service.go — `ErrAccountLocked` + tipe `AccountLockedError`
+        (RetryAfter, Unwrap ke sentinel); Service dapat field `lockout
+        LockoutGuard`; Login: checkLockout SEBELUM bcrypt compare → locked
+        return AccountLockedError; bcrypt gagal → recordLoginFailure;
+        login sukses → resetLoginAttempts. Semua fail-open bila guard/infra
+        error (konsisten dengan handler.go:80-82) + `warnLogin` supaya
+        logger nil tidak jadi panic di endpoint publik.
+        (3) handler.go — `NewHandler` menyuntik guard ke Service (main.go
+        TIDAK berubah); case `errors.Is(err, ErrAccountLocked)` → helper
+        `writeAccountLockedError` → 429 + code ACCOUNT_LOCKED +
+        error.details.retry_after (detik) + header Retry-After (RFC 9110);
+        401 INVALID_CREDENTIALS untuk password salah TETAP.
+        Keputusan desain yang perlu diketahui reviewer: (a) checkLockout
+        harus setelah lookup email (user id baru ada di situ) tapi sebelum
+        bcrypt — timing anti-enumerasi tidak dikorbankan karena jalur
+        email-tak-terdaftar tetap lewat dummy bcrypt; (b) pencatatan failed
+        attempt TIDAK dibatasi user_type=admin, kalau dibatasi maka 429
+        jadi oracle "email ini admin" (akun non-admin selalu 401) —
+        locking by user id dari DB berarti email acak tidak pernah membuat
+        baris baru, jadi tidak ada risiko tabel membesar; (c) counter login
+        memakai key counter 2FA yang sama (admin:2fa_attempts:*) — 3x gagal
+        password ATAU 2FA mengunci akun, satu threshold untuk dua vektor.
+        Verifikasi (FULL, tanpa truncate): V1 `go build ./...` PASS (1m21s,
+        exit 0); V2 `go vet ./...` PASS (exit 0, tanpa output); V3
+        `go test ./internal/admin/... -v -count=1` = 80 PASS / 0 FAIL
+        (baseline sebelum change 72 PASS → +8 test baru di
+        internal/admin/login_lockout_test.go: 3x gagal → lock + percobaan
+        ke-4 429 walau password benar, login sukses reset counter, 2x gagal
+        belum terkunci, akun terkunci ditolak walau password benar,
+        lockout expired setelah TTL (miniredis FastForward), fallback
+        PostgreSQL saat Redis mati, akun non-admin juga dikunci, service
+        tanpa guard tetap normal); V4 `go test ./internal/admin/... -cover`
+        82.9% → 83.6%; V5 `go test -tags integration ./internal/admin/...
+        -count=1` PASS (catatan: package ini tidak punya file ber-build-tag
+        `integration`, jadi V5 identik dengan V3); V6 grep primer lockout
+        = 3 call site handler (reversal, tidak berubah) + 4 call site
+        service (login, baru) + 4 wrapper exported; V7 `git status
+        --short` = M internal/admin/{handler,lockout,service}.go + ?? 
+        internal/admin/login_lockout_test.go — semua in-scope, tidak ada
+        file auth/ride/food/send/mobile yang disentuh. Tambahan:
+        `go test ./... -count=1` seluruh repo PASS (admin, auth, driver,
+        food, middleware, ride, send, wallet, worker) → tanpa regresi
+        lintas modul. gofmt: `gofmt -l` masih men-flag 4 file test lama +
+        3 file sumber yang sudah flagged SEBELUM perubahan (verifikasi:
+        `git show HEAD:<file> | gofmt -l` juga men-flag) → pre-existing,
+        bukan regresi TD-114.
+        Status TD-114: OPEN → ✅ FIXED. FIXED 40 → 41; FIXED/CLOSED
+        54 → 55; OPEN 86 → 85; Total tetap 147.
+        [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "TINGGU 40→39" —
+        SALAH untuk konteks ini. Bucket Prioritas §2 mengikuti `Prioritas
+        :`, bukan `Status :`; TD-114 tetap `Prioritas : TINGGI` (yang
+        berubah hanya Status OPEN → FIXED). Bukti: (a) parser atas 147
+        field `ID :` di file ini → Prioritas KRITIS 8 + TINGGI 40 + SEDANG
+        69 + RENDAH 30 = 147 SEBELUM edit; (b) preseden TD-147
+        (OVERRIDE-1 sesi sebelumnya) + TD-126 (OVERRIDE-1 sesi
+        TD-126) + catatan register §2 ("bucket ini berdasarkan Prioritas,
+        bukan Status; TD-113/TD-127/TD-144/TD-147 semuanya FIXED tapi
+        tetap terdaftar"); (c) aritmetika — kalau TINGGI turun ke 39 maka
+        sum Prioritas = 146 ≠ 147 (parser "sum = total" GAGAL),
+        sedangkan 40 menghasilkan 147 ✓. Dipakai: TINGGI TETAP 40, hanya
+        bucket Status yang bergerak. Angka lain dari prompt (FIXED
+        40→41, FIXED/CLOSED 54→55, OPEN 86→85, Total 147) sudah cocok
+        dengan hasil parser sebelum-edit (40/14/7/86 = 147).
+        [OVERRIDE-2 / §11.2] Prompt Reviewer menulis Status TD-114 =
+        "✅ FIXED (2026-09-26, ...)". Tanggal sesi ini adalah 2026-09-27
+        (bukti: `date "+%Y-%m-%d %A"` → "2026-09-27 Sunday", dan timestamp
+        log go-redis pada test run = "2026/09/27 08:01:12"). Menulis
+        2026-09-26 akan salah faktual di register (R2/R3), jadi dipakai
+        2026-09-27 untuk entry TD-114, header §3, dan changelog ini. Tidak
+        ada changelog historis yang diubah — entry 2026-09-26 tetap
+        apa adanya.
+        Sisa (di luar scope TD-114, R8 — dicatat di Note entry TD-114,
+        REGISTERED = 0 agar Total tetap 147): (a) counter attempts Redis
+        tidak diberi TTL (lockout.go:196 INCR tanpa EXPIRE) → counter
+        tidak pernah kadaluarsa, policy efektif "3x gagal sejak
+        login/reversal sukses TERAKHIR", bukan "3x dalam 15 menit";
+        pre-existing juga di jalur 2FA; (b) `INTERVAL '15 minutes'`
+        masih hardcoded di SQL terpisah dari konstanta lockoutDuration →
+        sudah ada TD-026 (OPEN); (c) customer login (/auth/login) tidak
+        punya lockout sama sekali (baseline konsisten, TD terpisah);
+        (d) gofmt -l masih men-flag file internal/admin (pre-existing,
+        pola doc-comment + const alignment, mirip TD-116 untuk wallet).
+        Tidak commit (R10).
+
+================================================================================
+        [2026-09-27 — SESI TD-154 + TD-155] Dua gap lanjutan TD-114 yang
+        tadinya dicatat "REGISTERED = 0" di Note sesi TD-114 (lihat
+        "Sisa (di luar scope TD-114, R8)" item (a) di atas). Keduanya kini
+        jadi entry REGISTERED, Status OPEN, Prioritas SEDANG.
+        TD-154 (SECURITY) — Redis attempts counter `admin:2fa_attempts:*`
+        tidak diberi TTL. Bukti: internal/admin/lockout.go:195
+        `h.redis.Incr(ctx, attemptKey)` dengan attemptKeyPrefix
+        (`admin:2fa_attempts:`, lockout.go:33) dan TANPA panggilan Expire
+        pada key itu; grep `\.Expire(|EXPIRE\b` di internal/admin/ = 0 hasil
+        (substring "Expire" hanya muncul di nama test
+        login_lockout_test.go:238). Bandingkan lock flag di lockout.go:214
+        yang memang diberi TTL
+        (`Set(..., lockoutDuration)`). Komentar lockout.go:186 mengklaim
+        "Dual-write Redis (INCR + TTL)" → tidak akurat untuk counter
+        attempt. Reset hanya di resetAttempts (lockout.go:251-263), dipanggil
+        hanya saat login/reversal 2FA sukses; jalur PG L2
+        (recordFailedAttemptPG, lockout.go:225-248) juga tanpa time-window.
+        Efek: policy efektif "3x gagal sejak login/reversal sukses
+        terakhir", bukan "3x dalam 15 menit" (lockoutDuration = 15m,
+        lockout.go:30). Solusi: EXPIRE setelah INCR atau sliding window
+        proper; [PERLU VERIFIKASI] sliding-vs-fixed window + kolom waktu
+        untuk L2.
+        TD-155 (SECURITY) — belum ada rate limit per-IP di admin login.
+        Bukti: grep repo-wide `ratelimit|RateLimit|rate_limit` pada *.go = 0
+        hasil (internal/middleware/ tidak punya rate limiter), route
+        POST /api/v1/admin/login (cmd/api/main.go:179) → AdminLogin
+        (internal/admin/handler.go:232) → Service.Login
+        (internal/admin/service.go:181) hanya dilindungi lockout
+        per-account. Solusi: token bucket per-IP (mirror TD-083), dengan
+        lockout per-account tetap sebagai lapisan kedua; [PERLU VERIFIKASI]
+        sumber IP (repo belum punya handling X-Forwarded-For/RemoteAddr/
+        TrustedProxies = 0 hasil, jadi IP dari header bisa dipalsukan).
+        Dampak register: entry BARU Prioritas SEDANG, Status OPEN →
+        SEDANG 69 → 71, OPEN 85 → 87, Total 147 → 149. FIXED 41, CLOSED 14,
+        DEFERRED 7, FIXED/CLOSED 55 tetap. Konsisten: 8 + 40 + 71 + 30 =
+        149 dan 41 + 14 + 7 + 87 = 149. Range SECTION F: TD-058 s/d TD-153
+        → TD-058 s/d TD-155. Tidak ada kode yang diubah — register
+        dokumentasi saja (R8). Tidak commit (R10).
+        [OVERRIDE-1 / §11.2] Angka ringkasan di prompt Reviewer sudah
+        diverifikasi kebenarannya oleh parser SEBELUM edit: 147 entry
+        (KRITIS 8 + TINGGI 40 + SEDANG 69 + RENDAH 30 = 147;
+        FIXED 41 + CLOSED 14 + DEFERRED 7 + OPEN 85 = 147). Tidak ada
+        koreksi yang diperlukan untuk Total/SEDANG/OPEN.
+        [OVERRIDE-2 / §11.2] Prompt Reviewer menulis "Prioritas: SEDANG"
+        untuk TD-154 dan TD-155, sementara TD-114 (induknya) adalah
+        `Prioritas : TINGGI`. Keduanya dipakai apa adanya: bucket Prioritas
+        mengikuti `Prioritas :` PER ENTRY (preseden TD-150 ARSITEKTUR
+        Prioritas SEDANG meski berakar dari TD-126 yang RENDAH), bukan
+        diwariskan dari entry asal. Konsekuensi: bucket TINGGI tetap 40
+        dan TD-154/TD-155 masuk bucket SEDANG (+2).
+        [OVERRIDE-3 / §11.2] Prompt Reviewer (dan Note sesi TD-114 di
+        changelog ini) menyebut "lockout.go:196" untuk INCR. Baris INCR
+        yang sebenarnya adalah lockout.go:195; baris :196 adalah
+        `if err != nil {`. Bukti: `sed -n '194,197p' internal/admin/lockout.go`
+        → `attemptKey := attemptKeyPrefix + adminID.String()` / `attempts,
+        err := h.redis.Incr(ctx, attemptKey).Result()` / `if err != nil {`
+        / `h.logger.Warn(...)`. Dipakai: lockout.go:195 di entry TD-154.
+        Catatan: changelog historis sesi TD-114 (line ~3034) TIDAK
+        diubah — konsistensi dengan preseden OVERRIDE-2 sesi TD-114
+        ("Tidak ada changelog historis yang diubah"). Perbedaan satu
+        baris ini tidak mengubah Kesimpulan TD-154 apa pun.
+        Verifikasi sesi ini: V1 `grep -c "TD-154\|TD-155"` = 8 (≥4 ✓);
+        V2 `grep -A3 "TOTAL HUTANG"` menunjukkan 149 ✓; V3 parser atas 149
+        field `ID :` → sum Prioritas = 149, SEDANG = 71 ✓ dan sum Status
+        = 149 (FIXED 41 / CLOSED 14 / DEFERRED 7 / OPEN 87) ✓. Tidak ada
+        build/test Go yang dijalankan karena tidak ada file `.go` yang
+        berubah (dokumentasi saja) — `git status` = 1 file modifikasi
+        (docs/TECHNICAL DEBT.txt). Tidak commit (R10).
+
+================================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ================================================================================
+
