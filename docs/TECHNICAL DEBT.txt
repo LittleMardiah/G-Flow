@@ -362,24 +362,33 @@ Status     : ✅ FIXED (2026-09-22, sync from code — apps/admin_web/src/app/lo
 
 ID         : TD-030
 Kategori   : SECURITY
-Judul      : Admin default password (AdminP@ssw0rd!2026) didokumentasikan
-             (migration 014 + DEPLOYMENT_GUIDE). Wajib ganti setelah login
-             pertama di production.
+Judul      : Admin default password pernah didokumentasikan (migration 014 +
+             DEPLOYMENT_GUIDE + env CI). Wajib ganti setelah login pertama di
+             production.
 Dampak     : Password default yang di-publish = celah kalau lupa diganti.
-Solusi     : Wajib reset password untuk akun admin setelah login pertama di
-             production (flow force-change-password).
+Solusi     : Hapus akun default via migration 017_remove_default_admin.up.sql
+             (hanya yang hash-nya masih sama dengan seed 014 — admin yang sudah
+             rotasi password tidak ikut terhapus) + seed ulang via
+             scripts/seed_admin.sh dengan password dari env.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-27, commit TD-030) — password dihapus dari docs
+             (014, DEPLOYMENT_GUIDE) dan dari env CI; seed via script
+             (ADMIN_PASSWORD, test-only di CI). Tidak ada password admin
+             yang tersimpan di repo lagi.
 
 ID         : TD-031
 Kategori   : KODE
 Judul      : Bcrypt hash hardcoded di migration 014_seed_admin.up.sql.
 Dampak     : Hash tidak bisa dirotasi tanpa edit migration; password default
              konstan di semua environment.
-Solusi     : Untuk production, pertimbangkan env-driven seeding (seed admin
-             via env ADMIN_PASSWORD / script, bukan hardcode migration).
+Solusi     : Env-driven seeding — scripts/seed_admin.sh (ADMIN_PASSWORD, di-hash
+             on-the-fly oleh scripts/hashgen) menggantikan hardcode; hash default
+             dihapus dari DB oleh migration 017.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-27, commit TD-031) — hash default dihapus via 017;
+             seed env-driven via scripts/seed_admin.sh (upsert = rotasi password
+             tanpa edit migration). Tidak ada lagi password yang perlu
+             "dirotasi manual" — cukup jalankan ulang script.
 
 ID         : TD-032
 Kategori   : INFRA
@@ -2290,18 +2299,67 @@ Prioritas  : RENDAH
 Status     : OPEN
 Referensi  : TD-106 (temuan OpenCode)
 
+ID         : TD-158
+Kategori   : TESTING / DATABASE
+Judul      : `ride_orders.updated_at` tidak ada di SKEMA mana pun, tapi worker
+             auto-cancel menulis kolom itu — SQLSTATE 42703 di SEMUA environment.
+Bukti      : (a) kode: internal/worker/repository.go:241-250 CancelRideOrder
+             menjalankan `UPDATE ride_orders SET status='CANCELLED',
+             cancellation_reason='EXPIRED', updated_at = NOW() WHERE ...`.
+             (b) skema: `grep -rn "ALTER TABLE ride_orders" migrations/` =
+             2 hasil, keduanya tidak menambah kolom — 004:201 (RLS, di-comment)
+             dan 016:91 (ADD CONSTRAINT fk_ride_voucher). Definisi
+             CREATE TABLE ride_orders di 004 punya created_at/expires_at/
+             assigned_at/pickup_at/completed_at/settled_at tapi TIDAK
+             updated_at. Migration 009 (yang menggagas "kolom updated_at
+             hilang") hanya menyentuh food_orders, send_orders,
+             send_order_stops — bukan ride_orders.
+             (c) DB dev g_flow_dev: replay statement-nya
+             `ERROR: column "updated_at" of relation "ride_orders" does not
+             exist` (SQLSTATE 42703); information_schema.columns untuk
+             ride_orders = 0 baris `updated_at`. Jadi ini BUKAN "migration 009
+             belum diterapkan di dev" — 009 memang tidak pernah menambah kolom
+             itu, jadi apply 009 tidak akan memperbaiki apa pun.
+Dampak     : cancelOneRideOrder (internal/worker/worker.go:392-420) melakukan
+             refundRideEscrow DULUAN lalu CancelRideOrder; begitu CancelRideOrder
+             error 42703, statement `return err` dan `defer tx.Rollback(ctx)`
+             (worker.go:397) me-rollback refund juga. Akibatnya auto-cancel ride
+             (TD-067) gagal 100% untuk order yang lewat TTL: order tetap
+             SEARCHING_DRIVER, escrow customer tidak pernah direfund, dan
+             `cancelled` tidak pernah naik (metrik salah). Tidak ada kehilangan
+             uang — rollback yang menyelamatkan — tapi refund tidak pernah
+             sampai ke customer dan worker loop terus retry order yang sama
+             setiap siklus. Ini merusak fungsi inti, bukan sekadar noise log.
+Solusi     : Migration baru: `ALTER TABLE ride_orders ADD COLUMN IF NOT EXISTS
+             updated_at TIMESTAMPTZ DEFAULT NOW();` (pola sama seperti 009).
+             [PERLU VERIFIKASI]-sebelum-fix: (a) apakah updated_at dipakai
+             reader lain (SELECT) — kalau tidak, alternatif yang lebih kecil
+             jejaknya: hapus `updated_at = NOW()` dari CancelRideOrder;
+             (b) DECIDE: tambah kolom (konsisten dengan food/send, tapi
+             migration = perubahan skema) ATAU hapus kolom dari query
+             (perubahan kode saja, tanpa migration) — dua-duanya punya
+             konsekuensi, tidak boleh dipilih asal; (c) verify dengan
+             integration test worker (TD-156 belum ada) atau minimal manual:
+             insert ride order SEARCHING_DRIVER + expires_at di masa lalu lalu
+             panggil CancelRideOrders.
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : TD-067 (auto-cancel ride), TD-106 (worker), TD-156 (worker
+             belum punya integration test — reason kenapa bug ini lolos)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 151 item (TD-051 di-reserve/skip)
-                                       (42 FIXED + 14 CLOSED + 7 DEFERRED + 88 OPEN = 151)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 152 item (TD-051 di-reserve/skip)
+                                       (44 FIXED + 14 CLOSED + 7 DEFERRED + 87 OPEN = 152)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 40 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
+- TINGGI  : 41 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
-            TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128)
+            TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128,
+            TD-158)
             [TETAP 40 pada 2026-09-27 (TD-106 FIXED): prompt Reviewer menulis
             "TINGGI 40→39", tapi bucket TINGGI mengikuti `Prioritas :`, bukan
             `Status :` — TD-106 tetap `Prioritas : TINGGI` (yang berubah hanya
@@ -2311,6 +2369,14 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 151 item (TD-051 di-reserve/skip)
             Preseden: TD-114, TD-113, TD-127, TD-144, TD-147, TD-126
             semuanya FIXED tapi tetap terdaftar di bucket Prioritasnya.
             Lihat [OVERRIDE-1] di changelog sesi ini.]
+            [41 pada 2026-09-27: TD-158 adalah entry BARU dengan `Prioritas :
+            TINGGI`, jadi bucket TINGGI 40 → 41 (+1). TD-030 TIDAK menggeser
+            bucket: Status-nya OPEN → FIXED tapi `Prioritas :`-nya tetap TINGGI
+            (preseden TD-106/TD-114). Prompt Reviewer menulis "TINGGI 40→39
+            (TD-030 close)" — SALAH: kalau bucket ikut Status, TD-031 juga akan
+            menggeser SEDANG, dan tidak ada satu pun entry FIXED lain di daftar
+            ini yang hilang dari bucketnya. Parser: 8 + 41 + 72 + 31 = 152 =
+            TOTAL. Lihat [OVERRIDE-2].]
 - SEDANG  : 72 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
@@ -2361,10 +2427,20 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 151 item (TD-051 di-reserve/skip)
               :196 adalah baris `if err != nil {` — lihat
               [OVERRIDE-3].]
                [72 pada 2026-09-27: TD-156 (TESTING — worker 97.4% via
-             pgxmock, semantics PostgreSQL nyata belum ter-cover integration
-             test) adalah entry BARU dengan `Prioritas : SEDANG`, jadi bucket
-             SEDANG 71 → 72 (+1). Keduanya Status OPEN dari awal, jadi bucket
-             Status OPEN 86 → 88 (+2, bersama TD-157). Total 149 → 151.]
+              pgxmock, semantics PostgreSQL nyata belum ter-cover integration
+              test) adalah entry BARU dengan `Prioritas : SEDANG`, jadi bucket
+              SEDANG 71 → 72 (+1). Keduanya Status OPEN dari awal, jadi bucket
+              Status OPEN 86 → 88 (+2, bersama TD-157). Total 149 → 151.]
+               [TETAP 72 pada 2026-09-27 (TD-030 + TD-031 FIXED): bucket SEDANG
+              mengikuti `Prioritas :`, dan TD-031 tetap `Prioritas : SEDANG`
+              (hanya Status OPEN → FIXED) — preseden TD-113, TD-126, TD-127,
+              TD-144, TD-147, TD-150, TD-153. TD-158 (entry baru) Prioritas-nya
+              TINGGI, bukan SEDANG, jadi bucket ini justru tidak bergerak sama
+              sekali. Prompt Reviewer menulis "SEDANG 72 → 72, TD-031 close -1,
+              TD-158 add +1" — angka akhirnya kebetulan sama, tapi mekanismenya
+              salah: kalau benar bucket ikut Status, TD-031 harus keluar dari
+              daftar dan TD-158 harus masuk sebagai SEDANG (yang tidak terjadi —
+              TD-158 TINGGI). Lihat [OVERRIDE-2].]
 - RENDAH  : 31 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157)
               [31 pada 2026-09-27: TD-157 (KODE — `defer tx.Rollback(ctx)`
              dijalankan setelah Commit sukses di worker.go:175/288/398) adalah
@@ -2372,8 +2448,12 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 151 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 42 item, 14 item CLOSED (FIXED/CLOSED 56), 7 item DEFERRED,
-        88 item OPEN.  [42 + 14 + 7 + 88 = 151 = TOTAL]
+STATUS: ✅ FIXED 44 item, 14 item CLOSED (FIXED/CLOSED 58), 7 item DEFERRED,
+        87 item OPEN.  [44 + 14 + 7 + 87 = 152 = TOTAL]
+        [44/58/7/87 pada 2026-09-27: TD-030 + TD-031 OPEN → FIXED (+2 FIXED,
+        -2 OPEN), TD-158 entry baru Status OPEN (+1 OPEN, +1 TOTAL). FIXED 42 →
+        44, OPEN 88 → 87, TOTAL 151 → 152. Parser (152 field `ID :`):
+        Prioritas 8 + 41 + 72 + 31 = 152 ✓ = Status 44 + 14 + 7 + 87 = 152 ✓.]
 
 
 PRIORITAS UTAMA (yang paling menghambat production readiness):
@@ -2400,16 +2480,26 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-27):
-   - Total hutang teridentifikasi      : 151 item (TD-051 di-reserve/skip; 151 item aktif terdaftar).
-   - ✅ FIXED                           : 42 item
+   - Total hutang teridentifikasi      : 152 item (TD-051 di-reserve/skip; 152 item aktif terdaftar).
+   - ✅ FIXED                           : 44 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 56 item
+   - FIXED/CLOSED                       : 58 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 88 item (bukan hanya TD-058 s/d TD-157 — masih ada
-                                          TD-022, TD-026, TD-030 s/d TD-037, TD-042 s/d TD-049,
+   - ❌ OPEN                              : 87 item (bukan hanya TD-058 s/d TD-158 — masih ada
+                                          TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [42 + 14 + 7 + 88 = 151 = TOTAL]
+     [44 + 14 + 7 + 87 = 152 = TOTAL]
+     [Perubahan 2026-09-27 — TD-030 + TD-031 FIXED (password admin dihapus dari
+     docs, seed env-driven via scripts/seed_admin.sh, migration 017 menghapus
+     akun admin default) dan TD-158 entry BARU (Status OPEN, `Prioritas :`
+     TINGGI): FIXED 42 → 44, FIXED/CLOSED 56 → 58, OPEN 88 → 87, Total
+     151 → 152. Bucket Prioritas: TINGGI 40 → 41 (kenanya karena TD-158 entry
+     baru TINGGI, BUKAN karena TD-030 close); SEDANG tetap 72; KRITIS 8 dan
+     RENDAH 31 tetap. Konsisten: 8 + 41 + 72 + 31 = 152 = TOTAL dan
+     44 + 14 + 7 + 87 = 152. Range SECTION F: TD-058 s/d TD-157 →
+     TD-058 s/d TD-158. Parser atas 152 field `ID :` mengonfirmasi sum
+     Prioritas = sum Status = 152 (V7 sesi ini). Tidak commit (R10).]
      [Perubahan 2026-09-27 — TD-156 + TD-157 (keduanya entry BARU, Status
      OPEN, gap lanjutan TD-106 yang sudah FIXED): OPEN 86 → 88; FIXED 42,
      CLOSED 14, DEFERRED 7, FIXED/CLOSED 56 tetap; Total 149 → 151. Bucket
@@ -3413,6 +3503,100 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         perlu diulang karena tidak ada file `.go` yang berubah.
         Changelog historis tidak diubah; entri ini ditambahkan di akhir
         sebelum penanda END OF.
+
+================================================================================
+        [2026-09-27 — SESI TD-030 + TD-031 FINALIZE] Dua TD keamanan ditutup
+        (STEP A+B sudah PASS; sesi ini menutup STEP C = migration 017 + CI E2E
+        + docs), plus satu entry BARU TD-158. Password admin tidak lagi ada di
+        repo dalam bentuk apa pun: nilai yang bocor dihapus dari komentar
+        migration 014, dari env CI, dan dari fallback Playwright; akun default
+        di-DB dihapus oleh migrations/017_remove_default_admin.up.sql — DELETE
+        yang syaratnya `email='admin@g-flow.local' AND password_hash = <hash
+        persis seed 014:36>`, jadi admin yang sudah merotasi password TIDAK ikut
+        terhapus, dan re-run = 0 baris = no-op (idempotent). Environment baru
+        membuat admin lewat `ADMIN_PASSWORD=... bash scripts/seed_admin.sh`
+        (upsert, bcrypt on-the-fly via scripts/hashgen, tidak ada default yang
+        bisa "terlupa"). Job CI e2e-admin sekarang seed lewat script yang sama
+        dengan password TEST-ONLY yang memang boleh publishable
+        (`CI-Test-Only-Pw!2026`; satu-satunya sumber = env job
+        E2E_ADMIN_PASSWORD, dibaca ulang oleh admin.spec.ts), plus guard
+        `SELECT CASE WHEN count(*) = 1 ...` supaya seed yang gagal ketahuan
+        sebelum backend start. Yang SENGAJA TIDAK disentuh: kode produksi
+        (handler/service admin tidak berubah sama sekali — tidak ditambahkan
+        flow force-change-password, karena sekarang tidak ada password default
+        yang perlu dipaksa diganti).
+        TD-158 (TESTING/DATABASE, TINGGI, entry BARU, Status OPEN):
+        `ride_orders.updated_at` tidak ada di skema mana pun, tapi
+        internal/worker/repository.go:241-250 (CancelRideOrder) menulis kolom
+        itu → SQLSTATE 42703 di SEMUA environment. Bukti: (a) `grep -rn
+        "ALTER TABLE ride_orders" migrations/` = 2 hasil, keduanya bukan
+        penambahan kolom (004:201 RLS yang di-comment, 016:91 ADD CONSTRAINT);
+        (b) CREATE TABLE ride_orders di 004 tidak punya updated_at; (c) replay
+        statement-nya di dev DB → `ERROR: column "updated_at" of relation
+        "ride_orders" does not exist`, information_schema = 0 baris. Dampak:
+        cancelOneRideOrder (worker.go:392-420) refund escrow DULUAN lalu
+        CancelRideOrder; error 42703 → `return err` → `defer tx.Rollback`
+        (worker.go:397) me-rollback refund juga, jadi auto-cancel ride (TD-067)
+        gagal 100% untuk order yang lewat TTL: order tetap SEARCHING_DRIVER,
+        escrow customer tidak pernah direfund, metrik `cancelled` salah. Tidak
+        ada kehilangan uang (rollback yang menyelamatkan) tapi fungsi inti mati.
+        Fix-nya TIDAK dieksekusi: menambah kolom = perubahan skema DB
+        (§11.4 butir 1 = MUST STOP) dan TD-158 belum direview — hanya dicatat
+        + [PERLU VERIFIKASI]-before-fix.
+        Dampak register: FIXED 42 → 44 (TD-030, TD-031), OPEN 88 → 87
+        (TD-030 dan TD-031 -2, TD-158 +1), FIXED/CLOSED 56 → 58, Total
+        151 → 152. Bucket Prioritas: TINGGI 40 → 41 (karena TD-158 entry baru
+        TINGGI), SEDANG tetap 72, KRITIS 8, RENDAH 31. Konsisten:
+        8 + 41 + 72 + 31 = 152 dan 44 + 14 + 7 + 87 = 152. Range SECTION F:
+        TD-058 s/d TD-157 → TD-058 s/d TD-158. Tidak commit (R10).
+        [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "TINGGI 40 → 39, TD-030
+        close". SALAH. Bucket Prioritas mengikuti `Prioritas :` per entry, bukan
+        `Status :` — TD-030 tetap `Prioritas : TINGGI` (yang berubah hanya
+        Status OPEN → FIXED). Preseden yang sudah tertulis di dokumen ini:
+        TD-106, TD-114, TD-113, TD-126, TD-127, TD-144, TD-147, TD-150,
+        TD-153. Bukti konkret: parser dijalankan SEBELUM edit atas 151 field
+        `ID :` → KRITIS 8 + TINGGI 40 + SEDANG 72 + RENDAH 31 = 151 = sum
+        Status (FIXED 42 + CLOSED 14 + DEFERRED 7 + OPEN 88) = 151; parser
+        dijalankan SETELAH edit atas 152 field `ID :` → KRITIS 8 + TINGGI 41 +
+        SEDANG 72 + RENDAH 31 = 152 = FIXED 44 + CLOSED 14 + DEFERRED 7 +
+        OPEN 87 = 152. Kalau TINGGI benar-benar 39, sum Prioritas = 150 ≠
+        152. Jadi TINGGI naik ke 41, bukan turun ke 39.
+        [OVERRIDE-2 / §11.2] Prompt Reviewer menulis "SEDANG 72 → 72, TD-031
+        close -1, TD-158 add +1". Angka akhirnya kebetulan sama, tapi
+        mekanismenya salah: (a) TD-031 TIDAK keluar dari bucket SEDANG karena
+        `Prioritas :`-nya tetap SEDANG — Status OPEN → FIXED tidak menggeser
+        bucket Prioritas mana pun (preseden TD-113, TD-127, TD-144, TD-147);
+        (b) entry baru sesi ini adalah TD-158, dan Prioritas-nya TINGGI (bug
+        worker yang mematikan refund escrow, bukan sekadar gap testing), bukan
+        SEDANG. Kalau TD-158 benar-benar SEDANG, hasil yang konsisten adalah
+        TINGGI 40 dan SEDANG 73 — bukan 39 dan 72.
+        [OVERRIDE-3 / §11.2] Prompt Reviewer menulis TD-158 = "worker
+        auto-cancel log error `ride_orders.updated_at does not exist` di dev DB
+        — migration 009 belum diterapkan. Pre-existing (bukan dari TD-030/031)".
+        Bagian "pre-existing, bukan dari TD-030/031" BENAR dan terverifikasi
+        (017 hanya menyentuh tabel users). Tapi "migration 009 belum diterapkan"
+        SALAH: migration 009_fix_order_updated_at.up.sql hanya menambah
+        updated_at ke food_orders, send_orders, send_order_stops — TIDAK ke
+        ride_orders, jadi apply 009 di dev tidak memperbaiki apa pun. Akar
+        masalahnya "kolom tidak pernah ada di skema", bukan "migration belum
+        jalan" — busted di production juga, bukan cuma di dev. Prioritas juga
+        dikoreksi dari SEDANG (prompt) menjadi TINGGI: dampaknya auto-cancel
+        ride gagal 100% termasuk refund escrow customer, setara "mematikan
+        fungsionalitas inti" seperti definisi bucket TINGGI pada TD-008.
+        Deviasi dari scope prompt (logged, R6 konsistensi): (a) komentar
+        kredensial di migrations/014_seed_admin.up.sql diedit — statement SQL
+        sendiri utuh, hanya dokumentasi, karena V5 mengharuskan 0 kemunculan
+        password lama di folder migrations/; (b) scripts/migrate.sh +
+        scripts/migrate.bat menambahkan 016 (terlewat sejak TD-070) dan 017 —
+        tanpa 017, migration ini tidak akan pernah jalan di luar CI (CI memakai
+        glob migrations/*.up.sql) dan §11 DEPLOYMENT_GUIDE yang menyebut
+        "psql -f ... 017 atau migrate.sh" jadi tidak benar; (c) §7
+        DEPLOYMENT_GUIDE mendaftarkan scripts/seed_admin.sh karena §11 merujuk
+        skrip yang §7 tidak sebut (koreksi konsistensi R6). Tidak ada file
+        `.go` produksi yang diubah; perubahan kode hanya di
+        internal/admin/login_test.go (nilai const jadi test-only; hash tetap
+        di-generate on-the-fly di mustHash, jadi tidak bergantung env maupun
+        seed migration) dan apps/admin_web/e2e/admin.spec.ts (fallback env).
 
 ============================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

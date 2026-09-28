@@ -20,9 +20,11 @@ import (
 	"github.com/g-flow/g-flow/internal/auth"
 )
 
-// testPassword dipakai sebagai password bersama pada test login admin
-// (cocok dengan seed admin: AdminP@ssw0rd!2026).
-const testPassword = "AdminP@ssw0rd!2026"
+// testPassword = password TEST-ONLY milik unit test ini, bukan kredensial
+// environment mana pun. Tidak bergantung pada seed migration 014 (yang sudah
+// dihapus oleh migration 017) maupun pada env: hash-nya di-generate on-the-fly
+// di mustHash() tiap test, jadi nilai string ini bebas diganti.
+const testPassword = "CI-Test-Only-Pw!2026"
 
 // newTestJWT membuat JWTService dummy untuk handler."
 func newTestJWT() *auth.JWTService {

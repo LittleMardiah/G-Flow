@@ -227,7 +227,11 @@ jobs:
       ADMIN_2FA_SECRET: gflow-e2e-admin-2fa-secret-min-32-chars-2026
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
       E2E_ADMIN_EMAIL: admin@g-flow.local
-      E2E_ADMIN_PASSWORD: AdminP@ssw0rd!2026
+      # TEST-ONLY credential, BUKAN production secret. String ini sengaja
+      # publishable: yang bahaya adalah password yang dipakai di environment
+      # sungguhan, dan itu selalu datang dari env lewat scripts/seed_admin.sh.
+      # Nilai ini harus SAMA dengan fallback di apps/admin_web/e2e/admin.spec.ts:27.
+      E2E_ADMIN_PASSWORD: CI-Test-Only-Pw!2026
     defaults:
       run:
         working-directory: apps/admin_web
@@ -252,6 +256,14 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
           done
           echo "Applied migrations: $(ls migrations/*.up.sql | wc -l)"
+          # Migration 017 menghapus akun admin default (TD-030), jadi setelah
+          # migration TIDAK ada admin sama sekali. Seed ulang dengan password
+          # test-only dari env (TEST ONLY — bukan production secret).
+          # Nilai = E2E_ADMIN_PASSWORD di blok env job ini, single source of truth.
+          ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" bash scripts/seed_admin.sh
+          # Guard: seed wajib benar-benar menghasilkan admin yang bisa login.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tA \
+            -c "SELECT CASE WHEN count(*) = 1 THEN 'admin seeded' ELSE 'SEED GAGAL' END FROM users WHERE email = '$E2E_ADMIN_EMAIL' AND user_type = 'admin';"
       - name: Start backend
         working-directory: .
         run: |

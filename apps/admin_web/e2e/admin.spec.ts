@@ -23,8 +23,13 @@ async function snap(page: Page, name: string) {
 }
 
 const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL ?? "admin@g-flow.local";
+// TEST-ONLY credential, bukan production secret: string ini memang boleh
+// publishable. Fallback di sini harus SAMA dengan E2E_ADMIN_PASSWORD di
+// .github/workflows/ci.yml, karena CI seed admin lewat
+// `ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" bash scripts/seed_admin.sh`.
+// Lokal: seed dengan password yang sama, atau set env sendiri.
 const ADMIN_PASSWORD =
-  process.env.E2E_ADMIN_PASSWORD ?? "AdminP@ssw0rd!2026";
+  process.env.E2E_ADMIN_PASSWORD ?? "CI-Test-Only-Pw!2026";
 const ADMIN_2FA = process.env.E2E_ADMIN_2FA ?? "admin-2fa-secret";
 
 // Transaction / wallet / user fixtures (lihat migration 015).

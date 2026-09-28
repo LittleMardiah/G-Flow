@@ -51,4 +51,13 @@ if errorlevel 1 exit /b 1
 psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\015_seed_admin_e2e.up.sql
 if errorlevel 1 exit /b 1
 
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\016_vouchers.up.sql
+if errorlevel 1 exit /b 1
+
+:: Migration 017 - hapus akun admin default (TD-030).
+:: Setelah ini TIDAK ada admin; jalankan scripts\seed_admin.sh dengan
+:: ADMIN_PASSWORD untuk membuat admin (lihat docs\DEPLOYMENT_GUIDE.md 11).
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\017_remove_default_admin.up.sql
+if errorlevel 1 exit /b 1
+
 echo Migrations completed.

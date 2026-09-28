@@ -7,15 +7,19 @@
 --
 -- Membuat akun admin default untuk development/testing.
 --
--- KREDENSIAL DEFAULT (WAJIB GANTI DI PRODUCTION):
---   Email    : akun admin domain @g-flow.local (lihat INSERT di bawah)
---   Password : AdminP@ssw0rd!2026
+-- KREDENSIAL DEFAULT: TIDAK LAGI DIDOKUMENTASIKASI DI SINI (TD-030, 2026-09-27).
+-- Nilai aslinya pernah ter-publish di repo, jadi sudah dianggap bocor dan
+-- DIHAPUS oleh migrations/017_remove_default_admin.up.sql. Statement INSERT di
+-- bawah sengaja dibiarkan utuh (migration historis & immutable) supaya lingkungan
+-- yang belum menjalankan 017 tetap punya admin untuk dev; yang bocor sudah
+-- dihapus, dan untuk environment baru password datang dari env, bukan repo:
 --
+--   ADMIN_PASSWORD='<strong-password>' bash scripts/seed_admin.sh
+--
+-- Hanya hash bcrypt (bukan passwordnya) yang masih tertulis di file ini, dan
+-- hash itu bukan rahasia — yang dipakai untuk DELETE di migration 017.
 -- UUID deterministik pola 9xxxxxxxx-... (pola unik, hindari bentrok
 -- dengan seed existing 0000.../1000...). Nilai exact ada di INSERT.
---
--- TODO (TD-030): Admin WAJIB ganti password setelah login pertama
---                di production.
 -- ============================================================================
 
 BEGIN;

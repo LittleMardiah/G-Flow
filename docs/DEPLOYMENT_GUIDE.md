@@ -126,6 +126,7 @@ ke URL ngrok:
 Tersedia skrip bantu:
 
 - `scripts/migrate.sh` (Linux/Mac) / `scripts/migrate.bat` (Windows) — jalankan semua migration.
+- `scripts/seed_admin.sh` — buat/rotasi akun admin dari env `ADMIN_PASSWORD` (lihat §11).
 - `scripts/test_task3.2.sh` — test utilitas.
 
 ---
@@ -170,14 +171,61 @@ docker-compose up -d   # postgres:15432, redis:6380
 
 ---
 
-## 11. Admin Default Credentials
+## 11. Akun Admin (seed via environment, bukan hardcoded)
 
-Akun admin default dibuat via migration `014_seed_admin.up.sql` (STEP 1C — admin auth, TD-024):
+Role `admin` **tidak bisa** dibuat lewat public API — `POST /auth/register` hanya
+menerima `customer`, `driver`, `merchant` (`internal/auth/handler.go:30`
+`allowedUserTypes`). Jadi akun admin hanya bisa dibuat oleh migration atau script
+seed. Untuk setiap environment, pakai script seed:
 
-- Email    : `admin@g-flow.local`
-- Password : `AdminP@ssw0rd!2026`
+```bash
+#WAJIB set ADMIN_PASSWORD — script fail-fast (exit 1) kalau kosong.
+ADMIN_PASSWORD='<strong-password>' bash scripts/seed_admin.sh
 
-> **Warning:** WAJIB ganti password setelah login pertama di production (TD-030).
+# Email admin default: admin@g-flow.local. Bisa diganti per environment:
+ADMIN_EMAIL='ops@g-flow.id' ADMIN_NAME='Ops G-Flow' \
+  ADMIN_PASSWORD='<strong-password>' bash scripts/seed_admin.sh
+```
+
+Password dibaca dari env `ADMIN_PASSWORD`, di-hash bcrypt on-the-fly oleh
+`scripts/hashgen`, lalu di-upsert ke tabel `users`. **Tidak ada password default
+yang tersimpan di repo** — kalau `ADMIN_PASSWORD` tidak di-set, script berhenti
+dengan error, bukan jatuh ke nilai default.
+
+| Env | Fungsi | Default |
+|-----|--------|---------|
+| `ADMIN_PASSWORD` | Password admin | — (wajib, tanpa default) |
+| `ADMIN_EMAIL` | Email admin | `admin@g-flow.local` |
+| `ADMIN_NAME` | Nama tampilan | `Admin G-Flow` |
+| `DATABASE_URL` | Connection string | dibaca dari `.env` bila tersedia |
+
+Script bersifat **idempotent**: aman dijalankan berulang, dan dipakai juga untuk
+**rotasi password** — jalankan ulang dengan `ADMIN_PASSWORD` baru.
+
+> **PENTING — `migrations/017_remove_default_admin.up.sql` (baru, 2026-09-27):**
+> migration ini **menghapus** akun admin default yang dibuat
+> `migrations/014_seed_admin.up.sql`. Password defaultnya pernah ter-publish di
+> repo, jadi dianggap bocor dan tidak boleh dipakai lagi.
+>
+> Konsekuensinya, **fresh deploy tidak punya akun admin sama sekali** — dan
+> karena role `admin` tidak bisa dibuat lewat public API, satu-satunya jalan
+> adalah menjalankan script seed:
+>
+> ```bash
+> ADMIN_PASSWORD='<strong-password>' bash scripts/seed_admin.sh
+> ```
+>
+> Urutan yang benar untuk environment baru:
+>
+> ```bash
+> psql "$DATABASE_URL" -f migrations/017_remove_default_admin.up.sql   # atau migrate.sh
+> ADMIN_PASSWORD='<strong-password>' bash scripts/seed_admin.sh       # WAJIB
+> ```
+>
+> Kalau migration 017 belum dijalankan tapi password admin di environment itu
+> **sudah dirotasi** (hash-nya berbeda), akunnya aman — 017 hanya menghapus akun
+> yang passwordnya masih sama dengan seed 014. Tetap disarankan rotasi, karena
+> password lama sudah bocor.
 
 ---
 

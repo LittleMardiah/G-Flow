@@ -52,4 +52,12 @@ psql $DATABASE_URL -f migrations/014_seed_admin.up.sql
 # Migration 015
 psql $DATABASE_URL -f migrations/015_seed_admin_e2e.up.sql
 
+# Migration 016
+psql $DATABASE_URL -f migrations/016_vouchers.up.sql
+
+# Migration 017 — hapus akun admin default (TD-030).
+# Setelah ini TIDAK ada admin; jalankan scripts/seed_admin.sh dengan
+# ADMIN_PASSWORD untuk membuat admin (lihat docs/DEPLOYMENT_GUIDE.md §11).
+psql $DATABASE_URL -f migrations/017_remove_default_admin.up.sql
+
 echo "Migrations completed."
