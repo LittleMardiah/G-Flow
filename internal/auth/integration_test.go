@@ -672,9 +672,11 @@ func TestAuthRegister_DriverHasWallets_Integration(t *testing.T) {
 	}
 }
 
-// TestAuthRegister_MerchantHasWallet_Integration (TD-128 scope expansion):
-// register merchant membentuk wallet CUSTOMER + MERCHANT. GET
-// /wallets/me?type=MERCHANT → 200.
+// TestAuthRegister_MerchantHasWallet_Integration (TD-166): register merchant
+// hanya membentuk wallet CUSTOMER (commit 8b0a583, revert TD-128: wallet
+// MERCHANT dibuat food service saat RegisterMerchant, bukan oleh auth).
+// Jadi GET /wallets/me?type=CUSTOMER → 200 dan ?type=MERCHANT → 404
+// WALLET_NOT_FOUND. Assertion 404 inilah yang mengunci regresi TD-128.
 func TestAuthRegister_MerchantHasWallet_Integration(t *testing.T) {
 	tc := setupTestConfig(t)
 	r := tc.newRouter()
@@ -698,10 +700,13 @@ func TestAuthRegister_MerchantHasWallet_Integration(t *testing.T) {
 		t.Fatalf("login merchant gagal: %d (%s)", wLogin.Code, wLogin.Body.String())
 	}
 
-	for _, wt := range []string{"CUSTOMER", "MERCHANT"} {
-		wWallet, _ := doJSON(t, r, http.MethodGet, "/api/v1/wallets/me?type="+wt, nil, resp.Data.AccessToken)
-		if wWallet.Code != http.StatusOK {
-			t.Fatalf("GET /wallets/me?type=%s harus 200, got %d (%s)", wt, wWallet.Code, wWallet.Body.String())
-		}
+	wCustomer, _ := doJSON(t, r, http.MethodGet, "/api/v1/wallets/me?type=CUSTOMER", nil, resp.Data.AccessToken)
+	if wCustomer.Code != http.StatusOK {
+		t.Fatalf("GET /wallets/me?type=CUSTOMER harus 200, got %d (%s)", wCustomer.Code, wCustomer.Body.String())
+	}
+
+	wMerchant, _ := doJSON(t, r, http.MethodGet, "/api/v1/wallets/me?type=MERCHANT", nil, resp.Data.AccessToken)
+	if wMerchant.Code != http.StatusNotFound {
+		t.Fatalf("GET /wallets/me?type=MERCHANT harus 404 (wallet MERCHANT dibuat food service), got %d (%s)", wMerchant.Code, wMerchant.Body.String())
 	}
 }

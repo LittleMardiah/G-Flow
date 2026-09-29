@@ -1592,7 +1592,36 @@ Dampak     : Query GetByUserIDAndType terhadap DB real belum ter-cover;
 Solusi     : internal/wallet/integration_test.go tambah 1 case
              /wallets/me via real DB.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-29, commit TD-121)
+Catatan    : FIXED via file BARU `internal/wallet/me_integration_test.go`
+             (build tag `integration`, package wallet_test) — production
+             .go TIDAK disentuh. 8 test case, semuanya lewat HTTP
+             httptest + Gin dengan router yang menyalin wiring
+             cmd/api/main.go:199 (AuthMiddleware -> RBACMiddleware
+             customer/driver/merchant -> handler.GetMyWallet) dan DB
+             PostgreSQL nyata (g_flow_dev:15432) + Redis (6380):
+             1) Customer — ?type=CUSTOMER -> 200, keempat field DESIGN
+                (wallet_id, balance, status, wallet_type) diverifikasi,
+                wallet_id dicocokkan balik ke baris `wallets` di DB
+                sebagai ground truth independen.
+             2) DefaultType — tanpa query -> default CUSTOMER (sama
+                dengan eksplisit).
+             3) Driver — register driver (auto-create CUSTOMER+DRIVER,
+                auth/handler.go:289-298) -> ?type=DRIVER 200.
+             4) Merchant — ?type=CUSTOMER 200; ?type=MERCHANT 404
+                WALLET_NOT_FOUND (register merchant hanya provision
+                1 wallet CUSTOMER — perilaku aktual, dikunci).
+             5) NoWalletOfType — customer minta ?type=DRIVER -> 404
+                WALLET_NOT_FOUND (RBAC mengizinkan customer, jadi 404
+                dari repository, bukan middleware).
+             6) InvalidType — ?type=INVALID mengunci 500 aktual (lihat
+                TD-164 yang lahir dari test ini).
+             7) Unauthorized — tanpa header -> 401 dari AuthMiddleware.
+             8) InvalidToken — token sampah -> 401 dari AuthMiddleware.
+             V1 `go build ./...` PASS, V2 `go vet ./...` PASS,
+             `go vet -tags integration ./internal/wallet/...` PASS,
+             V3 8/8 PASS, V4 unit test tetap hijau (`ok ... 0.122s`).
+             Tidak commit (R10). Lihat [OVERRIDE-1] di changelog sesi ini.
 Referensi  : TD-120 (temuan OpenCode)
 
 ID         : TD-122
@@ -2766,19 +2795,468 @@ Referensi  : TD-047/048 (temuan OpenCode — sesi tempat jumlah label enum
              enum/wallet sistem), TD-162 (wallet SYSTEM_PLATFORM_SUBSIDY
              dari 019 — salah satu dari 3 label yang hilang di docs ini)
 
+ID         : TD-164
+Kategori   : BACKEND / FITUR
+Judul      : GET /wallets/me?type=<bukan-label-enum> balas 500
+             INTERNAL_SERVER_ERROR, bukan 400 INVALID_REQUEST. Query ?type=
+             diteruskan mentah ke kolom PostgreSQL ENUM tanpa validasi
+             whitelist, jadi cast enum gagal (SQLSTATE 22P02) dan error-nya
+             tidak ter-map di statusForError.
+Dampak     : Input yang sepenuhnya dikendalikan client (query string) diubah
+             jadi 500, bukan 4xx. 3 konsekuensi: (1) mobile tidak bisa
+             membedakan "salah input" dari "server rusak" sehingga handling
+             error/retry jadi salah; (2) monitoring berbasis HTTP 5xx_rate
+             ter-pollute oleh traffic yang sepenuhnya milik client —
+             alarm fires tanpa penyebab nyata; (3) pesan error mentah
+             PostgreSQL ("invalid input value for enum wallet_type_enum")
+             bocor ke client, Membocorkan DB schema internal. Tidak ada
+             data rusak
+             dan tidak ada celah keamanan, karena query tetap read-only dan
+             nilai enum gagal sebelum masuk ke WHERE — itu sebabnya
+             Prioritas SEDANG, bukan TINGGI.
+Bukti      : (a) internal/wallet/handler.go:234-237 — handler hanya
+             `strings.TrimSpace(c.Query("type"))` lalu default ke
+             `WalletTypeCustomer` bila kosong. TIDAK ada whitelist
+             terhadap CUSTOMER/DRIVER/MERCHANT di titik ini.
+             (b) internal/wallet/service.go:514-525 — `GetMyWallet`
+             meneruskan `walletType` apa adanya ke
+             `repo.GetByUserIDAndType`; tidak ada validasi label.
+             (c) internal/wallet/repository.go:160-164 — query
+             `SELECT ... FROM wallets WHERE user_id = $1 AND wallet_type = $2`
+             dengan $2 di-bind sebagai text. PostgreSQL harus cast
+             text -> wallet_type_enum, dan cast label yang tidak dikenal
+             gagal: di dev DB terverifikasi
+             `SELECT 1 FROM wallets WHERE wallet_type = 'INVALID'::wallet_type_enum;`
+             -> `ERROR: invalid input value for enum wallet_type_enum: "INVALID"`.
+             (d) internal/wallet/handler.go:390-412 (`statusForError`) tidak
+             punya case untuk `*pgconn.PgError` SQLSTATE 22P02, jadi jatuh
+             ke `default` -> 500 + code `INTERNAL_SERVER_ERROR`
+             (`codeForError` handler.go:415-442, default baris 440).
+             (e) Terverifikasi end-to-end oleh integration test
+             `TestIntegrationWalletMe_InvalidType` di
+             internal/wallet/me_integration_test.go (file BARU, sesi ini):
+             `GET /api/v1/wallets/me?type=INVALID` dengan token valid
+             -> HTTP 500, body `{"success":false,"error":{"code":
+             "INTERNAL_SERVER_ERROR", ...}}`. Test ini sengaja mengunci
+             perilaku 500 aktual (bukan 400) supaya tidak ada test hijau
+             yang menyembunyikan gap ini; kalau nanti diperbaiki, testnya
+             yang diupdate, bukan kode produksi dibiarkan diam.
+             (f) Bandingkan dengan endpoint sekelas: `GetWalletHistory`
+             (handler.go:264-280) memvalidasi `page`/`page_size` secara
+             eksplisit dan mengembalikan 400 INVALID_REQUEST — jadi
+             inkonsistensi antar endpoint wallet ada di kode yang sama.
+Solusi     : Whitelist label di handler.GetMyWallet (sebelimiter Trust
+             boundary, konsisten dengan GetWalletHistory yang validasi di
+             handler): terima hanya CUSTOMER/DRIVER/MERCHANT, selain itu
+             `writeError(c, 400, "INVALID_REQUEST", ...)`. Alternatif yang
+             lebih tahan salah ketik: validasi di Service (layer yang
+             dipakai juga oleh consumer non-HTTP) DAN map `*pgconn.PgError`
+             22P02 di `statusForError` jadi 400 sebagai jaring
+             pengaman, supaya enum yang ditambah migration 020+ tidak
+             otomatis jadi 500. Yang kedua disebut eksplisit karena
+             migrations/010:50 dan 019:68 sama-sama menambah label enum —
+             pola ini akan berulang.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-121 (sesi yang tulis integration test-nya), TD-047/048
+             (pola identik: nilai enum tak tervalidasi diteruskan ke
+             query, di sana dampaknya "filter return kosong" — di sini
+             lebih buruk karena jadi 500), TD-163 (drift label enum
+             wallet_type pada dokumentasi)
+
+ID         : TD-165
+Kategori   : BACKEND / FITUR
+Judul      : Register merchant hanya provisioning wallet CUSTOMER
+             (auth/handler.go:294, `walletsForUserType` case "merchant"
+             return `[]string{walletTypeCustomer}`) — TIDAK MERCHANT.
+             Padahal wallet_type_enum punya label 'MERCHANT'
+             (migrations/001:48) dan RBAC /wallets/me mengizinkan role
+             merchant (cmd/api/main.go:199). Konsekuensi yang paling
+             supporter-visible: integration test yang mengunci perilaku
+             LAMA sekarang MERAH — TestAuthRegister_MerchantHasWallet_
+             Integration di internal/auth/integration_test.go:677-707
+             masih meng-assert `?type=MERCHANT` → 200, sedangkan
+             aktualnya: 404 WALLET_NOT_FOUND.
+Dampak     : (1) ONBOARDING GAP, bukan "selalu mati": wallet
+             MERCHANT baru lahir setelah POST /api/v1/merchants/register
+             sukses (food/service.go:299 → food/repository.go:263-287
+             InsertMerchantWallet). Jadi merchant yang belum
+             menyelesaikan registrasi profil → GET /wallets/me?type=
+             MERCHANT balas 404 WALLET_NOT_FOUND. Mobile yang
+             memanggilnya sebelum onboarding profile selesai akan
+             salah tafsir jadi "fitur wallet merchant tidak ada".
+             (2) Yang lebih serius dari gap itu: repo punya TEST
+             INTEGRATION MERAH di HEAD. `go test -tags integration
+             ./internal/auth/ -run TestAuthRegister_MerchantHasWallet_
+             Integration` → FAIL, `integration_test.go:704: GET
+             /wallets/me?type=MERCHANT harus 200, got 404
+             ({"error":{"code":"WALLET_NOT_FOUND"...`. Test ini tidak
+             tertangkap CI karena .github/workflows/ci.yml:79 menjalankan
+             `go test -short -race ...` (integration di luar build tag
+             `integration`, lihat header internal/auth/
+             integration_test.go:1) — jadi regresi diam di pipeline.
+             (3) `walletTypeMerchant = "MERCHANT"` di auth/handler.go:40
+             sekarang DEAD CONST: masih dideklarasikan tapi tidak
+             dipakai lagi di package auth (grep `walletTypeMerchant`
+             package auth = 1 hasil, hanya definisinya) — sisa tak
+             sengaja dari revert 2026-09-25, bukti bahwa revert-nya
+             tidak tuntas. Tidak ada kehilangan saldo, tidak ada celah
+             keamanan: merchant tetap punya wallet CUSTOMER, dan tidak
+             ada duplikasi yang bisa terjadi lewat jalur food (lihat
+             Bukti (f)) — itu sebabnya Prioritas SEDANG, bukan TINGGI.
+Bukti      : (a) internal/auth/handler.go:289-298 — fungsi
+             `walletsForUserType(userType string) []string`;
+             case "driver" (291-292) return `[CUSTOMER, DRIVER]`, case
+             "merchant" (293-294) return `[CUSTOMER]` saja, default
+             (295-296) `[CUSTOMER]`. Komentar baris 285 menulis
+             "merchant → CUSTOMER" — jadi perilaku ini DISENGAJA dan
+             terdokumentasi di kode, bukan tidak sengaja.
+             (b) internal/auth/handler.go:38-40 — konstanta
+             `walletTypeCustomer`/`walletTypeDriver`/`walletTypeMerchant`
+             dideklarasikan; yang `walletTypeMerchant` tidak pernah
+             dirujuk lagi setelah revert (0 pemakaian di package auth
+             selain definisinya sendiri).
+             (c) migrations/001_initial_schema.up.sql:48-49 —
+             `CREATE TYPE wallet_type_enum AS ENUM ('CUSTOMER',
+             'DRIVER', 'MERCHANT', 'SYSTEM_ESCROW', 'SYSTEM_PLATFORM',
+             'SYSTEM_BANK_GATEWAY')` — label 'MERCHANT' memang ada
+             sejak schema awal, bukan label eksotis yang baru
+             ditambahkan migration 010/019.
+             (d) cmd/api/main.go:199 — route didaftarkan
+             `api.GET("/wallets/me", auth.RBACMiddleware("customer",
+             "driver", "merchant"), handler.GetMyWallet)`, jadi RBAC
+             SENGAJA mengizinkan merchant; 404 bukan dari middleware.
+             (e) internal/food/service.go:291-299 (RegisterMerchant
+             "membuat merchant profile + wallet MERCHANT dalam satu
+             transaksi") + internal/food/repository.go:263-287
+             (InsertMerchantWallet dengan `ON CONFLICT (user_id,
+             wallet_type) DO NOTHING`) — inilah SATU-SATUNYA kode
+             non-test yang meng-INSERT wallet bertipe 'MERCHANT'
+             (grep `'MERCHANT'` di internal/ + cmd/ tanpa _test.go =
+             1 hasil: food/repository.go:268). Jadi wallet MERCHANT
+             hanya ada setelah merchant profile terdaftar.
+             (f) migrations/001_initial_schema.up.sql:124 —
+             `CONSTRAINT wallet_user_type_unique UNIQUE (user_id,
+             wallet_type)`. Inilah yang secara struktural mencegah
+             wallet merchant ganda: walau auth membuat MERCHANT dan
+             food membuat MERCHANT, yang kedua kena ON CONFLICT DO
+             NOTHING dan mengembalikan wallet yang sudah ada
+             (repository.go:270-287), bukan row kedua.
+             (g) TEST MERAH, dijalankan langsung di sesi ini (R1):
+             `DATABASE_URL=postgresql://postgres:password@localhost:
+             15432/g_flow_dev?sslmode=disable go test -tags integration
+             ./internal/auth/ -run TestAuthRegister_MerchantHasWallet_
+             Integration -count=1 -v` → FAIL 0.33s pada
+             integration_test.go:704.
+             (h) Unit test package auth hijau pada HEAD yang sama:
+             `go test ./internal/auth/ -count=1` → ok (9.559s).
+             Artinya `go test ./...` (dan CI:79) hijau total dan tidak
+             ada satu pun signal yang menunjukkan wallet merchant
+             berubah — kesenjangan hanya terlihat di tag `integration`.
+             (i) Sejarah: commit e8363a1 (2026-09-24, TD-128) menambah
+             merchant → `[CUSTOMER, MERCHANT]`; commit 8b0a583
+             (2026-09-25) ME-REVERT-nya ("Merchant path in auth
+             reverted to CUSTOMER only; food service handles MERCHANT
+             wallet with ON CONFLICT defense") dan mengubah
+             internal/auth/handler_unit_test.go:533-551 (ekspektasi
+             2 wallet → 1 wallet) — TETAPI tidak menyentuh
+             internal/auth/integration_test.go, sehingga test integrasi
+             yang mengunci perilaku lama tertinggal dan merah.
+Solusi     : YANG DIREKOMENDASIKAN: hentikan
+             `go test -tags integration ./...` dari merah dengan
+             menyelaraskan test ke perilaku yang disengaja —
+             internal/auth/integration_test.go:677-707 diubah agar
+             mencerminkan realitas saat ini: register merchant →
+             CUSTOMER 200, MERCHANT 404 (atau, kalau test tetap
+             dilakukan setelah POST /merchants/register, dua-duanya
+             200). Ini juga menutup documentation drift antara test
+             unit (sudah 1 wallet) dan test integrasi (masih 2 wallet).
+             JANGAN menerima solusi "balikin merchant →
+             [CUSTOMER, MERCHANT]" tanpa mengulang analisis regresi
+             dulu: revert 8b0a583 itu DELIBERATE dan tercatat di Note
+             TD-128 ("Regression fix 2026-09-25 — merchant duplicate
+             wallet dengan /merchants/register; revert merchant path di
+             auth (customer only)"). Kalau memang mau dibalik lagi
+             pada 2026 ini, prasyaratnya: (1) pahami root cause
+             duplicate yang asli — Bukti (f) menunjukkan jalur food
+             sudah aman lewat UNIQUE (user_id, wallet_type) 001:124 +
+             ON CONFLICT, jadi kemungkinan penyebabnya sudah hilang
+             dan re-add kali ini tidak akan menduplikasi [PERLU
+             VERIFIKASI: perlu konfirmasi apakah regresi 2026-09-25
+             muncul lewat jalur INSERT ketiga yang tidak terlihat di
+             kode sekarang]; (2) hapus dead const
+             `walletTypeMerchant` di auth/handler.go:40 kalau tetap
+             dibiarkan CUSTOMER-only; (3) update
+             handler_unit_test.go:533-551 DAN integration_test.go
+             bareng — persis yang gagal dilakukan 8b0a583. Alternatif
+             yang lebih bersih tanpa menyentuh auth sama sekali:
+             sediakan wallet MERCHANT saat merchant profile dibuat
+             (sudah ada di food) dan dokumentasikan ke merchant mobile
+             bahwa 404 selama onboarding itu normal — tapi itu hanya
+             menutup gejala, tidak menutup test merah.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-121 (temuan OpenCode — sesi yang menemukan gap ini
+             saat menulis test integrasi /wallets/me), TD-128 (asal
+             perubahan `walletsForUserType` merchant + Note yang
+             mendokumentasikan revert 2026-09-25 sebagai regression
+             fix), TD-120 (endpoint /wallets/me yang dipakai di sini)
+Catatan    : [2026-09-29, sesi TD-166] Bagian "Dampak (2)" entry ini
+             (test integrasi merah di HEAD) sudah TIDAK LAGI berlaku —
+             test-nya diperbaiki di sesi TD-166 dan suite `go test -tags
+             integration ./internal/auth/` tidak lagi gagal karena
+             TEST INI. Isi entry tetap OPEN karena masalah yang
+             tersisa belum dikerjakan: (a) onboarding gap wallet
+             MERCHANT (Dampak 1) masih ada — merchant yang belum
+             lewat POST /merchants/register tetap 404; (b) dead const
+             `walletTypeMerchant` di internal/auth/handler.go:40 masih
+             ada (Bukti b) — dihapus hanya kalau path merchant
+             dipastikan CUSTOMER-only permanen (prasyarat (2) di
+             Solusi); (c) jalur INSERT ketiga yang dicurigai
+             menyebabkan duplicate 2026-09-25 masih [PERLU
+             VERIFIKASI] (Bukti (f)). Status OPEN TIDAK diubah agar
+             angka register tidak bergeser tanpa entry baru; test
+             yang diperbaiki dicatat terpisah sebagai TD-166 FIXED.
+
+ID         : TD-166
+Kategori   : TESTING
+Judul      : Test integrasi package auth meng-assert perilaku LAMA —
+             `TestAuthRegister_MerchantHasWallet_Integration`
+             (internal/auth/integration_test.go) masih berbentuk
+             loop `for _, wt := range []string{"CUSTOMER",
+             "MERCHANT"}` yang mensyaratkan keduanya 200, padahal
+             sejak commit 8b0a583 (2026-09-25) `walletsForUserType`
+             case "merchant" (internal/auth/handler.go:293-294)
+             hanya return `[CUSTOMER]`. Assertion stale, bukan
+             production bug.
+Dampak     : (1) Suite integrasi package auth MERAH di HEAD: 1 test
+             basi menggagalkan seluruh package sehingga `go test
+             -tags integration ./internal/auth/` tidak bisa dipakai
+             sebagai gerbang regresi sama sekali. (2) Redundansi
+             drift: handler_unit_test.go:533-551 (TestHandler_Register_
+             MerchantSuccess) sudah benar meng-assert 1 wallet
+             CUSTOMER di commit yang sama, sedangkan integration test
+             masih 2 wallet — dua test resmi repo ini SALING
+             BERTENTANGAN soal perilaku yang sama. (3) False signal:
+             merah yang sudah 4 hari (sejak 8b0a583) tanpa ada yang
+             bereaksi melatih tim mengabaikan merah — signal integrasi
+             berikutnya (mis. perubahan wallet driver) ikut luput.
+             Tidak ada dampak produksi/data — ini murni lapisan test.
+Bukti      : (a) BASELINE sebelum fix (R1, dijalankan di sesi ini):
+             `DATABASE_URL=postgresql://postgres:password@localhost:
+             15432/g_flow_dev?sslmode=disable go test -tags integration
+             ./internal/auth/ -run TestAuthRegister_MerchantHasWallet
+             -count=1 -v` → `--- FAIL:
+             TestAuthRegister_MerchantHasWallet_Integration (0.24s)`,
+             `integration_test.go:704: GET /wallets/me?type=MERCHANT
+             harus 200, got 404 ({"error":{"code":"WALLET_NOT_FOUND",
+             "message":"wallet not found"},"success":false})`,
+             `FAIL github.com/g-flow/g-flow/internal/auth 0.263s`.
+             (b) ROOT CAUSE dari `git show 8b0a583 --stat`: file yang
+             berubah di package auth hanya
+             internal/auth/handler.go (4 baris) +
+             internal/auth/handler_unit_test.go (7 baris);
+             internal/auth/integration_test.go TIDAK ADA di daftar
+             file yang diubah. `git show 8b0a583 -- internal/auth/
+             handler.go` → satu-satunya diff di `walletsForUserType`
+             adalah `case "merchant": return
+             []string{walletTypeCustomer, walletTypeMerchant}` →
+             `return []string{walletTypeCustomer}`. Verdict: revert-nya
+             sengaja dan benar, yang tertinggal adalah test-nya.
+             (c) Perilaku yang benar sekarang terverifikasi di
+             internal/auth/handler.go:289-298 + komentar baris 285
+             ("merchant → CUSTOMER") dan unit test
+             internal/auth/handler_unit_test.go:550-551
+             (`INSERT INTO wallets` WithArgs(userID, "CUSTOMER")).
+             (d) Konsekuensi cascade yang diketahui: wallet MERCHANT
+             tetap lahir setelah POST /api/v1/merchants/register
+             (internal/food/service.go:291-299 →
+             internal/food/repository.go:263-287 InsertMerchantWallet
+             dengan `ON CONFLICT (user_id, wallet_type) DO NOTHING`).
+             (e) SETELAH fix: perintah yang sama → `--- PASS:
+             TestAuthRegister_MerchantHasWallet_Integration (0.19s)`,
+             `ok github.com/g-flow/g-flow/internal/auth 0.207s`.
+Solusi     : Assertion diselaraskan dengan perilaku yang DISENGAJA
+             (opsi yang direkomendasikan TD-165, bukan pembalikan
+             path merchant). internal/auth/integration_test.go:675-712
+             — `?type=CUSTOMER` → 200, `?type=MERCHANT` → 404. Test
+             TIDAK dihapus: assertion 404 itulah guard yang mencegah
+             regresi TD-128 terulang diam-diam, dan test ini tetap
+             bernilai karena ia menguji jalur HTTP + DB nyata,
+             sedangkan unit test pgxmock tidak. Nama fungsi
+             dipertahankan agar filter `-run` di dokumentasi/CI dan
+             8 referensi historis di register ini tetap valid.
+             SELESAI di sesi ini (2026-09-29).
+Prioritas  : SEDANG
+Status     : ✅ FIXED (2026-09-29, sesi TD-166)
+Referensi  : TD-165 (entry asal yang menandai test ini merah — status
+             OPEN-nya tetap, lihat Catatan di atas), TD-128 (revert
+             yang disengaja), TD-121 (test /wallets/me yang menemukan
+             gap), TD-167 (kenapa test ini merah tak terlihat di CI)
+
+ID         : TD-167
+Kategori   : TESTING
+Judul      : Pipeline GitHub Actions tidak pernah menjalankan test
+             ber-tag `integration` — `.github/workflows/ci.yml:77-80`
+             hanya menjalankan `go test -short -race -coverprofile=
+             coverage.out -covermode=atomic ./...`. Karena 11 file test
+             Go di repo ini memakai build tag `integration`, tag itu
+             tidak dikompilasi saat build, membuat SEMUA regresi
+             integrasi (termasuk TD-166 yang merah sejak 2026-09-25)
+             invisible di pipeline.
+Dampak     : (1) Tidak ada satupun sinyal pipeline yang bisa
+             membedakan "merge aman" dari "merge broke wallet
+             provisioning": `go test ./...` hijau total sepanjang
+             TD-166 merah, jadi merge tetap GREEN. (2) False
+             security untuk review — reviewer melihat semua check
+             hijau dan mengira ada coverage integrasi padahal 87
+             fungsi test (lihat Bukti b) tidak pernah dieksekusi.
+             (3) Akar sebab TD-166 bisa menggantung 4 hari
+             tanpa terdeteksi; tanpa job integrasi, test integrasi
+             berikutnya yang basi akan diam-diam menumpuk seperti
+             sekarang. Tidak ada risiko produksi langsung — ini gap
+             deteksi, bukan gap keamanan.
+Bukti      : (a) .github/workflows/ci.yml:77-80 (job `go`, baris
+             77-80) — step "Unit tests (with coverage)" memakai
+             `-short`; tidak ada satu pun baris `go test` lain di
+             seluruh workflow yang memakai `-tags integration`
+             (`grep -n "go test" .github/workflows/ci.yml` = 1
+             hasil). (b) 11 file test dengan build tag `integration`,
+             total 87 fungsi `func Test...`: internal/auth/
+             integration_test.go (22), internal/auth/
+             handler_logout_test.go (4), internal/auth/jwt_test.go
+             (4), internal/food/integration_test.go (6), internal/
+             ride/integration_test.go (15), internal/send/
+             integration_test.go (5), internal/wallet/
+             integration_test.go (2), internal/wallet/
+             http_integration_test.go (14), internal/wallet/
+             extra_integration_test.go (5), internal/wallet/
+             me_integration_test.go (8), internal/worker/
+             ride_autocancel_integration_test.go (2). (c) Bukti
+             konsekuensi: `go test ./internal/auth/ -count=1` → ok,
+             sementara `go test -tags integration ./internal/auth/`
+             → FAIL (lihat Bukti (a) TD-166) pada commit yang sama.
+             (d) Test integrasi butuh infra: DATABASE_URL PostgreSQL
+             (g_flow_dev) + REDIS_URL — runner lokal memakai
+             localhost:15432 / 6380. Job `e2e-admin` di ci.yml yang
+             sama SUDAH punya pola yang bisa disalin: services
+             postgres:15-alpine + redis:7-alpine (ci.yml:198-220),
+             env DATABASE_URL/REDIS_URL (221-223), dan loop
+             `for f in migrations/*.up.sql; do psql "$DATABASE_URL"
+             -v ON_ERROR_STOP=1 -q -f "$f"; done` (255-257).
+Solusi     : Tambah job terpisah (bukan di step `go`, supaya feedback
+             cepat unit test tidak tertahan) `go-integration` di
+             ci.yml dengan services postgres + redis, apply
+             migrations/*.up.sql, lalu `go test -tags integration
+             -count=1 ./...` plus `go vet -tags integration ./...`.
+             WAJIB pakai database terpisah (mis. g_flow_ci) dan
+             Redis DB terpisah agar test yang memakai data nyata tidak
+             mengotori DB dev. Alternatif yang lebih murah (kalau
+             service container dianggap berlebihan): jadwalkan
+             workflow integration terpisah (cron + manual
+             dispatch) alih-alih di setiap push. JANGAN memakai
+             `-short` di step itu — `-short` justru yang menjadi
+             penyebab gap ini.
+             BELUM dikerjakan di sesi ini: file .github/workflows/
+             ci.yml di luar SCOPE prompt dan User sudah memutuskan
+             fix terpisah (R8 — dicatat, tidak diperbaiki).
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : TD-166 (kandidat paling diam-diam yang lolos karena
+             pipeline buta), TD-165 (test merah yang sama),
+             TD-121 (test integrasi yang tidak pernah jalan di CI)
+
+ID         : TD-168
+Kategori   : TESTING
+Judul      : `TestAuthRBAC_Allowed` (internal/auth/integration_test.go)
+             gagal karena mencoba self-register role "admin" lewat public
+             POST /api/v1/auth/register, sementara `allowedUserTypes`
+             (internal/auth/handler.go:30-34) HANYA menerima customer,
+             driver, merchant. Jadi `registerAndLoginRole(t, r, "admin")`
+             di baris 386 selalu 422 dan suite integrasi package auth
+             tetap merah SETELAH TD-166 diperbaiki.
+Dampak     : (1) `go test -tags integration ./internal/auth/` tetap FAIL
+             sehingga package auth belum bisa dipakai sebagai gerbang
+             regresi — TD-166 yang baru diperbaiki tidak cukup untuk
+             menghasilkan sinyal hijau. (2) Efek samping merah yang
+             menetap: mudah disimpulkan "semua integration test auth
+             rusak" padahal hanya 1 dari 22 yang usang. (3) TIDAK ada
+             celah keamanan di produksi: menolak self-register admin
+             adalah perilaku yang BENAR dan konsisten dengan
+             scripts/seed_admin.sh:126 ("hanya dipanggil dari Register,
+             yang menolak user_type='admin'") dan
+             migrations/017_remove_default_admin.up.sql. Yang usang
+             test-nya, bukan kodenya.
+Bukti      : (a) Dijalankan di sesi ini (setelah TD-166 diperbaiki):
+             `DATABASE_URL=postgresql://postgres:password@localhost:
+             15432/g_flow_dev?sslmode=disable go test -tags integration
+             ./internal/auth/ -count=1 -v` → `--- FAIL: TestAuthRBAC_
+             Allowed (0.01s)`, `integration_test.go:386: register role
+             admin gagal: 422 {"error":{"code":"INVALID_USER_TYPE",
+             "message":"user_type harus customer, driver, atau
+             merchant"},"success":false}`; sibling
+             TestAuthRBAC_Forbidden (customer → 403) tetap hijau, jadi
+             RBACMiddleware sendiri berfungsi. (b) internal/auth/
+             handler.go:28-34 — `allowedUserTypes` = {customer, driver,
+             merchant}; admin TIDAK ada di sana. (c) internal/auth/
+             rbac.go:23-43 — `RBACMiddleware("admin")` hanya
+             membandingkan `user_type` dari context JWT, jadi agar
+             403 hilang cukup user dengan role admin yang ADA, tidak
+             perlu pathway register. (d) Jalur resmi pembuatan admin:
+             scripts/seed_admin.sh (INSERT langsung ke `users`, bukan
+             lewat API) + migrations/017_remove_default_admin.up.sql
+             yang menghapus admin default. (e) Helper test yang
+             salah pakai: internal/auth/integration_test.go:288-305
+             `registerAndLoginRole` — ada cabang khusus untuk role
+             "driver" (vehicle_plate/license_number) tapi tidak punya
+             jalur untuk admin.
+Solusi     : DIREKOMENDASIKAN: helper atau test-admin khusus yang membuat
+             user admin langsung lewat `tc.pool.Exec` INSERT INTO users
+             (pola yang sudah dipakai TestAuthLogin_AccountInactive yang
+             memaksa status via SQL) lalu POST /api/v1/auth/login, dan
+             pertahankan ekspektasi 200 untuk /api/v1/admin/panel.
+             JANGAN menambah "admin" ke allowedUserTypes — itu
+             membatalkan keputusan keamanan (self-register admin via
+             public API) dan bertabrakan dengan TD-030 + migration
+             017. Alternatif yang lebih lemah: ubah ekspektasi test
+             jadi 422 — TIDAK disarankan karena kehilangan coverage
+             jalur "role admin BOLEH akses endpoint admin". Sebelum
+             mengubah apa pun, putuskan juga apakah test ini wajar
+             hidup di package auth (memakai seed admin) atau dipindah
+             ke package admin.
+             BELUM dikerjakan di sesi ini: OpenCode STOP (§11.4 #2 —
+             auth/RBAC masuk kategori HARUS STOP). File test-nya memang
+             ada di SCOPE prompt, tetapi perbaikannya butuh keputusan
+             semantik RBAC (seed admin di test vs pindah ke package
+             admin) milik User/DeepSeek, bukan koreksi faktual sepele
+             yang boleh diasumsikan sendiri.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-166 (test stale lain di file yang sama — setelah
+             diperbaiki, inilah satu-satunya sisa merah di package
+             auth), TD-167 (kenapa dua-duanya tidak pernah terlihat di
+             pipeline), TD-030 (keputusan admin tidak lagi default)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 157 item (TD-051 di-reserve/skip)
-                                       (48 FIXED + 14 CLOSED + 7 DEFERRED + 88 OPEN = 157)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 162 item (TD-051 di-reserve/skip)
+                                       (50 FIXED + 14 CLOSED + 7 DEFERRED + 91 OPEN = 162)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
-- TINGGI  : 41 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
+- TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128,
-            TD-158)
+            TD-158, TD-167)
+            [42 pada 2026-09-29 (sesi TD-166 + TD-167 + TD-168): TD-167 entry
+            BARU dengan `Prioritas : TINGGI` (pipeline tidak menjalankan
+            test `integration`) → bucket TINGGI 41 → 42 (+1). TD-166 dan
+            TD-168 menambah bucket SEDANG, bukan TINGGI. Parser atas 162
+            field `ID :` → KRITIS 8 + TINGGI 42 + SEDANG 80 + RENDAH 32 =
+            162 ✓. Lihat [OVERRIDE-1] + [OVERRIDE-2] di changelog sesi
+            ini.]
             [TETAP 40 pada 2026-09-27 (TD-106 FIXED): prompt Reviewer menulis
             "TINGGI 40→39", tapi bucket TINGGI mengikuti `Prioritas :`, bukan
             `Status :` — TD-106 tetap `Prioritas : TINGGI` (yang berubah hanya
@@ -2805,7 +3283,49 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 157 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 76 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162)
+- SEDANG  : 80 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168)
+           [80 pada 2026-09-29 (sesi TD-166 + TD-167 + TD-168): DUA entry
+           baru dengan `Prioritas : SEDANG` — TD-166 (test integrasi
+           merchant stale, FIXED di sesi yang sama) dan TD-168 (test
+           RBAC admin stale, masih OPEN) → bucket SEDANG 78 → 80 (+2).
+           TD-167 TIDAK masuk bucket ini (Prioritas TINGGI). Prompt
+           Reviewer menulis "SEDANG 78→78" dengan argumen "TD-166 close
+           -1, TD-167 add +1" — SALAH di dua sisi: TD-167 Prioritas-nya
+           TINGGI, dan TD-166 belum pernah tercatat sebagai entry
+           (parser sebelum sesi ini = 159 entry, grep TD-166 = 0
+           hasil). Preseden bucket yang tidak ikut `Status :`:
+           TD-106, TD-114, TD-158.]
+              [78 pada 2026-09-29 (sesi TD-165 entry baru): TD-165
+              (BACKEND / FITUR — register merchant hanya provisioning
+              wallet CUSTOMER di auth/handler.go:294, dan integration
+              test TestAuthRegister_MerchantHasWallet_Integration di
+              internal/auth/integration_test.go:677-707 masih mengunci
+              perilaku lama sehingga MERAH di HEAD) adalah entry BARU
+              dengan `Prioritas : SEDANG` dan Status OPEN dari awal,
+              jadi bucket SEDANG 77 → 78 (+1). Prompt Reviewer menulis
+              "SEDANG 77→78" ✓ BENAR dan angka parser sebelum edit
+              mengonfirmasi 8 + 41 + 77 + 32 = 158. Tidak ada TD lain
+              yang Status-nya berubah di sesi ini, jadi bucket FIXED
+              (49), CLOSED (14), DEFERRED (7) tetap. Total 158 → 159.
+              Konsisten: 8 + 41 + 78 + 32 = 159 = TOTAL dan
+              49 + 14 + 7 + 89 = 159 = TOTAL. Tidak ada kode yang diubah
+              — register dokumentasi saja. Tidak commit (R10).]
+              [77 pada 2026-09-29 (sesi TD-121 FIXED + TD-164 entry baru):
+              bucket ini berbasis `Prioritas :`, bukan `Status :` — jadi
+              TD-121 yang Status-nya OPEN → FIXED TIDAK menggeser bucket
+              (preseden langsung TD-113, TD-126, TD-127, TD-144, TD-147,
+              TD-047, TD-048, plus TD-030/031/158 di bucket TINGGI).
+              Yang menambah satu hanya TD-164, entry BARU hasil temuan di
+              luar scope sesi TD-121 dengan `Prioritas : SEDANG`
+              (R8 — dicatat, tidak diperbaiki di sesi ini): 76 → 77.
+              Parser dijalankan SEBELUM menulis angka (R1/R2):
+              8 + 41 + 77 + 32 = 158 = TOTAL. Prompt Reviewer menulis
+              "SEDANG 76 → 75 (bucket SEDANG TIDAK bergerak saat close,
+              verify parser)" — arah koreksinya benar (bucket memang tidak
+              bergerak saat close) tapi angka 75 salah dua arah: (a) close
+              tidak menggeser bucket sama sekali, jadi 76 bukan 75; dan
+              (b) entry baru TD-164 menambah 1, jadi hasil akhirnya 77,
+              bukan 76. Lihat [OVERRIDE-1] di changelog sesi ini.]
               [76 TETAP pada 2026-09-29 (sesi TD-047 + TD-048 FIXED): kedua TD
               hanya berubah Status (OPEN → FIXED) dan `Prioritas :`-nya tetap
               SEDANG, jadi bucket SEDANG TIDAK bergerak — preseden langsung
@@ -2936,8 +3456,58 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 157 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 48 item, 14 item CLOSED (FIXED/CLOSED 62), 7 item DEFERRED,
-        88 item OPEN.  [48 + 14 + 7 + 88 = 157 = TOTAL]
+STATUS: ✅ FIXED 50 item, 14 item CLOSED (FIXED/CLOSED 64), 7 item DEFERRED,
+        91 item OPEN.  [50 + 14 + 7 + 91 = 162 = TOTAL]
+        [50/64/7/91 pada 2026-09-29 (sesi TD-166 FIXED + TD-167 + TD-168
+        entry baru): FIXED 49 → 50 (TD-166 langsung FIXED — test-nya
+        diperbaiki di sesi yang sama dengan pencatatan entry ini),
+        FIXED/CLOSED 63 → 64, OPEN 89 → 91 (HANYA +2 dari entry baru
+        TD-167 dan TD-168; tidak ada entry OPEN yang tertutup di sesi
+        ini), TOTAL 159 → 162 (+3 entry baru). Bucket Prioritas: SEDANG
+        78 → 80 (TD-166, TD-168), TINGGI 41 → 42 (TD-167), KRITIS 8 dan
+        RENDAH 32 tetap → 8 + 42 + 80 + 32 = 162 = TOTAL. Parser atas 162
+        field `ID :` mengonfirmasi kedua sum = 162 (V3 sesi ini). Angka di
+        prompt Reviewer ("Total 159→160", "OPEN 89→90 karena TD-166 close
+        -1 dan TD-167 add +1", "SEDANG 78→78") mengasumsikan TD-166 sudah
+        tercatat sebagai entry OPEN/SEDANG sebelum sesi ini — tidak: grep
+        = 0 hasil, parser = 159 entry, dan OPEN 89 - 1 + 1 = 89 bukan 90.
+        Lihat [OVERRIDE-2] di changelog sesi ini.]
+        [49/63/7/89 pada 2026-09-29 (sesi TD-165 entry baru): TD-165
+        (BACKEND / FITUR — register merchant hanya provisioning wallet
+        CUSTOMER, auth/handler.go:294; wallet MERCHANT baru lahir setelah
+        POST /merchants/register lewat food InsertMerchantWallet, dan
+        integration test TestAuthRegister_MerchantHasWallet_Integration
+        masih mengunci perilaku lama sehingga merah) adalah entry BARU
+        dengan `Prioritas : SEDANG` dan Status OPEN dari awal: bucket
+        Status OPEN 88 → 89 (+1), TOTAL 158 → 159, dan bucket Prioritas
+        SEDANG 77 → 78 (+1). TIDAK ada TD yang berubah Status di sesi
+        ini, jadi FIXED 49, CLOSED 14, DEFERRED 7, FIXED/CLOSED 63
+        tetap. KRITIS 8, TINGGI 41, RENDAH 32 juga tetap. Konsisten:
+        8 + 41 + 78 + 32 = 159 = TOTAL dan 49 + 14 + 7 + 89 = 159 =
+        TOTAL. Range SECTION F: TD-058 s/d TD-164 → TD-058 s/d TD-165.
+        Parser atas 159 field `ID :` mengonfirmasi sum Prioritas =
+        sum Status = 159 (V3 sesi ini). Tidak ada kode yang diubah —
+        register dokumentasi saja. Tidak commit (R10).]
+        [49/63/7/88 pada 2026-09-29 (sesi TD-121 FIXED + TD-164 entry baru):
+        dua perubahan yang BERLAWANan saling meniadakan di bucket OPEN.
+        (a) TD-121 Status OPEN → FIXED: FIXED 48 → 49, FIXED/CLOSED 62 → 63,
+        OPEN 88 → 87. `Prioritas :`-nya tetap SEDANG, jadi bucket Prioritas
+        TIDAK bergerak untuk TD-121 (preseden TD-047, TD-048, TD-113,
+        TD-126, TD-127, TD-144, TD-147).
+        (b) TD-164 (BACKEND / FITUR — GET /wallets/me?type=<bukan-label-enum>
+        membalas 500 INTERNAL_SERVER_ERROR, bukan 400, karena query diteruskan
+        mentah ke kolom PostgreSQL ENUM dan cast gagal) adalah entry BARU
+        hasil TEMUAN DI LUAR SCOPE sesi TD-121 (`Prioritas : SEDANG`,
+        Status OPEN, R8 — dicatat, tidak diperbaiki): OPEN 87 → 88 (+1),
+        TOTAL 157 → 158, dan bucket Prioritas SEDANG 76 → 77 (+1).
+        CLOSED 14 dan DEFERRED 7 tetap. Konsisten: 8 + 41 + 77 + 32 = 158 =
+        TOTAL dan 49 + 14 + 7 + 88 = 158 = TOTAL. Range SECTION F:
+        TD-058 s/d TD-163 → TD-058 s/d TD-164. Parser atas 158 field `ID :`
+        mengonfirmasi sum Prioritas = sum Status = 158 (V3 sesi ini). Prompt
+        Reviewer menulis "OPEN 88 → 87" dan "Total tetap 157" — keduanya
+        SALAH karena prompt itu mengasumsikan TIDAK ada entry baru, padahal
+        sesi ini menemukan satu. Lihat [OVERRIDE-2] di changelog sesi ini.
+        Tidak commit (R10).]
         [48/62/7/88 pada 2026-09-29 (sesi TD-163): TD-163 (DOKUMENTASI —
         docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih tulis
         wallet_type_enum hanya 5 label, DB aktual 8 — drift enum label di
@@ -3010,16 +3580,96 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-29):
-   - Total hutang teridentifikasi      : 157 item (TD-051 di-reserve/skip; 157 item aktif terdaftar).
-   - ✅ FIXED                           : 48 item
+   - Total hutang teridentifikasi      : 162 item (TD-051 di-reserve/skip; 162 item aktif terdaftar).
+   - ✅ FIXED                           : 50 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 62 item
+   - FIXED/CLOSED                       : 64 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 88 item (bukan hanya TD-058 s/d TD-163 — masih ada
+   - ❌ OPEN                              : 91 item (bukan hanya TD-058 s/d TD-168 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [48 + 14 + 7 + 88 = 157 = TOTAL]
+     [50 + 14 + 7 + 91 = 162 = TOTAL]
+     [Perubahan 2026-09-29 (sesi TD-166 FIXED + TD-167 + TD-168 entry baru)
+     — TIGA entry DITAMBAHKAN, jadi total naik 3, bukan 1. (a) TD-166
+     (TESTING — TestAuthRegister_MerchantHasWallet_Integration masih
+     meng-assert `?type=MERCHANT` → 200 padahal `walletsForUserType`
+     case "merchant" (internal/auth/handler.go:293-294) sudah hanya
+     return `[CUSTOMER]` sejak commit 8b0a583 2026-09-25; test itu
+     diperbaiki di SESI INI — `?type=CUSTOMER` → 200 + `?type=MERCHANT`
+     → 404) entry BARU yang langsung FIXED: FIXED 49 → 50, FIXED/CLOSED
+     63 → 64, bucket Prioritas SEDANG 78 → 79. (b) TD-167 (TESTING —
+     .github/workflows/ci.yml:77-80 hanya `go test -short`, jadi 11 file
+     test ber-tag `integration` / 87 fungsi test tidak pernah dieksekusi
+     di pipeline) entry BARU hasil TEMUAN DI LUAR SCOPE (R8 — dicatat,
+     tidak diperbaiki; User memutuskan fix terpisah): `Prioritas : TINGGI`,
+     Status OPEN → TINGGI 41 → 42, OPEN 89 → 90, TOTAL 159 → 161.
+     (c) TD-168 (TESTING — TestAuthRBAC_Allowed mencoba self-register
+     role "admin" padahal `allowedUserTypes` handler.go:30-34 hanya
+     menerima customer/driver/merchant → 422; suite integrasi auth
+     masih merah karena ini) entry BARU hasil TEMUAN DI LUAR SCOPE sesi
+     ini (R8 + §11.4 #2 auth/RBAC = HARUS STOP, tidak diperbaiki):
+     `Prioritas : SEDANG`, Status OPEN → SEDANG 79 → 80, OPEN 90 → 91,
+     TOTAL 161 → 162. CLOSED 14, DEFERRED 7, KRITIS 8, RENDAH 32 tetap.
+     Konsisten: 8 + 42 + 80 + 32 = 162 = TOTAL dan 50 + 14 + 7 + 91 =
+     162 = TOTAL. Range SECTION F: TD-058 s/d TD-165 → TD-058 s/d
+     TD-168. Parser atas 162 field `ID :` mengonfirmasi sum Prioritas =
+     sum Status = 162 (V3 sesi ini). Koreksi fakta: prompt Reviewer
+     menulis "Total 159→160, FIXED 49→50, SEDANG 78→78, TINGGI 41→42,
+     OPEN 89→90" dengan asumsi TD-166 SUDAH tercatat sebagai entry
+     OPEN/SEDANG di register — `grep -c "TD-166\|TD-167"` = 0 dan
+     parser = 159 entry sebelum sesi ini, jadi asumsi itu keliru; OPEN
+     juga tidak naik karena "TD-166 close -1" (tidak ada entry OPEN
+     yang ditutup di sesi ini). Lihat [OVERRIDE-2] di changelog sesi
+     ini. Tidak commit (R10).]
+     [Perubahan 2026-09-29 (sesi TD-165 entry baru) — TD-165 (BACKEND /
+     FITUR — register merchant hanya provisioning wallet CUSTOMER di
+     auth/handler.go:294; wallet MERCHANT baru lahir setelah POST
+     /merchants/register lewat food InsertMerchantWallet, dan integration
+     test TestAuthRegister_MerchantHasWallet_Integration
+     (internal/auth/integration_test.go:677-707) masih mengunci
+     perilaku lama sehingga merah) entry BARU hasil TEMUAN DI LUAR
+     SCOPE sesi sebelumnya (R8 — dicatat, tidak diperbaiki):
+     `Prioritas : SEDANG`, Status OPEN. OPEN 88 → 89, TOTAL 158 → 159,
+     bucket Prioritas SEDANG 77 → 78. TIDAK ada TD yang Status-nya
+     berubah di sesi ini, jadi FIXED 49, CLOSED 14, DEFERRED 7,
+     FIXED/CLOSED 63, KRITIS 8, TINGGI 41, RENDAH 32 tetap. Konsisten:
+     8 + 41 + 78 + 32 = 159 = TOTAL dan 49 + 14 + 7 + 89 = 159 = TOTAL.
+     Range SECTION F: TD-058 s/d TD-164 → TD-058 s/d TD-165. Parser atas
+     159 field `ID :` mengonfirmasi sum Prioritas = sum Status = 159
+     (V3 sesi ini). Verifikasi tambahan di luar dokumen: `go test
+     -tags integration ./internal/auth/ -run
+     TestAuthRegister_MerchantHasWallet_Integration -count=1 -v` → FAIL
+     (integration_test.go:704, got 404) sementara `go test
+     ./internal/auth/ -count=1` → ok (9.559s) — bukti test merahnya
+     tidak tertangkap CI (ci.yml:79 pakai `-short`, integration di
+     luar build tag). Tidak ada kode produksi yang diubah — hanya
+     register ini. Tidak commit (R10).]
+     [Perubahan 2026-09-29 (sesi TD-121 FIXED + TD-164 entry baru) — dua
+     perubahan berlawanan yang saling meniadakan di bucket OPEN.
+     (a) TD-121 (TESTING — GET /wallets/me belum punya integration test
+     #integration via DB real) FIXED via file baru
+     internal/wallet/me_integration_test.go: 8 test case (Customer,
+     DefaultType, Driver, Merchant, NoWalletOfType, InvalidType,
+     Unauthorized, InvalidToken), semua lewat httptest + Gin dengan router
+     yang menyalin wiring cmd/api/main.go:199 dan DB PostgreSQL nyata.
+     `Prioritas : SEDANG` tidak berubah, jadi bucket Prioritas SEDANG
+     TIDAK bergerak untuk TD-121. FIXED 48 → 49, FIXED/CLOSED 62 → 63,
+     OPEN 88 → 87.
+     (b) TD-164 (BACKEND / FITUR — GET /wallets/me?type=<bukan-label-enum>
+     membalas 500 INTERNAL_SERVER_ERROR, bukan 400) entry BARU hasil
+     TEMUAN DI LUAR SCOPE sesi ini (R8 — dicatat, tidak diperbaiki):
+     `Prioritas : SEDANG`, Status OPEN. OPEN 87 → 88, TOTAL 157 → 158,
+     bucket Prioritas SEDANG 76 → 77.
+     CLOSED 14 dan DEFERRED 7 tetap. Konsisten: 8 + 41 + 77 + 32 = 158 =
+     TOTAL dan 49 + 14 + 7 + 88 = 158 = TOTAL. Range SECTION F: TD-058 s/d
+     TD-163 → TD-058 s/d TD-164. Parser atas 158 field `ID :` mengonfirmasi
+     sum Prioritas = sum Status = 158 (V3 sesi ini). Verifikasi: V1
+     `go build ./...` PASS, V2 `go vet ./...` PASS, `go vet -tags
+     integration ./internal/wallet/...` PASS, V3 8/8 integration test
+     PASS, V4 unit test tetap hijau. Tidak ada file produksi yang diubah
+     — hanya 1 file test baru + register ini. Tidak commit (R10).
+     Lihat [OVERRIDE-1] dan [OVERRIDE-2] di changelog sesi ini.]
      [Perubahan 2026-09-29 (sesi TD-163) — TD-163 (DOKUMENTASI —
      docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih tulis
      wallet_type_enum hanya 5 label: 'CUSTOMER', 'DRIVER', 'MERCHANT',
@@ -4724,6 +5374,393 @@ SCOPE & RULES:
    tidak ada commit (R10 — Developer commit via PowerShell).
 
 ============================================================================
+CHANGELOG — 2026-09-29 (sesi TD-121, integration test GET /wallets/me)
+===========================================================================
+   SCOPE: internal/wallet/me_integration_test.go (file BARU) +
+   docs/TECHNICAL DEBT.txt. TIDAK ada file produksi .go yang disentuh,
+   modul lain tidak disentuh (R8).
+
+   TUJUAN:
+   - TD-121: GET /api/v1/wallets/me (TD-120) punya unit test handler
+     (4 case, internal/wallet/handler_test.go:368-445) tapi belum ada
+     integration test — query `Repository.GetByUserIDAndType` terhadap
+     DB nyata belum pernah dieksekusi end-to-end lewat HTTP.
+
+   CEK (file:line) — semua diverifikasi di sesi ini:
+   - internal/wallet/handler.go:227-246 — GetMyWallet: ambil user_id
+     dari context, `?type=` default CUSTOMER, teruskan ke service.
+   - internal/wallet/service.go:514-525 — GetMyWallet meneruskan
+     walletType mentah ke repo, tanpa validasi label.
+   - internal/wallet/repository.go:159-178 — GetByUserIDAndType, query
+     `WHERE user_id = $1 AND wallet_type = $2`, $2 di-bind sebagai text.
+   - internal/wallet/handler_test.go:368-445 — 4 unit test yang sudah ada
+     (Success, DefaultType, NotFound, Unauthorized) — semuanya pakai
+     mock service, tidak menyentuh DB.
+   - internal/wallet/http_integration_test.go — sudah ada pattern helper
+     (setupPool, wDoJSON, registerAndLogin) tapi router-nya TIDAK
+     mendaftarkan route /wallets/me, jadi endpoint ini belum pernah
+     di-hit lewat HTTP+DB.
+   - internal/auth/integration_test.go:98 dan :641-707 — router auth
+     sudah punya /wallets/me, tapi 2 test yang ada di sana
+     (TestAuthRegister_DriverHasWallets_Integration,
+     TestAuthRegister_MerchantHasWallet_Integration) berada di package
+     auth_test dan hanya assert status code 200 tanpa memverifikasi isi
+     body (wallet_id/balance/status/wallet_type).
+   - cmd/api/main.go:199 — wiring produksi yang disalin:
+     `api.GET("/wallets/me", auth.RBACMiddleware("customer","driver",
+     "merchant"), handler.GetMyWallet)`.
+   - migrations/001_initial_schema.up.sql:48-49 + 010:50 + 019:68 —
+     8 label wallet_type_enum, diverifikasi query langsung ke dev DB
+     (`SELECT unnest(enum_range(NULL::wallet_type_enum))` = 8 baris).
+
+   FIX (INCREMENTAL — 1 file test baru, 8 case):
+   internal/wallet/me_integration_test.go, build tag `integration`,
+   package wallet_test. Helper: setupMeRouter (router httptest+Gin yang
+     menyalin wiring main.go:199, memakai setupPool dari
+     integration_test.go yang sudah ada), meRegisterAndLogin (register
+     + login; driver otomatis diisi vehicle_plate/license_number),
+     walletIDOf (ground truth: baca wallet_id langsung dari tabel
+     `wallets`, bukan dari response endpoint).
+   1) TestIntegrationWalletMe_Customer — 200; keempat field DESIGN
+      (wallet_id, balance, status, wallet_type) dicek; wallet_id
+      dicocokkan balik ke baris DB; balance awal 0.
+   2) TestIntegrationWalletMe_DefaultType — tanpa `?type=` → default
+      CUSTOMER, wallet_id sama dengan kasus eksplisit.
+   3) TestIntegrationWalletMe_Driver — register driver (auto-create
+      CUSTOMER+DRIVER) → `?type=DRIVER` 200, wallet_type DRIVER.
+   4) TestIntegrationWalletMe_Merchant — `?type=CUSTOMER` 200;
+      `?type=MERCHANT` 404 WALLET_NOT_FOUND (register merchant hanya
+      provision 1 wallet CUSTOMER — auth/handler.go:289-298).
+   5) TestIntegrationWalletMe_NoWalletOfType — customer minta
+      `?type=DRIVER` → 404 WALLET_NOT_FOUND. RBAC mengizinkan customer,
+      jadi 404 datang dari repository, bukan dari middleware.
+   6) TestIntegrationWalletMe_InvalidType — `?type=INVALID` → 500 aktual,
+      dikunci eksplisit (lihat OVERRIDE-1 dan TD-164).
+   7) TestIntegrationWalletMe_Unauthorized — tanpa header → 401.
+   8) TestIntegrationWalletMe_InvalidToken — token sampah → 401.
+
+   VERIFIKASI:
+   - V1 `go build ./...` → PASS (exit 0, tanpa output).
+   - V2 `go vet ./...` → PASS. `go vet -tags integration
+     ./internal/wallet/...` → PASS.
+   - V3 DATABASE_URL=postgresql://postgres:password@localhost:15432/
+     g_flow_dev?sslmode=disable, `go test -tags integration
+     ./internal/wallet/... -run TestIntegrationWallet -count=1 -v` →
+     8/8 PASS (ok ... 1.555s).
+   - V4 `go test ./internal/wallet/... -count=1` → ok (0.122s), unit
+     test tetap hijau.
+   - V5 `git status --short` → hanya `?? internal/wallet/
+     me_integration_test.go` + `M docs/TECHNICAL DEBT.txt`.
+   - Baseline sebelum edit: `go test -tags integration ./internal/
+     wallet/...` → ok (5.043s); container g-flow-postgres-1 (15432) dan
+     g-flow-redis-1 (6380) keduanya Up.
+
+   [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "Test 3: GET /api/v1/
+   wallets/me?type=INVALID → 400". SALAH — kode = source of truth (R2).
+   Bukti: handler.go:234-237 hanya TrimSpace + default, TANPA whitelist;
+   service.go:514-525 meneruskan nilai mentah; repository.go:160-164
+   mengikat $2 sebagai text ke kolom ENUM; statusForError
+   (handler.go:390-412) tidak punya case untuk PgError 22P02, jadi jatuh
+   ke default 500. Diverifikasi langsung ke dev DB:
+   `SELECT 1 FROM wallets WHERE wallet_type = 'INVALID'::wallet_type_enum;`
+   → "ERROR: invalid input value for enum wallet_type_enum". Diverifikasi
+   end-to-end lewat HTTP juga oleh TestIntegrationWalletMe_InvalidType,
+   yang sengaja mengunci 500. Fixed production code = DI LUAR SCOPE (R8:
+   "JANGAN sentuh produksi .go"), jadi gap ini dicatat sebagai TD-164
+   (Prioritas SEDANG) dan test ditulis mengikuti perilaku AKTUAL, bukan
+   yang diharapkan prompt. Konsekuensi yang disengaja: ada test hijau
+   yang membuktikan bug — itu lebih baik daripada test hijau yang
+   menyembunyikan bug, dan jauh lebih baik daripada test yang dipaksa
+   PASS dengan assertion longgar (R4).
+
+   [OVERRIDE-2 / §11.2] Prompt Reviewer menulis angka summary "FIXED
+   48→49, FIXED/CLOSED 62→63, SEDANG 76→75, OPEN 88→87, Total tetap
+   157". Dua benar, tiga salah:
+   - FIXED 48 → 49 ✓ dan FIXED/CLOSED 62 → 63 ✓ (benar).
+   - SEDANG 76 → 75 ✗. Bucket Prioritas berbasis `Prioritas :`, bukan
+     `Status :` — dan prompt sendiri menulis "bucket SEDANG TIDAK bergerak
+     saat close", jadi arahnya benar tapi CLOSE TIDAK menggeser bucket
+     sama sekali: 76, bukan 75. LANGSUNG dibantah preseden: TD-047,
+     TD-048, TD-113, TD-126, TD-127, TD-144, TD-147 semuanya FIXED tapi
+     tetap terdaftar di bucket SEDANG (lihat catatan 2026-09-29 sesi
+     TD-047/048 di §2). Selain itu TD-164 menambah 1 → 77.
+   - OPEN 88 → 87 ✗ dan "Total tetap 157" ✗. Keduanya mengasumsikan tidak
+     ada entry BARU di sesi ini, padahal sesi ini menemukan satu di luar
+     scope (TD-164, R8). Angka sebenarnya (parser atas 158 field `ID :`):
+     FIXED 49, CLOSED 14, DEFERRED 7, FIXED/CLOSED 63, OPEN 88, TOTAL
+     158, Prioritas KRITIS 8 + TINGGI 41 + SEDANG 77 + RENDAH 32 = 158.
+     OPEN bergerak 88 → 87 (karena TD-121 FIXED) lalu 87 → 88 (karena
+     TD-164 entry baru), sehingga kembali ke 88 — kebetulan sama dengan
+     angka awal, tapi lewat dua langkah, bukan "tidak bergerak".
+   Konsistensi silang: sum Prioritas = sum Status = 158 = TOTAL ✓
+   (8+41+77+32 = 158; 49+14+7+88 = 158). Parser dijalankan SEBELUM menulis
+   angka (R1/R2), bukan sesudah.
+
+   PERUBAHAN ANGKA (hasil parser, bukan hasil prompt):
+   - Prioritas: SEDANG 76 → 77 (+1 entry baru TD-164). KRITIS 8, TINGGI
+     41, RENDAH 32 tetap → 8 + 41 + 77 + 32 = 158.
+   - Status: FIXED 48 → 49 (+1 TD-121 FIXED). FIXED/CLOSED 62 → 63.
+     OPEN 88 → 87 (TD-121) → 88 (TD-164). CLOSED 14, DEFERRED 7 tetap
+     → 49 + 14 + 7 + 88 = 158.
+   - TOTAL: 157 → 158. Range SECTION F: TD-058 s/d TD-163 → TD-058 s/d
+     TD-164.
+
+   CATATAN: dokumen ini tetap v2.0. Satu file test baru + satu entry TD
+   baru (SECTION F); tidak ada perubahan struktur dokumen, tidak ada kode
+   produksi diubah, dan tidak ada commit (R10 — Developer commit via
+   PowerShell).
+
+============================================================================
+CHANGELOG — 2026-09-29 (sesi TD-165, register merchant tanpa wallet
+MERCHANT)
+===========================================================================
+   SCOPE: satu entry TD baru (TD-165) + konsistensi angka di §2/§3.
+   Tidak ada file .go yang disentuh (R8).
+
+   TEMUAN:
+   1. internal/auth/handler.go:289-298 `walletsForUserType` — case
+      "merchant" (293-294) return `[CUSTOMER]` saja; case "driver"
+      (291-292) return `[CUSTOMER, DRIVER]`. Komentar baris 285 menulis
+      "merchant → CUSTOMER".
+   2. cmd/api/main.go:199 — `/wallets/me` didaftarkan dengan
+      `auth.RBACMiddleware("customer", "driver", "merchant")`, jadi
+      merchant memang boleh memanggil endpoint itu.
+   3. migrations/001_initial_schema.up.sql:48-49 — label 'MERCHANT'
+      ada di wallet_type_enum sejak schema awal.
+   4. SATU-SATUNYA kode non-test yang meng-INSERT wallet 'MERCHANT' ada
+      di internal/food/repository.go:263-287 (InsertMerchantWallet,
+      `ON CONFLICT (user_id, wallet_type) DO NOTHING`), dipanggil dari
+      food/service.go:291-299 RegisterMerchant. Jadi wallet MERCHANT
+      baru ada SETELAH POST /api/v1/merchants/register sukses.
+   5. TEST INTEGRATION MERAH DI HEAD (dibuktikan langsung, R1):
+      `go test -tags integration ./internal/auth/ -run
+      TestAuthRegister_MerchantHasWallet_Integration -count=1 -v` →
+      FAIL, `integration_test.go:704: GET /wallets/me?type=MERCHANT
+      harus 200, got 404 ({"error":{"code":"WALLET_NOT_FOUND"...`.
+      Test tersebut (internal/auth/integration_test.go:677-707) masih
+      mengunci perilaku "register merchant = 2 wallet".
+   6. Sejarah: e8363a1 (2026-09-24, TD-128) menambah merchant →
+      [CUSTOMER, MERCHANT]; 8b0a583 (2026-09-25) me-revert-nya dan
+      MENGUBAH internal/auth/handler_unit_test.go:533-551 tapi TIDAK
+      menyentuh integration_test.go → test integrasi tertinggal merah.
+   7. `.github/workflows/ci.yml:79` menjalankan `go test -short -race
+      ...`; integration test ada di balik build tag `integration`
+      (internal/auth/integration_test.go:1) sehingga TIDAK PERNAH
+      dikompilasi di CI. `go test ./internal/auth/ -count=1` → ok
+      (9.559s). Artinya tidak ada signal pipeline yang menunjukkan
+      wallet merchant berubah.
+   8. `walletTypeMerchant = "MERCHANT"` di auth/handler.go:40 kini
+      dead const (grep package auth = 1 hasil, hanya definisinya).
+
+   [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "Merchant mobile yang
+   panggil GET /wallets/me?type=MERCHANT → selalu 404. Fitur wallet
+   merchant mati." TIDAK AKURAT — koreksi fakta (R2/R3), bukan
+   perubahan arsitektur: Bukti (4) menunjukkan food service MEMANG
+   membuat wallet MERCHANT, hanya setelah merchant profile terdaftar.
+   Jadi 404 berlaku pada jendela onboarding (merchant yang belum
+   menyelesaikan POST /merchants/register), bukan "selalu", dan fitur
+   wallet merchant tidak mati total. Dampak yang justru lebih serius
+   — dan tidak disebut prompt — adalah test integrasi merah di HEAD
+   (Bukti 5), yang tidak tertangkap CI (Bukti 7). Isi entry TD-165
+   memakai versi yang terverifikasi.
+
+   [OVERRIDE-2 / §11.2] Prompt Reviewer mengusulkan "walletsForUserType
+   merchant → [CUSTOMER, MERCHANT]" sebagai solusi utama, plus
+   peringatan "JANGAN bikin duplicate seperti TD-128 regression".
+   Arah peringatannya benar, tapi solusi yang ditawarkan justru
+   persis perubahan yang SUDAH PERNAH di-revert dengan sengaja di
+   8b0a583 dan dicatat di Note TD-128 ("Regression fix 2026-09-25 —
+   merchant duplicate wallet dengan /merchants/register; revert
+   merchant path di auth (customer only), driver tetap 2 wallet").
+   Mengadopsi ulang tanpa analisis regresi = mengulang kesalahan yang
+   sudah pernah dibayar. Bukti tambahan: migrations/
+   001_initial_schema.up.sql:124 punya `CONSTRAINT
+   wallet_user_type_unique UNIQUE (user_id, wallet_type)` yang
+   membuat duplikasi wallet merchant secara struktural mustahil
+   lewat jalur food (ON CONFLICT DO NOTHING mengembalikan wallet yang
+   sudah ada) — jadi [PERLU VERIFIKASI] apakah root cause duplikasi
+   2026-09-25 masih ada. Solusi yang direkomendasikan di TD-165
+   adalah menyelaraskan test integrasi ke perilaku yang disengaja
+   (membuat suite merah jadi hijau), dengan daftar prasyarat kalau
+   nanti tetap ingin membalik path merchant.
+
+   PERUBAHAN ANGKA (hasil parser, bukan hasil prompt):
+   - Prioritas: SEDANG 77 → 78 (+1 entry baru TD-165). KRITIS 8, TINGGI
+     41, RENDAH 32 tetap → 8 + 41 + 78 + 32 = 159.
+   - Status: TIDAK ADA TD yang berubah Status di sesi ini, jadi FIXED
+     49, CLOSED 14, DEFERRED 7, FIXED/CLOSED 63 tetap. OPEN 88 → 89
+     (+1 entry baru TD-165) → 49 + 14 + 7 + 89 = 159.
+   - TOTAL: 158 → 159. Range SECTION F: TD-058 s/d TD-164 → TD-058
+     s/d TD-165.
+   - Angka di prompt ("Total 158→159, SEDANG 77→78, OPEN 88→89")
+     diverifikasi BENAR oleh parser yang dijalankan SEBELUM menulis
+     angka (R1/R2): sebelum edit 8 + 41 + 77 + 32 = 158 dan
+     49 + 14 + 7 + 88 = 158; sesudah edit kedua sum = 159.
+
+   VERIFIKASI SESI INI:
+   - V1 `grep -c "TD-165" docs/TECHNICAL DEBT.txt` → ≥ 2.
+   - V2 `grep -A3 "TOTAL HUTANG" docs/TECHNICAL DEBT.txt` → 159.
+   - V3 parser atas 159 field `ID :` → Prioritas 8 + 41 + 78 + 32 = 159
+     dan Status 49 + 14 + 7 + 89 = 159.
+   - V4 `git status --short` → hanya `M docs/TECHNICAL DEBT.txt` dan
+     `?? internal/wallet/me_integration_test.go` (file test dari sesi
+     TD-121 sebelumnya, bukan hasil sesi ini). Tidak ada file .go yang
+     berubah.
+
+   CATATAN: dokumen ini tetap v2.0. Satu entry TD baru (SECTION F),
+   tidak ada perubahan struktur dokumen, tidak ada kode produksi diubah,
+   dan tidak ada commit (R10 — Developer commit via PowerShell). Test
+   integrasi yang merah (Bukti 5) sengaja TIDAK diperbaiki di sini:
+   itu perubahan file test di luar scope prompt (R8) dan dicatat
+   sebagai TD-165 OPEN untuk diputuskan terpisah.
+
+===========================================================================
+CHANGELOG — 2026-09-29 (sesi TD-166, integration test merchant wallet stale)
+===========================================================================
+   SCOPE: 1 file test (internal/auth/integration_test.go) + register
+   (3 entry: TD-166 FIXED, TD-167 OPEN, TD-168 OPEN). TIDAK ada file
+   produksi dan TIDAK ada file .github/workflows yang disentuh (R8).
+
+   ROOT CAUSE:
+   Commit 8b0a583 (2026-09-25, "fix TD-128 regression") ME-REVERT merchant
+   di `walletsForUserType` dari [CUSTOMER, MERCHANT] jadi [CUSTOMER]
+   (internal/auth/handler.go:293-294) dan memperbarui unit test-nya —
+   tapi TIDAK menyentuh internal/auth/integration_test.go. Test integrasi
+   yang mengunci perilaku lama tertinggal dan merah sampai hari ini.
+
+   CEK (file:line + output, R1):
+   1. internal/auth/integration_test.go:675-707 (sebelum fix) — loop
+      `for _, wt := range []string{"CUSTOMER", "MERCHANT"}` yang
+      mensyaratkan keduanya 200.
+   2. internal/auth/handler.go:289-298 — perilaku aktual; komentar
+      baris 285 "merchant → CUSTOMER". Const `walletTypeMerchant`
+      (handler.go:40) kini DEAD (0 pemakaian di package auth selain
+      definisinya) — sudah tercatat di TD-165, TIDAK disentuh di sini
+      karena handler.go di luar SCOPE.
+   3. .github/workflows/ci.yml:77-80 — `go test -short -race ...`;
+      `grep -n "go test" ci.yml` = 1 hasil, tidak ada `-tags
+      integration` di seluruh workflow.
+   4. BASELINE (sebelum fix, DB dev nyata):
+      `DATABASE_URL=postgresql://postgres:password@localhost:15432/
+      g_flow_dev?sslmode=disable go test -tags integration
+      ./internal/auth/ -run TestAuthRegister_MerchantHasWallet
+      -count=1 -v` → `--- FAIL:
+      TestAuthRegister_MerchantHasWallet_Integration (0.24s)`,
+      `integration_test.go:704: GET /wallets/me?type=MERCHANT harus
+      200, got 404 ({"error":{"code":"WALLET_NOT_FOUND","message":
+      "wallet not found"},"success":false})`, `FAIL ... 0.263s`.
+   5. `git show 8b0a583 --stat` — internal/auth/integration_test.go
+      TIDAK ADA di daftar file yang diubah (bukti root cause, bukan
+      dugaan).
+
+   FIX (STEP A — assertion diselaraskan, BUKAN dihapus):
+   internal/auth/integration_test.go:675-712. `?type=CUSTOMER` → 200
+   (dijamin ada), `?type=MERCHANT` → 404 (dijamin TIDAK ada — wallet
+   MERCHANT dibuat food service di internal/food/repository.go:263-287
+   InsertMerchantWallet, `ON CONFLICT (user_id, wallet_type) DO
+   NOTHING`, dipanggil dari RegisterMerchant). Komentar docstring
+   ditulis ulang agar mencatat alasan + commit 8b0a583. Nama fungsi
+   dipertahankan supaya filter `-run` dan 8 referensi historis di
+   register ini tetap valid. Test TIDAK dihapus: assertion 404 itulah
+   guard anti-regresi TD-128, dan nilainya berbeda dari unit test
+   pgxmock (HTTP + DB nyata vs mock).
+   Ini persqyat opsi yang direkomendasikan TD-165 "Solusi", bukan
+   pembalikan path merchant (yang akan mengulang regresi 2026-09-25).
+
+   [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "tapi commit 8b0fb30
+   (TD-128 regression fix)". SHA yang benar adalah 8b0a583 — `git
+   show 8b0fb30` → "fatal: ambiguous argument '8b0fb30': unknown
+   revision or path not in the working tree", sedangkan `git log
+   --all --grep="TD-128"` mengembalikan 8b0a583 ("fix TD-128
+   regression") + e8363a1 (revisi awal TD-128). Kesimpulan Reviewer
+   (revert merchant → CUSTOMER only) benar; hanya SHA-nya yang salah
+   dan dikoreksi di entry TD-166.
+
+   [OVERRIDE-2 / §11.2] Prompt Reviewer menulis angka: "Total 159→160,
+   FIXED 49→50, SEDANG 78→78 (TD-166 close -1, TD-167 add +1), TINGGI
+   41→42, OPEN 89→90". Dijalankan parser SEBELUM menulis angka
+   (R1/R2): sebelum sesi ini register punya 159 field `ID :`,
+   `grep -c "TD-166\|TD-167"` = 0, dan TD-166 TIDAK PERNAH tercatat
+   sebagai entry OPEN/SEDANG. Jadi premis "TD-166 close" salah: yang
+   terjadi adalah 2 (atau 3) entry BARU, bukan 1 entry baru + 1 yang
+   ditutup. Angka hasil parser: TOTAL 159 → 162 (TD-166, TD-167,
+   TD-168), FIXED 49 → 50, FIXED/CLOSED 63 → 64, CLOSED 14 dan
+   DEFERRED 7 tetap, OPEN 89 → 91 (+2 entry baru; TIDAK ada entry OPEN
+   yang ditutup), Prioritas SEDANG 78 → 80 (TD-166, TD-168), TINGGI
+   41 → 42 (TD-167), KRITIS 8 dan RENDAH 32 tetap. Konsisten: 8 + 42
+   + 80 + 32 = 162 dan 50 + 14 + 7 + 91 = 162. Catatan: "OPEN
+   89→90 karena TD-166 close -1 dan TD-167 add +1" juga tidak
+   konsisten secara aritmetika (89 - 1 + 1 = 89). Bila User/DeepSeek
+   memang}TIDAK ingin TD-168 masuk register sesi ini, hapus entry
+   TD-168 dan turunkan semua angka 1 bucket OPEN + 1 SEDANG + 1 TOTAL
+   (jadi TOTAL 161, OPEN 90, SEDANG 79).
+
+   [OVERRIDE-3 / §11.2] TEMUAN DI LUAR SCOPE yang tidak ada di prompt:
+   `go test -tags integration ./internal/auth/` tetap FAIL setelah
+   TD-166 diperbaiki, karena test LAIN yang juga stale —
+   `TestAuthRBAC_Allowed` (internal/auth/integration_test.go:381-391)
+   memanggil `registerAndLoginRole(t, r, "admin")` yang self-register
+   role admin, sedangkan `allowedUserTypes` (internal/auth/handler.go:
+   30-34) hanya menerima customer/driver/merchant →
+   `integration_test.go:386: register role admin gagal: 422
+   {"error":{"code":"INVALID_USER_TYPE",...}}`. Dicatat sebagai TD-168
+   (TESTING, SEDANG, OPEN) sesuai R8. TIDAK diperbaiki: auth/RBAC
+   masuk kategori HARUS STOP §11.4 #2 — perbaikannya butuh keputusan
+   semantik (seed admin via `tc.pool.Exec` vs pindah ke package
+   admin), bukan koreksi faktual sepele. Rekomendasi di TD-168 sudah
+   ditulis lengkap. Konsekuensi: V3 di bawah TIDAK 100% hijau —
+   dilaporkan apa adanya, bukan dipalsukan (R4).
+
+   PERUBAHAN ANGKA (hasil parser, bukan hasil prompt):
+   - Total: 159 → 162 (+TD-166, +TD-167, +TD-168). Range SECTION F:
+     TD-058 s/d TD-165 → TD-058 s/d TD-168.
+   - Status: FIXED 49 → 50, FIXED/CLOSED 63 → 64, OPEN 89 → 91,
+     CLOSED 14 dan DEFERRED 7 tetap.
+   - Prioritas: SEDANG 78 → 80, TINGGI 41 → 42, KRITIS 8, RENDAH 32
+     tetap.
+   - TD-165 TETAP OPEN (sesuai instruksi) — tapi diberi blok `Catatan`
+     yang menandai bahwa "Dampak (2)"-nya (test merah di HEAD) sudah
+     tidak berlaku karena diperbaiki di sesi ini, sementara sisa
+     masalahnya (onboarding gap, dead const handler.go:40, jalur INSERT
+     ketiga yang masih [PERLU VERIFIKASI]) belum dikerjakan. Status-nya
+     sengaja TIDAK diubah agar tidak menggeser angka tanpa entry baru.
+
+   VERIFIKASI SESI INI:
+   - V1 `go build ./...` → PASS (exit 0, tanpa output).
+   - V2 `go vet ./...` → PASS (exit 0, tanpa output).
+   - V2b `go vet -tags integration ./internal/auth/...` → PASS.
+   - V3 `DATABASE_URL=... go test -tags integration ./internal/auth/...
+     -count=1 -v` → `TestAuthRegister_MerchantHasWallet_Integration`
+     PASS (0.17s) — test yang merah sejak 2026-09-25 sekarang hijau.
+     Package BELUM sepenuhnya hijau: 1 FAIL tersisa = TD-168
+     (`--- FAIL: TestAuthRBAC_Allowed (0.01s)`). 21 dari 22 integration
+     test package auth PASS.
+   - V4 `go test ./internal/auth/... -count=1` → PASS (unit test tidak
+     tersentuh, `-short` path yang dipakai CI tetap hijau).
+   - V5 `grep -c "TD-166\|TD-167" docs/TECHNICAL DEBT.txt` → jauh di atas
+     4 (entry + ringkasan §2/§3 + changelog + referensi silang).
+   - V6 `git status --short` → `M "docs/TECHNICAL DEBT.txt"`,
+     `M internal/auth/integration_test.go`, dan
+     `?? internal/wallet/me_integration_test.go` (file untracked dari
+     sesi TD-121 sebelumnya, BUKAN hasil sesi ini). Tidak ada file
+     .github/workflows/ci.yml yang berubah (R8).
+
+   SCOPE & RULES:
+   - Fix hanya di internal/auth/integration_test.go (file test, bukan
+     produksi). Tidak ada handler.go, migration, atau CI yang diubah.
+   - Tidak commit / tidak push (R10 — Developer commit via PowerShell).
+   - Dokumen tetap v2.0: 3 entry SECTION F baru + blok ringkasan +
+     1 entri changelog; blok changelog historis tidak disentuh.
+
+   CATATAN KONSISTENSI: TD-166 (test stale merchant) dan TD-165
+   (onboarding gap merchant) saling tumpang tindih sebagian, dan itu
+   disengaja: TD-165 = keputusan produk/fitur (apakah wallet MERCHANT
+   harus ada sebelum onboarding selesai) yang tetap OPEN, TD-166 = satu
+   assertion test yang sudah ditutup. Kalau nanti TD-165 diputuskan
+   untuk ditutup penuh, TD-166 sebaiknya DICABUT (bukan dibiarkan
+   FIXED) supaya tidak ada dua entri untuk satu keputusan yang sama.
+
+===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ================================================================================
 
