@@ -1,0 +1,55 @@
+-- ============================================================================
+-- MIGRATION 018: Add missing updated_at on ride_orders (TD-158)
+-- ============================================================================
+-- Version : 018
+-- Phase   : 2 (Ride Hailing / G-Ride) — schema fix
+-- Doc ref : TECHNICAL DEBT.txt — TD-158
+--
+-- Latar belakang:
+--   Migration 004 membuat ride_orders TANPA kolom updated_at (lihat
+--   migrations/004_ride_orders.up.sql:105-110 — hanya created_at, expires_at,
+--   assigned_at, pickup_at, completed_at, settled_at). Padahal
+--   internal/worker/repository.go:242-248 (CancelRideOrder) menulis
+--   updated_at = NOW() pada setiap auto-cancel ride order.
+--
+--   Akibatnya SQLSTATE 42703 (column does not exist) pada SEMUA environment,
+--   bukan hanya dev. Dampak: worker auto-cancel ride 100% gagal. Per
+--   internal/worker/worker.go:393-445, refund escrow (worker.go:419) dieksekusi
+--   DULU, lalu CancelRideOrder (worker.go:425) error, lalu `defer tx.Rollback`
+--   (worker.go:398) membuang refund itu juga. Akibatnya order tetap
+--   SEARCHING_DRIVER selamanya + dana customer terkunci di escrow.
+--
+--   Pola ini PERSIS sama dengan gap yang sudah diperbaiki migration 009
+--   (food_orders, send_orders, send_order_stops) — ride_orders terlewat.
+--
+-- Tipe kolom: TIMESTAMPTZ (bukan TIMESTAMP).
+--   Konsisten dengan keenam kolom timestamp lain di ride_orders (004:105-110)
+--   yang semuanya TIMESTAMPTZ, dan konsisten dengan updated_at yang
+--   ditambahkan migration 009 di food_orders / send_orders / send_order_stops
+--   (semuanya TIMESTAMPTZ). Kolom tanpa timezone di tabel yang lain
+--   timezone-aware akan membuat perbandingan updated_at vs expires_at
+--   (TIMESTAMPTZ) meleset — dan auto-cancel worker justru membandingkan
+--   expires_at. Keputusan #6b di header migration 004 secara eksplisit
+--   memilih TIMESTAMPTZ untuk tabel ini demi "timezone-aware (auto-cancel
+--   worker)".
+--
+-- Trigger: ride_orders punya trigger ride_order_rollback_voucher
+--   (AFTER UPDATE OF status, dari migration 016). Menambah kolom tidak
+--   menyalakan trigger tersebut, jadi migration ini tidak punya efek samping
+--   ke voucher.
+--
+-- Idempotent: aman di-re-run (ADD COLUMN IF NOT EXISTS).
+--
+-- PATCH: psql -h localhost -p 15432 -U postgres -d g_flow_dev \
+--          -f 018_add_ride_orders_updated_at.up.sql
+--
+-- Sanity check:
+--   \d ride_orders            -- updated_at harus ada
+--   SELECT data_type FROM information_schema.columns
+--     WHERE table_name='ride_orders' AND column_name='updated_at';
+-- ============================================================================
+
+ALTER TABLE ride_orders
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- END OF MIGRATION 018.

@@ -60,4 +60,10 @@ if errorlevel 1 exit /b 1
 psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\017_remove_default_admin.up.sql
 if errorlevel 1 exit /b 1
 
+:: Migration 018 - ride_orders.updated_at (TD-158). Tanpa kolom ini worker
+:: auto-cancel ride gagal dengan SQLSTATE 42703 dan refund escrow ikut
+:: ter-rollback (lihat migrations\018_add_ride_orders_updated_at.up.sql).
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\018_add_ride_orders_updated_at.up.sql
+if errorlevel 1 exit /b 1
+
 echo Migrations completed.

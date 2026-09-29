@@ -60,4 +60,9 @@ psql $DATABASE_URL -f migrations/016_vouchers.up.sql
 # ADMIN_PASSWORD untuk membuat admin (lihat docs/DEPLOYMENT_GUIDE.md §11).
 psql $DATABASE_URL -f migrations/017_remove_default_admin.up.sql
 
+# Migration 018 — ride_orders.updated_at (TD-158). Tanpa kolom ini worker
+# auto-cancel ride gagal dengan SQLSTATE 42703 dan refund escrow ikut
+# ter-rollback (lihat migrations/018_add_ride_orders_updated_at.up.sql).
+psql $DATABASE_URL -f migrations/018_add_ride_orders_updated_at.up.sql
+
 echo "Migrations completed."

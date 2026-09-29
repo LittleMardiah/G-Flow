@@ -2343,16 +2343,109 @@ Solusi     : Migration baru: `ALTER TABLE ride_orders ADD COLUMN IF NOT EXISTS
              insert ride order SEARCHING_DRIVER + expires_at di masa lalu lalu
              panggil CancelRideOrders.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (commit TD-158, 2026-09-28)
 Referensi  : TD-067 (auto-cancel ride), TD-106 (worker), TD-156 (worker
              belum punya integration test — reason kenapa bug ini lolos)
+Note       : Diperbaiki lewat migration 018_add_ride_orders_updated_at.up.sql
+             (`ALTER TABLE ride_orders ADD COLUMN IF NOT EXISTS updated_at
+             TIMESTAMPTZ DEFAULT NOW();`) + didaftarkan di scripts/migrate.sh
+             dan scripts/migrate.bat. Tipe TIMESTAMPTZ — bukan TIMESTAMP —
+             konsisten dengan 6 kolom timestamp lain di ride_orders
+             (004:105-110, semuanya TIMESTAMPTZ), dengan updated_at yang
+             ditambahkan migration 009 di food_orders/send_orders/
+             send_order_stops (juga TIMESTAMPTZ), dan dengan keputusan #6b
+             di header migration 004 yang eksplisit memilih TIMESTAMPTZ
+             demi "timezone-aware (auto-cancel worker)".
+             Verifikasi (2026-09-28, DB dev g_flow_dev):
+             (a) SEBELUM fix — replay statement CancelRideOrder:
+                 `ERROR: 42703: column "updated_at" of relation "ride_orders"
+                 does not exist / LOCATION: transformUpdateTargetList` ✓
+                 reproduksi 42703 sesuai prediksi.
+             (b) SESUDAH fix — `\d ride_orders` memunculkan
+                 `updated_at | timestamp with time zone | now()`; replay
+                 statement yang sama tidak menghasilkan error.
+             (c) Migration idempotent (ADD COLUMN IF NOT EXISTS) — re-run
+                 hanya memunculkan NOTICE "already exists, skipping".
+             (d) Test regresi baru: internal/worker/
+                 ride_autocancel_integration_test.go
+                 (TestIntegrationWorker_AutoCancelRideExpired + varian
+                 Idempotent, build tag `integration`) memanggil worker
+                 sungguhan terhadap DB. Test ini DIBUKTIKAN menangkap bug:
+                 saat kolom di-DROP manual, test gagal dengan SQLSTATE 42703
+                 yang persis sama dari worker.go ("gagal cancel ride order
+                 ...: ERROR: column "updated_at" ... does not exist (SQLSTATE
+                 42703)"), dan PASS setelah migration 018 di-apply ulang.
+                 Ini sekaligus menutup gap TD-156 untuk jalur ride.
+             (e) Regresi: go build ./... PASS, go vet ./... PASS, go vet
+                 -tags integration ./... PASS, go test ./... PASS, go test
+                 ./internal/worker/... = 61 PASS / 0 FAIL, go test -tags
+                 integration ./internal/worker/... PASS, dan suite integrasi
+                 ride (TC-INT-RD-007 auto-cancel) tetap PASS.
+Catatan     : Test integrasi yang sudah ada (TestIntegrationRide_
+             AutoCancelExpired di internal/ride/integration_test.go) TIDAK
+             menangkap bug ini karena ia memanggil ride.Service.
+             AutoCancelExpiredOrders yang memakai ride.Repository.CancelOrder
+             (internal/ride/repository.go:506) — query itu tidak menulis
+             updated_at. Hanya worker (internal/worker/repository.go:241)
+             yang menulis kolom tersebut, jadi hanya jalur worker yang
+             meledak. Test yang ditambahkan di atas memanggil worker
+             secara langsung agar jalur yang bermasalah ikut tervalidasi.
+Dampak sisa : 0 order SEARCHING_DRIVER-expired di dev DB yang tersangkut
+             (sebelum fix ada 26 order basi yang tertinggal — bukti fisik
+             bug); beberapa di antaranya sudah tercancel + ter-refund saat
+             worker dijalankan ulang setelah migration 018.
+
+ID         : TD-159
+Kategori   : TESTING
+Judul      : Integration test suite tidak bisa dijalankan lintas paket secara
+             paralel — semua suite me-reset saldo wallet sistem di setup
+Dampak     : `go test -tags integration ./...` (semua paket sekaligus)
+             GAGAL acak di auth, food, ride, dan send — tidak deterministik,
+             suite mana yang lolos berubah-ubah tiap run. Contoh run yang
+             gagal: TestAuthRBAC_Allowed, TestAuthRegister_MerchantHasWallet
+             _Integration, TestIntegrationFood_TC_FOOD_006_MerchantReject
+             WalletRefund, TestIntegrationRide_E2EWalletSettlement,
+             TestIntegrationRide_CustomerCancelFullRefund,
+             TestIntegrationSend_TC_SEND_005_AutoCancelExpired. Semua paket
+             memanggil `UPDATE wallets SET balance = 0 WHERE user_id IS NULL`
+             di setupPool/testEnv, jadi paket yang jalan
+             bersamaan menimpa saldo wallet sistem milik paket lain di
+             tengah assertion. Akibatnya CI integration (kalau nanti
+             memakai `go test -tags integration ./...`) akan merah
+             palsu dan tidak dipercaya — lebih buruk dari tidak ada test.
+             Semua suite individual (`go test -tags integration ./internal/X/
+             ...`) tetap PASS dan deterministik.
+Bukti      : (a) `go test -tags integration ./internal/ride/...` → ok (18.6s)
+             dan `./internal/worker/...` → ok, dijalankan bergantian;
+             (b) `go test -tags integration ./...` → FAIL di 4 paket.
+             (c) DIBUKTIKAN PRE-EXISTING (bukan efek TD-158): `git stash`
+             semua perubahan TD-158 lalu jalankan suite yang sama pada kode
+             asli → auth/food/ride/send tetap FAIL dengan pola yang sama.
+             (d) yang boleh dipercaya = fix TD-158 sendiri tetap stabil 3/3
+             run suite-lintas-paket, dan suite worker individual 8/8 run
+             hijau.
+Solusi     : Beri tiap integration suite schema/database sendiri (mis.
+             template database per paket, atau `createdb` per run di
+             TestMain), ATAU ubah reset wallet sistem jadi transaction-local
+             + berbasis lock (`SELECT ... FOR UPDATE` pada baris wallet
+             sistem / advisory lock per paket) supaya tidak saling menimpa.
+             Alternatifcheap: jalankan suite dengan `-p 1` (tanpa paralel
+             antar paket) di CI, sekalian karena semua suite memang
+             berbagi 1 dev DB.
+Estimasi   : 2-4 jam (kalau Pisah DB per paket) / 30 menit (`-p 1` +
+             dokumentasi)
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-158 (ketemu saat verifikasi sesi TD-158 — tidak dalam scope
+             TD-158, dicatat sesuai R8), TD-150 (coupling test integrasi
+             ↔ auto-create wallet auth)
 
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 152 item (TD-051 di-reserve/skip)
-                                       (44 FIXED + 14 CLOSED + 7 DEFERRED + 87 OPEN = 152)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 153 item (TD-051 di-reserve/skip)
+                                       (45 FIXED + 14 CLOSED + 7 DEFERRED + 87 OPEN = 153)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 41 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -2377,7 +2470,16 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 152 item (TD-051 di-reserve/skip)
             menggeser SEDANG, dan tidak ada satu pun entry FIXED lain di daftar
             ini yang hilang dari bucketnya. Parser: 8 + 41 + 72 + 31 = 152 =
             TOTAL. Lihat [OVERRIDE-2].]
-- SEDANG  : 72 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156)
+            [41 TETAP pada 2026-09-28 (TD-158 FIXED): TD-158 berubah Status
+            OPEN → FIXED, tapi `Prioritas :`-nya tetap TINGGI, jadi bucket
+            TINGGI tidak bergerak (sama seperti TD-106, TD-030, TD-031,
+            TD-114). Prompt Reviewer menulis "TINGGI 41→40 (TD-158 close)"
+            — SALAH, karena kalau bucket ikut Status maka setiap entry FIXED
+            lain juga akan hilang dari bucketnya, dan tidak ada satu pun
+            yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
+            bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
+            Lihat [OVERRIDE-4].]
+- SEDANG  : 73 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
              (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
@@ -2448,8 +2550,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 152 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 44 item, 14 item CLOSED (FIXED/CLOSED 58), 7 item DEFERRED,
-        87 item OPEN.  [44 + 14 + 7 + 87 = 152 = TOTAL]
+STATUS: ✅ FIXED 45 item, 14 item CLOSED (FIXED/CLOSED 59), 7 item DEFERRED,
+        87 item OPEN.  [45 + 14 + 7 + 87 = 153 = TOTAL]
         [44/58/7/87 pada 2026-09-27: TD-030 + TD-031 OPEN → FIXED (+2 FIXED,
         -2 OPEN), TD-158 entry baru Status OPEN (+1 OPEN, +1 TOTAL). FIXED 42 →
         44, OPEN 88 → 87, TOTAL 151 → 152. Parser (152 field `ID :`):
@@ -2479,17 +2581,39 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-27):
-   - Total hutang teridentifikasi      : 152 item (TD-051 di-reserve/skip; 152 item aktif terdaftar).
-   - ✅ FIXED                           : 44 item
+3. RINGKASAN STATUS TERKINI (2026-09-28):
+   - Total hutang teridentifikasi      : 153 item (TD-051 di-reserve/skip; 153 item aktif terdaftar).
+   - ✅ FIXED                           : 45 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 58 item
+   - FIXED/CLOSED                       : 59 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 87 item (bukan hanya TD-058 s/d TD-158 — masih ada
+   - ❌ OPEN                              : 87 item (bukan hanya TD-058 s/d TD-159 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [44 + 14 + 7 + 87 = 152 = TOTAL]
+     [45 + 14 + 7 + 87 = 153 = TOTAL]
+     [Perubahan 2026-09-28 (part 2) — TD-159 entry BARU (TESTING, SEDANG,
+     Status OPEN): integration suite tidak bisa dijalankan lintas paket
+     secara paralel karena semua suite me-reset saldo wallet sistem di
+     setup; DIBUKTIKAN pre-existing lewat git stash pada kode asli, di luar
+     scope TD-158 (R8). FIXED/CLOSED 59 + DEFERRED 7 tetap; OPEN 86 → 87;
+     Total 152 → 153. Bucket Prioritas bergerak karena entry baru: SEDANG
+     72 → 73 (TD-159). Konsisten: 8 + 41 + 73 + 31 = 153 = TOTAL dan
+     45 + 14 + 7 + 87 = 153. Parser atas 153 field `ID :` mengonfirmasi
+     sum Prioritas = sum Status = 153 (V7 sesi ini). Tidak commit (R10).]
+     [Perubahan 2026-09-28 — TD-158 FIXED (migration 018 menambahkan
+     ride_orders.updated_at; SQLSTATE 42703 yang membuat auto-cancel ride
+     gagal 100% + refund escrow ter-rollback sudah hilang): FIXED 44 → 45,
+     FIXED/CLOSED 58 → 59, OPEN 87 → 86, Total tetap 152 (tidak ada entry
+     baru). Bucket Prioritas TIDAK bergerak: KRITIS 8 + TINGGI 41 + SEDANG
+     72 + RENDAH 31 = 152. TINGGI tetap 41 karena bucket itu mengikuti
+     `Prioritas :` dan TD-158 tetap `Prioritas : TINGGI` — hanya Status-nya
+     OPEN → FIXED. Preseden identik: TD-106, TD-030, TD-031, TD-114.
+     Parser atas 152 field `ID :` mengonfirmasi sum Prioritas = 152 dan
+     sum Status = 152 (V7 sesi ini). Tidak commit (R10).
+     [Catatan: angka 152 di entri ini adalah snapshot SEBELUM TD-159
+     ditambahkan pada sesi yang sama; register final = 153. Lihat entri
+     "Perubahan 2026-09-28 (part 2)" di atas.]
      [Perubahan 2026-09-27 — TD-030 + TD-031 FIXED (password admin dihapus dari
      docs, seed env-driven via scripts/seed_admin.sh, migration 017 menghapus
      akun admin default) dan TD-158 entry BARU (Status OPEN, `Prioritas :`
@@ -3596,7 +3720,101 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         `.go` produksi yang diubah; perubahan kode hanya di
         internal/admin/login_test.go (nilai const jadi test-only; hash tetap
         di-generate on-the-fly di mustHash, jadi tidak bergantung env maupun
-        seed migration) dan apps/admin_web/e2e/admin.spec.ts (fallback env).
+         seed migration) dan apps/admin_web/e2e/admin.spec.ts (fallback env).
+
+================================================================================
+        [2026-09-28 — SESI TD-158] Menutup TD-158 (TESTING/DATABASE, TINGGI):
+        `ride_orders.updated_at` tidak ada di skema, tapi
+        internal/worker/repository.go:241-250 (CancelRideOrder) menulis
+        `updated_at = NOW()` → SQLSTATE 42703 di SEMUA environment.
+        ROOT CAUSE (CEK, bukan asumsi):
+        (a) Kode: repository.go:242-248 menjalankan
+            `UPDATE ride_orders SET status='CANCELLED',
+             cancellation_reason='EXPIRED', updated_at = NOW() WHERE ...`.
+        (b) Skema: CREATE TABLE ride_orders di migrations/004_ride_orders
+            .up.sql:66-128 punya created_at/expires_at/assigned_at/pickup_at/
+            completed_at/settled_at (:105-110) dan TIDAK punya updated_at;
+            `\d ride_orders` di g_flow_dev sama — nol kolom updated_at.
+            Migration 009 (guard "kolom updated_at hilang") hanya menyentuh
+            food_orders, send_orders, send_order_stops (009:13-20).
+        (c) Grep repo-wide: `ride_orders` + `updated_at` = SATU-SATUNYA
+            tempat di seluruh repo, yaitu repository.go:246. Dua lainnya
+            (:103 food, :182 send) sudah ter-cover migration 009. Tidak ada
+            query `SELECT updated_at FROM ride_orders` di mana pun.
+        (d) Baseline: replay statement-nya di dev DB →
+            `ERROR: 42703: column "updated_at" of relation "ride_orders" does
+             not exist / LOCATION: transformUpdateTargetList, analyze.c:2515`
+            — 42703 terkonfirmasi, bukan asumsi.
+        (e) Rantai dampak diverifikasi di kode: refundRideEscrow
+            (worker.go:419) dieksekusi DULU, lalu CancelRideOrder
+            (worker.go:425) error, lalu `defer tx.Rollback` (worker.go:398)
+            membuang refund itu juga. Auto-cancel ride gagal 100%; order
+            tetap SEARCHING_DRIVER dan dana customer terkunci di escrow.
+            Bukti fisik di dev DB: 26 ride order SEARCHING_DRIVER basi
+            tertinggal (order yang tidak pernah worker berhasil cancel).
+        FIX: migrations/018_add_ride_orders_updated_at.up.sql —
+        `ALTER TABLE ride_orders ADD COLUMN IF NOT EXISTS updated_at
+        TIMESTAMPTZ DEFAULT NOW();` (idempotent), didaftarkan di
+        scripts/migrate.sh dan scripts/migrate.bat. Query worker TIDAK
+        diubah (fix di skema, bukan menghapus kolom dari query) — sesuai
+        opsi (b) yang flagged di Solusi TD-158.
+        VERIFIKASI: (1) `\d ride_orders` → `updated_at | timestamp with
+        time zone | now()`; (2) replay statement CancelRideOrder post-fix →
+        tidak ada error; (3) re-run 018 → NOTICE "already exists,
+        skipping" (idempoten); (4) test regresi baru
+        internal/worker/ride_autocancel_integration_test.go memanggil
+        worker.CancelRideOrders sungguhan vs DB — saat kolom di-DROP manual
+        test GAGAL dengan SQLSTATE 42703 yang identik dari worker.go, dan
+        PASS setelah 018 di-apply ulang (bukti test benar-benar menangkap
+        bug, bukan sekadar hijau); (5) go build/vet/test semua PASS —
+        61 PASS / 0 FAIL di internal/worker, suite integrasi ride
+        (TC-INT-RD-007 auto-cancel) tetap PASS, `go test ./...` hijau.
+        TEMUAN PENTING (kenapa bug ini bisa lolos semua test yang ada):
+        TestIntegrationRide_AutoCancelExpired di internal/ride/
+        integration_test.go memanggil ride.Service.AutoCancelExpiredOrders,
+        yang memakai ride.Repository.CancelOrder (internal/ride/
+        repository.go:506) — query itu TIDAK menulis updated_at. Hanya
+        worker yang menulis kolom tersebut, jadi hanya jalur worker yang
+        meledak dan test service-layer yang ada SELALU hijau. Test baru
+        menutup celah ini untuk jalur ride (partial coverage TD-156).
+        [OVERRIDE-4 / §11.2] Prompt Reviewer menulis "TINGGI 41→40 (verify
+        via parser)" — SALAH. Bucket Prioritas mengikuti field `Prioritas :`,
+        bukan `Status :` (preseden tertulis di §2: TD-106, TD-030, TD-031,
+        TD-114 semuanya FIXED tapi tetap terdaftar di bucketnya). TD-158
+        hanya berubah Status OPEN → FIXED, `Prioritas :`-nya tetap TINGGI,
+        jadi bucket TINGGI TETAP 41. Parser atas 152 field `ID :`
+        mengonfirmasi: Prioritas KRITIS 8 + TINGGI 41 + SEDANG 72 + RENDAH 31
+        = 152 ✓ dan Status FIXED 45 + CLOSED 14 + DEFERRED 7 + OPEN 86 = 152
+        ✓. Kalau TINGGI 40, sum Prioritas = 151 ≠ 152 (gagal V7). Angka yang
+        benar: FIXED 44→45, FIXED/CLOSED 58→59, OPEN 87→86, Total tetap 152.
+        (Snapshot sebelum TD-159 masuk; register final = 153 — TD-159
+        menambah entry OPEN SEDANG, tidak mengubah bucket TINGGI.)
+        [OVERRIDE-5 / §11.2] Prompt Reviewer menulis "Verifikasi tipe
+        TIMESTAMP, bukan TIMESTAMPTZ — konsisten 004" — SALAH pada dua
+        sisi. (a) 004 TIDAK memakai TIMESTAMP: keenam kolom timestamp di
+        ride_orders (004:105-110) semuanya TIMESTAMPTZ, dan keputusan #6b
+        di header 004 (:34-36) eksplisit menolak TIMESTAMP dengan alasan
+        "TIMESTAMPTZ lebih aman untuk operasi timezone-aware (auto-cancel
+        worker)". (b) Kolom updated_at yang di-add migration 009 di
+        food_orders/send_orders/send_order_stops juga TIMESTAMPTZ (dicek
+        langsung di information_schema). Jadi TIMESTAMPTZ satu-satunya tipe
+        yang konsisten dengan TABEL, dengan MIGRATION SEBELUMNYA, dan dengan
+        alasan yang dicatat di 004. Menggunakan TIMESTAMP akan membuat
+        updated_at (naive) dibandingkan dengan expires_at (TIMESTAMPTZ) —
+        justru memutus auto-cancel yang jadi tujuan fix-nya. Slice kode
+        produksi TIDAK diubah sama sekali.
+        TEMUAN DI LUAR SCOPE (dicatat, tidak diperbaiki — R8): integration
+        test suite TIDAK bisa dijalankan lintas paket secara paralel
+        (`go test -tags integration ./...`). Semua suite memanggil
+        `UPDATE wallets SET balance = 0 WHERE user_id IS NULL` di setup,
+        jadi auth/food/ride/send saling menimpa saldo wallet sistem dan
+        gagal acak. DIBUKTIKAN pre-existing: hasil identik muncul pada
+        kode tanpa perubahan TD-158 (git stash → baseline sama gagal).
+        Tidak diubah di sesi ini karena di luar scope. Test worker yang
+        ditambahkan sengaja hanya meng-assert state milik order-nya sendiri
+        (wallet customer + ledger reference_id), bukan saldo absolut
+        SYSTEM_ESCROW, supaya tidak ikut flak. Sudah didaftarkan sebagai
+        TD-159 (TESTING, SEDANG, Status OPEN).
 
 ============================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
