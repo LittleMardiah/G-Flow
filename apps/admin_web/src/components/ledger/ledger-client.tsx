@@ -95,23 +95,34 @@ export function LedgerClient() {
               value={filters.wallet_type}
               onChange={(e) => update({ wallet_type: e.target.value })}
             >
+              {/* Values MUST match wallet_type_enum in the DB, otherwise the
+                  backend filter matches zero rows (TD-047):
+                  - 001_initial_schema.up.sql:48-49 → CUSTOMER, DRIVER, MERCHANT,
+                    SYSTEM_ESCROW, SYSTEM_PLATFORM, SYSTEM_BANK_GATEWAY
+                  - 010_admin_lockouts.up.sql:50    → SYSTEM_RECEIVABLE_OVERDRAFT
+                  - 019_add_platform_subsidy_wallet.up.sql:68 → SYSTEM_PLATFORM_SUBSIDY */}
               <option value="ALL">All Wallet Types</option>
-              <option value="CUSTOMER_ESCROW">CUSTOMER_ESCROW</option>
-              <option value="RECIPIENT_PAYOUT">RECIPIENT_PAYOUT</option>
-              <option value="MERCHANT_PAYOUT">MERCHANT_PAYOUT</option>
-              <option value="DRIVER_EARNING">DRIVER_EARNING</option>
-              <option value="PLATFORM_SHARE">PLATFORM_SHARE</option>
+              <option value="CUSTOMER">Customer</option>
+              <option value="DRIVER">Driver</option>
+              <option value="MERCHANT">Merchant</option>
+              <option value="SYSTEM_ESCROW">System Escrow</option>
+              <option value="SYSTEM_PLATFORM">System Platform</option>
+              <option value="SYSTEM_BANK_GATEWAY">System Bank Gateway</option>
+              <option value="SYSTEM_PLATFORM_SUBSIDY">System Platform Subsidy</option>
+              <option value="SYSTEM_RECEIVABLE_OVERDRAFT">
+                System Receivable Overdraft
+              </option>
             </Select>
             <Select
               value={filters.entry_type}
               onChange={(e) => update({ entry_type: e.target.value })}
             >
+              {/* Values MUST match entry_type_enum in the DB, otherwise the
+                  backend filter matches zero rows (TD-048).
+                  Source: 001_initial_schema.up.sql:51 → DEBIT, CREDIT */}
               <option value="ALL">All Entry Types</option>
-              <option value="DEBIT">DEBIT</option>
-              <option value="CREDIT">CREDIT</option>
-              <option value="HOLD">HOLD</option>
-              <option value="RELEASE">RELEASE</option>
-              <option value="REVERSAL">REVERSAL</option>
+              <option value="DEBIT">Debit</option>
+              <option value="CREDIT">Credit</option>
             </Select>
             <div className="flex gap-2">
               <Input

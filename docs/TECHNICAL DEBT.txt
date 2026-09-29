@@ -472,7 +472,27 @@ Judul      : Wallet-type filter mismatch: UI kirim CUSTOMER_ESCROW/
              value UI.
 Solusi     : mapping layer atau update enum + taxonomy.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-29, commit TD-047)
+Catatan    : FIXED via Opsi A — dropdown UI di-align ke DB enum (source of
+             truth = PostgreSQL enum, BUKAN taksonomi UI). File sebenarnya
+             `apps/admin_web/src/components/ledger/ledger-client.tsx`
+             (bukan `src/components/ledger-client.tsx` — itu direktori).
+             Nilai lama CUSTOMER_ESCROW/RECIPIENT_PAYOUT/MERCHANT_PAYOUT/
+             DRIVER_EARNING/PLATFORM_SHARE tidak pernah ada di
+             wallet_type_enum, jadi `WHERE wallet_type = $n` mengembalikan 0
+             baris. Diganti 8 nilai yang memang ada di DB:
+             CUSTOMER, DRIVER, MERCHANT, SYSTEM_ESCROW, SYSTEM_PLATFORM,
+             SYSTEM_BANK_GATEWAY, SYSTEM_PLATFORM_SUBSIDY,
+             SYSTEM_RECEIVABLE_OVERDRAFT. Sumber enum terverifikasi:
+             migrations/001_initial_schema.up.sql:48-49 (6 nilai pertama),
+             migrations/010_admin_lockouts.up.sql:50
+             (SYSTEM_RECEIVABLE_OVERDRAFT),
+             migrations/019_add_platform_subsidy_wallet.up.sql:68
+             (SYSTEM_PLATFORM_SUBSIDY). Sentinel `ALL` tetap dipakai —
+             backend sudah menormalisasinya jadi "" di
+             internal/admin/handler.go:333-335, jadi tidak perlu mapping
+             layer frontend (Opsi B ditolak, tidak dipilih). Verifikasi:
+             `npm run build` PASS, V2 grep = 0 hasil. Tidak commit (R10).
 
 ID         : TD-048
 Kategori   : KODE
@@ -481,7 +501,22 @@ Judul      : entry_type filter mismatch: UI kirim HOLD/RELEASE/REVERSAL,
              return kosong.
 Solusi     : mapping layer atau ubah UI value.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-29, commit TD-048)
+Catatan    : FIXED via Opsi A — sama seperti TD-047, di file
+             `apps/admin_web/src/components/ledger/ledger-client.tsx`.
+             Nilai lama HOLD/RELEASE/REVERSAL dihapus; entry_type_enum hanya
+             punya DEBIT/CREDIT (migrations/001_initial_schema.up.sql:51,
+             tidak pernah diubah oleh migration mana pun — diverifikasi lewat
+             grep `ALTER TYPE entry_type_enum` = 0 hasil). Jadi dropdown
+             sekarang 3 opsi: ALL / DEBIT / CREDIT. Nilai HOLD/RELEASE/
+             REVERSAL itu kelihatan "makes sense" secara domain (reverse
+             transaction memang ada di UI — lihat
+             `src/app/transactions/[id]/reverse/page.tsx`) TETAPI tidak pernah
+             menjadi nilai kolom entry_type, sehingga hanya jadi dead option
+             yang selalu mengembalikan 0 baris. Tidak perlu mapping layer:
+             backend teruskan `entry_type` apa adanya
+             (internal/admin/handler.go:338-342, tanpa validasi). Verifikasi:
+             `npm run build` PASS, V2 grep = 0 hasil. Tidak commit (R10).
 
 ID         : TD-049
 Kategori   : ARSITEKTUR
@@ -2632,12 +2667,111 @@ Referensi  : TD-132 (temuan OpenCode, wallet subsidi baru lahir di
              migration 019), TD-069 (shortfall delta fare), TD-058
              (settlement ride)
 
+ID         : TD-163
+Kategori   : DOKUMENTASI
+Judul      : docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih tulis
+             wallet_type_enum hanya 5 label ('CUSTOMER', 'DRIVER', 'MERCHANT',
+             'SYSTEM_ESCROW', 'SYSTEM_PLATFORM') — DB aktual 8 label.
+Bukti      : (a) docs/schema_clean.sql:13 —
+             `CREATE TYPE wallet_type_enum AS ENUM ('CUSTOMER', 'DRIVER',
+             'MERCHANT', 'SYSTEM_ESCROW', 'SYSTEM_PLATFORM');` dan
+             docs/DATABASE SCHEMA.txt:33 — baris yang sama persis. Keduanya
+             menulis 5 label; tidak ada label ke-6 di salah satunya.
+             (b) DB aktual punya 8 label, dapat direkonstruksi dari
+             migration: 6 label dari
+             migrations/001_initial_schema.up.sql:48-49 ('CUSTOMER',
+             'DRIVER', 'MERCHANT', 'SYSTEM_ESCROW', 'SYSTEM_PLATFORM',
+             'SYSTEM_BANK_GATEWAY'), + 1 dari
+             migrations/010_admin_lockouts.up.sql:50 —
+             `ALTER TYPE wallet_type_enum ADD VALUE IF NOT EXISTS
+             'SYSTEM_RECEIVABLE_OVERDRAFT';`, + 1 dari
+             migrations/019_add_platform_subsidy_wallet.up.sql:68 —
+             `ALTER TYPE wallet_type_enum ADD VALUE IF NOT EXISTS
+             'SYSTEM_PLATFORM_SUBSIDY';` = 8. Tidak ada migration lain
+             yang menambah label: grep `wallet_type_enum ADD VALUE` di
+             migrations/*.sql = 2 hit, hanya 010 dan 019. Angka 8 ini
+             sudah diverifikasi lewat query `SELECT enumlabel FROM pg_enum
+             WHERE typname='wallet_type_enum'` pada sesi TD-048 (lihat
+             changelog sesi tersebut, "Total enum wallet_type di DB = 8
+             label (verified)"). CATATAN KOREKSI FAKTA: sesi ini tidak
+             bisa melakukan query ulang ke dev DB — psql ke
+             localhost:15432 gagal dengan "FATAL: password authentication
+             failed for user postgres" — jadi angka 8 di entri ini
+             bersumber dari bukti sekunder TD-048, bukan query ulang
+             di sesi ini.
+             (c) Ketiga label yang hilang: SYSTEM_BANK_GATEWAY (sudah ada
+             sejak 001:49, dan komentar 001:44-47 eksplisit mengakui
+             "DATABASE_SCHEMA v10.4 tidak mencantumkannya secara eksplisit
+             di enum" — artinya drift ini sudah ada sejak migration 001,
+             bukan baru muncul di 010/019),
+             SYSTEM_RECEIVABLE_OVERDRAFT (010:50), dan
+             SYSTEM_PLATFORM_SUBSIDY (019:68). Yang terakhir inilah yang
+             menambah selisih menjadi 3, sementara
+             docs/DATABASE SCHEMA.txt masih bertuliskan "Version:
+             10.4-FINAL / Last Updated: 2026-08-14" (line 3-4) dan
+             "Status: ✅ 100% PRODUCTION-READY — LOCKED AFTER TESTING"
+             (line 8) — klaim yang sudah tidak benar setelah enum melebar
+             dan wallet subsidi lahir di 019.
+             (d) KOREKSI FAKTA: prompt Reviewer menulis "5 wallet_type_enum
+             label (CUSTOMER/DRIVER/MERCHANT/SYSTEM_ESCROW/SYSTEM_PLATFORM/
+             SYSTEM_BANK_GATEWAY)" — itu 6 label di dalam kurung, bukan 5,
+             dan SYSTEM_BANK_GATEWAY TIDAK ada di kedua file docs (hanya 5
+             label sungguhan, sudah diverifikasi baris per baris di atas).
+             Yang benar: docs 5 label, DB 8 label, selisih 3 label
+             (SYSTEM_BANK_GATEWAY, SYSTEM_RECEIVABLE_OVERDRAFT,
+             SYSTEM_PLATFORM_SUBSIDY). Angka "5" dari prompt dipakai apa
+             adanya karena cocok dengan isi file; daftar label di dalam
+             kurung tidak dipakai karena bertentangan dengan file.
+Dampak     : Dua file ini adalah rujukan schema yang dibaca developer baru
+             dan dipakai saat debugging. Kalau wallet
+             SYSTEM_RECEIVABLE_OVERDRAFT atau SYSTEM_PLATFORM_SUBSIDY
+             dibuat dengan meniru baris CREATE TYPE di docs, PostgreSQL
+             menolak nilainya, dan pesan errornya (invalid input value for
+             enum) tidak mengarah ke sumber masalahnya — karena dokumen
+             yang dibaca justru yang salah. Risiko yang lebih halus:
+             DATABASE SCHEMA.txt ditulis "LOCKED AFTER TESTING" padahal
+             masih tertinggal 3 enum label dan wallet subsidi yang lahir
+             di migration 019, sehingga dipakai sebagai baseline review
+             bisa membuat menyimpulkan fitur subsidi belum ada sama
+             sekali. Ini murni drift dokumentasi, bukan bug runtime: tidak
+             ada kode produksi yang salah dan tidak ada user yang melihat
+             wallet sistem salah tipe karena dokumen ini. Dampaknya ke
+             keputusan teknis dan review di masa depan lebih besar
+             daripada dampak langsung ke user hari ini — itu sebabnya
+             Prioritas RENDAH, bukan karena dokumen ini tidak dipakai.
+Solusi     : Sync kedua file dengan state migration aktual: di
+             docs/schema_clean.sql:13 dan docs/DATABASE SCHEMA.txt:33,
+             tambahkan 3 label yang hilang ('SYSTEM_BANK_GATEWAY',
+             'SYSTEM_RECEIVABLE_OVERDRAFT', 'SYSTEM_PLATFORM_SUBSIDY')
+             setelah 'SYSTEM_PLATFORM', dengan urutan yang sama seperti
+             enum di DB (urutan label pada enum PostgreSQL semantik dan
+             tidak boleh diacak). Sekalian turunkan klaim "100%
+             PRODUCTION-READY — LOCKED AFTER TESTING" di
+             DATABASE SCHEMA.txt:8 atau tambahkan penanda bahwa enum
+             wallet_type sudah melebar sampai migration 019, supaya
+             dokumen tidak menyesatkan. Kalau dokumen ini sengaja
+             diperlakukan sebagai snapshot ter-freeze (v10.4-FINAL),
+             tambahkan blok "CHANGES SINCE v10.4" alih-alih mengubah isi
+             — pilih satu pendekatan dan konsisten. Opsi tambahan yang
+             murah: check di CI yang membandingkan daftar label enum di
+             docs dengan `SELECT enumlabel FROM pg_enum WHERE
+             typname='wallet_type_enum'`, supaya drift berikutnya
+             tertangkap otomatis tanpa harus ketahuan saat menulis
+             dokumen berikutnya.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-047/048 (temuan OpenCode — sesi tempat jumlah label enum
+             diverifikasi 8 dan kedua file docs dicatat stale di "CATATAN
+             DI LUAR SCOPE" tanpa diperbaiki), TD-161 (drift dev DB
+             enum/wallet sistem), TD-162 (wallet SYSTEM_PLATFORM_SUBSIDY
+             dari 019 — salah satu dari 3 label yang hilang di docs ini)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 156 item (TD-051 di-reserve/skip)
-                                       (46 FIXED + 14 CLOSED + 7 DEFERRED + 89 OPEN = 156)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 157 item (TD-051 di-reserve/skip)
+                                       (48 FIXED + 14 CLOSED + 7 DEFERRED + 88 OPEN = 157)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 41 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -2672,7 +2806,22 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 156 item (TD-051 di-reserve/skip)
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
 - SEDANG  : 76 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162)
-             [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
+              [76 TETAP pada 2026-09-29 (sesi TD-047 + TD-048 FIXED): kedua TD
+              hanya berubah Status (OPEN → FIXED) dan `Prioritas :`-nya tetap
+              SEDANG, jadi bucket SEDANG TIDAK bergerak — preseden langsung
+              TD-113, TD-126, TD-127, TD-144, TD-147 (lihat catatan 2026-09-26
+              di atas), dan juga TD-030, TD-031, TD-158 di bucket TINGGI.
+              Prompt Reviewer menulis "SEDANG 76 → 74 (-2, karena TD-047/048
+              Prioritas SEDANG close)" — SALAH, dan cek konsistensi langsung
+              membongkar: kalau bucket ikut Status, maka TIDAK ADA satu pun
+              entry FIXED lain di daftar ini yang boleh hilang dari bucketnya,
+              padahal tidak satu pun hilang. Angka benar: SEDANG 76 → 76.
+              Yang bergerak hanya bucket Status: FIXED 46 → 48,
+              FIXED/CLOSED 60 → 62, OPEN 89 → 87, TOTAL tetap 156. Parser atas
+              156 field `ID :`: Prioritas 8 + 41 + 76 + 31 = 156 ✓ = Status
+              48 + 14 + 7 + 87 = 156 ✓. Lihat [OVERRIDE-5].]
+              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
+
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
              (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
              TD-147 juga TETAP di SEDANG karena Prioritas-nya tidak berubah —
@@ -2768,15 +2917,54 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 156 item (TD-051 di-reserve/skip)
               mengonfirmasi sum Prioritas = sum Status = 156 (V3 sesi ini).
               Tidak ada kode yang diubah — register dokumentasi saja. Tidak
               commit (R10).]
-- RENDAH  : 31 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157)
+- RENDAH  : 32 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157, TD-163)
+              [32 pada 2026-09-29 (sesi TD-163): TD-163 (DOKUMENTASI —
+             docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih
+             tulis wallet_type_enum hanya 5 label, DB aktual 8) adalah entry
+             BARU dengan `Prioritas : RENDAH` dan Status OPEN dari awal,
+             jadi bucket RENDAH 31 → 32 (+1) dan bucket Status OPEN
+             87 → 88 (+1). FIXED 48, CLOSED 14, DEFERRED 7 tetap. Total
+             156 → 157. Konsisten: 8 + 41 + 76 + 32 = 157 = TOTAL dan
+             48 + 14 + 7 + 88 = 157 = TOTAL. Range SECTION F: TD-058 s/d
+             TD-162 → TD-058 s/d TD-163. Parser atas 157 field `ID :`
+             mengonfirmasi sum Prioritas = sum Status = 157 (V3 sesi ini).
+             Tidak ada kode yang diubah — register dokumentasi saja. Tidak
+             commit (R10). Lihat [OVERRIDE-1].]
               [31 pada 2026-09-27: TD-157 (KODE — `defer tx.Rollback(ctx)`
              dijalankan setelah Commit sukses di worker.go:175/288/398) adalah
              entry BARU dengan `Prioritas : RENDAH`, jadi bucket RENDAH
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 46 item, 14 item CLOSED (FIXED/CLOSED 60), 7 item DEFERRED,
-        89 item OPEN.  [46 + 14 + 7 + 89 = 156 = TOTAL]
+STATUS: ✅ FIXED 48 item, 14 item CLOSED (FIXED/CLOSED 62), 7 item DEFERRED,
+        88 item OPEN.  [48 + 14 + 7 + 88 = 157 = TOTAL]
+        [48/62/7/88 pada 2026-09-29 (sesi TD-163): TD-163 (DOKUMENTASI —
+        docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih tulis
+        wallet_type_enum hanya 5 label, DB aktual 8 — drift enum label di
+        dua dokumen rujukan schema) adalah entry BARU dengan
+        `Prioritas : RENDAH` dan Status OPEN dari awal, jadi bucket Status
+        OPEN 87 → 88 (+1); FIXED 48, CLOSED 14, DEFERRED 7,
+        FIXED/CLOSED 62 tidak bergerak. Bucket Prioritas ikut bergerak
+        karena entry baru: RENDAH 31 → 32 (+1); KRITIS 8, TINGGI 41,
+        SEDANG 76 tetap. Total 156 → 157. Konsisten: 8 + 41 + 76 + 32 =
+        157 = TOTAL dan 48 + 14 + 7 + 88 = 157 = TOTAL. Range SECTION F:
+        TD-058 s/d TD-162 → TD-058 s/d TD-163. Parser atas 157 field `ID :`
+        mengonfirmasi sum Prioritas = sum Status = 157 (V3 sesi ini).
+        Koreksi: baris TOTAL di §2 sebelumnya menulis "46 FIXED + 14
+        CLOSED + 7 DEFERRED + 89 OPEN = 156" — itu snapshot sesi
+        TD-160/161/162 yang tertinggal setelah TD-047 + TD-048 berubah
+        FIXED (lihat entri di bawah); angka 48/14/7/88 yang dipakai adalah
+        hasil parser sesi ini. Tidak ada kode yang diubah — register
+        dokumentasi saja. Tidak commit (R10). Lihat [OVERRIDE-1].]
+        [48/62/7/87 pada 2026-09-29 (sesi TD-047 + TD-048): TD-047 dan TD-048
+        keduanya Status OPEN → FIXED (+2 FIXED, -2 OPEN), tidak ada entry baru
+        sehingga TOTAL tetap 156. FIXED 46 → 48, FIXED/CLOSED 60 → 62, OPEN 89
+        → 87. CLOSED 14 dan DEFERRED 7 tidak bergerak. Bucket Prioritas
+        TIDAK bergerak: KRITIS 8 + TINGGI 41 + SEDANG 76 + RENDAH 31 = 156
+        (SEDANG TETAP 76 — prompt Reviewer menulis "SEDANG 76→74", SALAH: lihat
+        [OVERRIDE-5]. Parser atas 156 field `ID :` mengonfirmasi sum Prioritas =
+        sum Status = 156; cross-check kedua: list ID di baris bucket SEDANG
+        diekspansi (range `s/d`) = 76 unique. Tidak commit (R10).]
         [46/60/7/89 pada 2026-09-29 (part 2): TD-160 + TD-161 + TD-162 tiga
         entry BARU (semua `Prioritas : SEDANG`, Status OPEN, hasil TEMUAN DI
         LUAR SCOPE sesi TD-132 — R8): OPEN 86 → 89 (+3); FIXED 46, CLOSED 14,
@@ -2822,16 +3010,45 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-29):
-   - Total hutang teridentifikasi      : 156 item (TD-051 di-reserve/skip; 156 item aktif terdaftar).
-   - ✅ FIXED                           : 46 item
+   - Total hutang teridentifikasi      : 157 item (TD-051 di-reserve/skip; 157 item aktif terdaftar).
+   - ✅ FIXED                           : 48 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 60 item
+   - FIXED/CLOSED                       : 62 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 89 item (bukan hanya TD-058 s/d TD-162 — masih ada
+   - ❌ OPEN                              : 88 item (bukan hanya TD-058 s/d TD-163 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [46 + 14 + 7 + 89 = 156 = TOTAL]
+     [48 + 14 + 7 + 88 = 157 = TOTAL]
+     [Perubahan 2026-09-29 (sesi TD-163) — TD-163 (DOKUMENTASI —
+     docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih tulis
+     wallet_type_enum hanya 5 label: 'CUSTOMER', 'DRIVER', 'MERCHANT',
+     'SYSTEM_ESCROW', 'SYSTEM_PLATFORM', sedangkan DB aktual 8 label —
+     6 dari 001:48-49 termasuk SYSTEM_BANK_GATEWAY, + SYSTEM_RECEIVABLE_
+     OVERDRAFT dari 010:50, + SYSTEM_PLATFORM_SUBSIDY dari 019:68) adalah
+     entry BARU hasil TEMUAN DI LUAR SCOPE sesi TD-048 (R8 — dicatat,
+     tidak diperbaiki). `Prioritas : RENDAH` dan Status OPEN dari awal,
+     jadi bucket Prioritas RENDAH 31 → 32 (+1) dan bucket Status OPEN
+     87 → 88 (+1); FIXED 48, CLOSED 14, DEFERRED 7, FIXED/CLOSED 62 tetap.
+     KRITIS 8, TINGGI 41, SEDANG 76 tetap. Total 156 → 157. Konsisten:
+     8 + 41 + 76 + 32 = 157 = TOTAL dan 48 + 14 + 7 + 88 = 157 = TOTAL.
+     Range SECTION F: TD-058 s/d TD-162 → TD-058 s/d TD-163. Parser atas
+     157 field `ID :` mengonfirmasi sum Prioritas = sum Status = 157
+     (V3 sesi ini). Koreksi: baris TOTAL di §2 sebelumnya menulis
+     "46 FIXED + ... + 89 OPEN = 156" — snapshot itu tertinggal setelah
+     TD-047 + TD-048 berubah FIXED; angka 48/14/7/88 yang dipakai adalah
+     hasil parser. Tidak ada kode yang diubah — register dokumentasi saja.
+     Tidak commit (R10). Lihat [OVERRIDE-1].]
+     [Perubahan 2026-09-29 (sesi TD-047 + TD-048) — keduanya FIXED, Prioritas
+     SEDANG tidak berubah, jadi bucket Prioritas TIDAK bergerak: SEDANG tetap
+     76, TINGGI 41, KRITIS 8, RENDAH 31 (8 + 41 + 76 + 31 = 156 = TOTAL).
+     Yang bergerak hanya bucket Status: FIXED 46 → 48, FIXED/CLOSED 60 → 62,
+     OPEN 89 → 87; CLOSED 14 dan DEFERRED 7 tetap. Verifikasi: `npm run
+     build` di apps/admin_web PASS (termasuk type-check), dan grep
+     `CUSTOMER_ESCROW|RECIPIENT_PAYOUT|MERCHANT_PAYOUT|DRIVER_EARNING|
+     PLATFORM_SHARE|HOLD|RELEASE|REVERSAL` di apps/admin_web/src/ = 0 hasil.
+     Prompt Reviewer menulis "SEDANG 76→74" — dikoreksi ke 76 (lihat
+     [OVERRIDE-5]). Parser dijalankan SEBELUM menulis angka (R1/R2).]
      [Perubahan 2026-09-29 (part 2) — TD-160 + TD-161 + TD-162 entry BARU
      (hasil TEMUAN DI LUAR SCOPE sesi TD-132, dicatat sesuai R8 — tidak
      diperbaiki di sesi mana pun): TD-160 (SECURITY — scripts/migrate.sh
@@ -4298,6 +4515,213 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
    saja; tidak ada perubahan struktur dokumen, tidak ada kode diubah, dan
    tidak ada commit (R10 — Developer commit via PowerShell).
 
+
+===========================================================================
+CHANGELOG — 2026-09-29 (sesi TD-047 + TD-048, admin_web ledger filter)
+===========================================================================
+
+ROOT CAUSE:
+- TD-047: dropdown filter wallet_type di admin_web mengirim nilai dari
+  taksonomi UI (CUSTOMER_ESCROW/RECIPIENT_PAYOUT/MERCHANT_PAYOUT/
+  DRIVER_EARNING/PLATFORM_SHARE) yang TIDAK PERNAH ada di PostgreSQL enum
+  `wallet_type_enum`. Backend meneruskan nilai itu apa adanya ke query
+  (internal/admin/handler.go:332-336, tanpa validasi), jadi
+  `WHERE wallet_type = 'CUSTOMER_ESCROW'` mengembalikan 0 baris. UI
+  menampilkan "filter return kosong" tanpa error — tidak ada exception,
+  tidak ada warning.
+- TD-048: pola identik untuk entry_type. UI mengirim HOLD/RELEASE/REVERSAL,
+  sedangkan `entry_type_enum` hanya DEBIT/CREDIT.
+
+CEK (file:line):
+- Prompt menyebut `apps/admin_web/src/components/ledger-client.tsx` —
+  itu sebenarnya DIRECTORY, bukan file. File yang benar
+  `apps/admin_web/src/components/ledger/ledger-client.tsx` (308 baris).
+- apps/admin_web/src/components/ledger/ledger-client.tsx:99-103 — 5 option
+  wallet_type yang tidak valid.
+- apps/admin_web/src/components/ledger/ledger-client.tsx:112-114 — 3 option
+  entry_type yang tidak valid.
+- migrations/001_initial_schema.up.sql:48-49 — 6 nilai wallet_type_enum.
+- migrations/001_initial_schema.up.sql:51 — entry_type_enum DEBIT/CREDIT.
+- migrations/010_admin_lockouts.up.sql:50 — + SYSTEM_RECEIVABLE_OVERDRAFT.
+- migrations/019_add_platform_subsidy_wallet.up.sql:68 — +
+  SYSTEM_PLATFORM_SUBSIDY.
+- Total enum wallet_type di DB = 8 label (verified). Catatan: dua dokumen
+  masih menulis hanya 5 label (docs/schema_clean.sql:13 dan
+  docs/DATABASE SCHEMA.txt:33) — keduanya sudah stale, lihat CATATAN DI
+  LUAR SCOPE di bawah. R2: kode = source of truth.
+- internal/admin/handler.go:333-335 dan 339-341 — sentinel "ALL"
+  dinormalisasi backend jadi "", jadi Opsi B (mapping layer frontend)
+  memang tidak diperlukan.
+
+FIX (Opsi A — dropdown diselaraskan ke DB enum, source of truth = enum):
+- STEP A: 5 option wallet_type yang tidak valid diganti 8 nilai enum asli
+  + label manusia ("Customer", "Driver", "Merchant", "System Escrow",
+  "System Platform", "System Bank Gateway", "System Platform Subsidy",
+  "System Receivable Overdraft"). Untuk entry_type: HOLD/RELEASE/REVERSAL
+  dihapus, tersisa ALL/DEBIT/CREDIT.
+- STEP B: TIDAK PERLU. `LedgerFilters` di apps/admin_web/src/lib/types.ts:39-40
+  bertipe `wallet_type?: string` / `entry_type?: string` (bukan union enum),
+  jadi tidak ada type yang perlu di-sync. lib/ledger.ts hanya meneruskan
+  `filters` apa adanya ke axios params (lib/ledger.ts:14) — sudah benar.
+- STEP C: komentar ditambahkan di kedua blok option, menyebut file:line
+  sumber enum. Catatan: prompt meminta komentar "values match
+  wallet_type_enum/entry_type_enum di migrations/001" — itu TIDAK AKURAT,
+  karena hanya 6 dari 8 nilai ada di 001; SYSTEM_RECEIVABLE_OVERDRAFT ada
+  di 010 dan SYSTEM_PLATFORM_SUBSIDY di 019. Komentar ditulis akurat dengan
+  ketiga rujukan file:line.
+- STEP D: `npm run build` di apps/admin_web → PASS ("Compiled successfully"
+  + "Linting and checking validity of types", 7/7 static pages).
+
+VERIFIKASI:
+- V1 `cd apps/admin_web && npm run build` → PASS.
+- V2 grep `CUSTOMER_ESCROW|RECIPIENT_PAYOUT|MERCHANT_PAYOUT|
+  DRIVER_EARNING|PLATFORM_SHARE|HOLD|RELEASE|REVERSAL` di
+  apps/admin_web/src/ → 0 hasil (exit 1).Sebelum fix: 8 hasil, semuanya di
+  satu file.
+- V3 grep `SYSTEM_PLATFORM_SUBSIDY|SYSTEM_RECEIVABLE_OVERDRAFT` di
+  ledger-client.tsx → ada (4 hit: 2 di komentar, 2 di `<option>`).
+- V4 `git status --short` → hanya 2 file termodifikasi: ledger-client.tsx
+  dan docs/TECHNICAL DEBT.txt. Tidak ada file baru, tidak ada untracked.
+
+PERUBAHAN ANGKA (parser dijalankan SEBELUM menulis angka — R1/R2):
+- Parser atas 156 field `^ID\s+:\s*TD-\d+` (split per entry, lalu `Status :`
+  dan `Prioritas :` dibaca; emoji ✅/🔵 dinormalisasi):
+  SEBELUM → FIXED 46, CLOSED 14, DEFERRED 7, OPEN 89 (sum 156 ✓);
+  Prioritas KRITIS 8, TINGGI 41, SEDANG 76, RENDAH 31 (sum 156 ✓).
+- Status SESUDAH: FIXED 46 → 48 (+2), FIXED/CLOSED 60 → 62, OPEN 89 → 87;
+  CLOSED 14 dan DEFERRED 7 tetap. 48 + 14 + 7 + 87 = 156 = TOTAL ✓
+- Prioritas: TIDAK BERGERAK. KRITIS 8, TINGGI 41, SEDANG 76, RENDAH 31.
+  8 + 41 + 76 + 31 = 156 = TOTAL ✓
+- Cross-check independen bucket SEDANG: list ID di baris bucket diekspansi
+  penuh (range `s/d` dihitung) = 76 unique ✓ cocok dengan hitungan parser.
+- Prompt Reviewer sudah benar soal FIXED 46→48, FIXED/CLOSED 60→62,
+  OPEN 89→87, dan Total tetap 156. Koreksi hanya ada di SEDANG.
+
+   [OVERRIDE-5 / §11.2] Prompt Reviewer: "SEDANG 76→74 (-2, karena TD-047/048
+   Prioritas SEDANG close)" dan "Bucket SEDANG = Prioritas, close SEDANG →
+   bucket SEDANG turun 2" — kedua kalimat itu SALAH dan saling bertentangan
+   dengan sendirinya: kalau bucket = Prioritas, maka Status TIDAK boleh
+   menggeser bucket. Bukti (preseden yang sudah tertulis di dokumen ini,
+   bukan asumsi):
+   - Baris bucket SEDANG memuat TD-113, TD-127, TD-144, TD-147, TD-126 yang
+     semuanya SUDAH Status FIXED dan NAMUN tetap terdaftar di SEDANG. Catatan
+     eksplisit di SECTION F: "bucket ini berdasarkan Prioritas, bukan
+     Status ... TD-147 TETAP di SEDANG karena Prioritas-nya tidak berubah".
+   - Sama untuk bucket TINGGI: TD-030, TD-031, TD-106, TD-114, TD-158 FIXED
+     tapi tetap di TINGGI (lihat [OVERRIDE-4] di SECTION A).
+   - Parse aktual file SEBELUM edit: Prioritas 8 + 41 + 76 + 31 = 156, dengan
+     TD-047/TD-048 tercatat `Prioritas : SEDANG` dan Status OPEN. Kalau
+     bucket turun 2 saat Status FIXED, maka untuk konsisten TIDAK ADA satu
+     pun entry FIXED lain boleh hilang dari bucketnya — dan faktanya tidak
+     ada yang hilang di histori dokumen ini.
+   - Teorema konsistensi: dengan SEDANG = 74, sum Prioritas = 8+41+74+31 =
+     154 ≠ 156 (Status). Dengan SEDANG = 76, kedua sum sama-sama 156 ✓.
+   Fix: bucket SEDANG TETAP 76; catatan penjelasan ditulis di SECTION F dan
+   di §2 STATUS. Angka Status (46→48, 60→62, 89→87) dari prompt dipakai apa
+   adanya karena cocok dengan parser.
+   Alignment: R1, R2, R6, R8, §11.2. Bukan kategori MUST-STOP §11.4 (bukan
+   arsitektur/schema/enum rename, tidak menyentuh backend).
+
+CATATAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki di sesi ini):
+- docs/schema_clean.sql:13 dan docs/DATABASE SCHEMA.txt:33 masih menulis
+  wallet_type_enum hanya 5 label ('CUSTOMER', 'DRIVER', 'MERCHANT',
+  'SYSTEM_ESCROW', 'SYSTEM_PLATFORM') — tertinggal 3 label
+  (SYSTEM_BANK_GATEWAY, SYSTEM_RECEIVABLE_OVERDRAFT, SYSTEM_PLATFORM_SUBSIDY)
+  yang sudah ada di DB sejak 001:49 / 010:50 / 019:68. R2 mensyaratkan
+  dokumen sinkron dengan kode; kedua file ini belum dan TIDAK disentuh
+  karena di luar SCOPE sesi ini.
+- `src/app/transactions/[id]/reverse/page.tsx` hanya MENAMPILKAN
+  `e.entry_type` dan `e.wallet_type` apa adanya dari API (bukan filter),
+  jadi TIDAK terkena TD-048 dan tidak perlu diubah.
+- Kemungkinan pola serupa ada di halaman lain (transactions list, users) —
+  tidak diperiksa di sesi ini karena di luar scope.
+
+SCOPE & RULES:
+- File diubah: `apps/admin_web/src/components/ledger/ledger-client.tsx` dan
+  `docs/TECHNICAL DEBT.txt` (log). Backend Go, mobile, dan file lain TIDAK
+  disentuh. `lib/ledger.ts` dibaca tapi tidak perlu diubah (STEP B).
+- Tidak ada commit / push (R10). Tidak ada `--no-verify`, tidak ada
+  `git reset --hard`, tidak ada `rm -rf` (R4).
+
+2026-09-29 — SESI TD-163: Registrasi docs drift enum wallet_type
+==========================================================================
+   SCOPE: docs/TECHNICAL DEBT.txt saja (register dokumentasi). Tidak ada
+   kode yang disentuh: docs/schema_clean.sql, docs/DATABASE SCHEMA.txt,
+   migrations/, dan dev DB tidak diubah oleh sesi ini.
+
+   ALASAN: temuan "CATATAN DI LUAR SCOPE" pada sesi TD-047/TD-048 — dua
+   dokumen rujukan schema masih menulis wallet_type_enum hanya 5 label
+   padahal DB sudah 8 — dicatat sebagai TD-163 (R8: dicatat, tidak
+   diperbaiki di luar scope sesi itu). Sekarang diregistrasi.
+
+   ISI 1 ENTRY BARU (`Prioritas : RENDAH`, Status OPEN, Kategori
+   DOKUMENTASI):
+   - TD-163 — docs/schema_clean.sql:13 dan docs/DATABASE SCHEMA.txt:33
+     menulis `CREATE TYPE wallet_type_enum AS ENUM ('CUSTOMER', 'DRIVER',
+     'MERCHANT', 'SYSTEM_ESCROW', 'SYSTEM_PLATFORM');` (5 label), DB
+     aktual 8 label.
+
+   BUKTI KONKRET (R3 — diverifikasi di sesi ini, bukan disalin):
+   - docs/schema_clean.sql:13 dan docs/DATABASE SCHEMA.txt:33 — keduanya
+     baris identik, 5 label, tanpa label ke-6. `grep -n wallet_type_enum`
+     di masing-masing file = 2 hit (CREATE TYPE di baris 13/33, kolom
+     `wallet_type wallet_type_enum NOT NULL DEFAULT 'CUSTOMER'` di
+     baris 113/217).
+   - 8 label di DB direkonstruksi dari migration: 001_initial_schema.
+     up.sql:48-49 = 6 label (termasuk SYSTEM_BANK_GATEWAY),
+     010_admin_lockouts.up.sql:50 = + SYSTEM_RECEIVABLE_OVERDRAFT,
+     019_add_platform_subsidy_wallet.up.sql:68 = + SYSTEM_PLATFORM_SUBSIDY.
+     `grep -rn "wallet_type_enum ADD VALUE" migrations/*.sql` = 2 hit
+     (hanya 010 dan 019), jadi tidak ada sumber label ke-9.
+   - Komentar migrations/001_initial_schema.up.sql:44-47 menyatakan
+     "DATABASE_SCHEMA v10.4 tidak mencantumkannya secara eksplisit di
+     enum" untuk SYSTEM_BANK_GATEWAY → drift 3 label ini sudah ada sejak
+     migration 001, bukan hanya akibat 010/019.
+   - docs/DATABASE SCHEMA.txt masih mengklaim "Version: 10.4-FINAL"
+     (line 3), "Last Updated: 2026-08-14" (line 4), dan "Status: ✅
+     100% PRODUCTION-READY — LOCKED AFTER TESTING" (line 8).
+   - CATATAN KOREKSI FAKTA: dev DB TIDAK bisa diakses ulang di sesi ini —
+     `psql -h localhost -p 15432 -U postgres -d g_flow_dev` gagal dengan
+     "FATAL: password authentication failed for user postgres". Angka
+     8 label diambil dari bukti sekunder sesi TD-048 (query
+     `SELECT enumlabel FROM pg_enum WHERE typname='wallet_type_enum'`
+     yang tercatat "8 label (verified)" di changelog sesi tersebut),
+     ditambah rekonstruksi dari 3 file migration di atas. Dua jalur itu
+     saling menguatkan; yang tidak dilakukan adalah query ulang.
+
+   [OVERRIDE-1 / §11.2] Prompt Reviewer menulis "5 wallet_type_enum label
+   (CUSTOMER/DRIVER/MERCHANT/SYSTEM_ESCROW/SYSTEM_PLATFORM/
+   SYSTEM_BANK_GATEWAY)" — TIDAK KONSISTEN: 6 label tertulis di dalam
+   kurung, dan SYSTEM_BANK_GATEWAY tidak ada di kedua file docs. Angka
+   "5" dipakai apa adanya (cocok dengan isi file, diverifikasi baris per
+   baris), daftar label di dalam kurung TIDAK dipakai karena bertentangan
+   dengan file. Selisih sebenarnya 3 label: SYSTEM_BANK_GATEWAY,
+   SYSTEM_RECEIVABLE_OVERDRAFT, SYSTEM_PLATFORM_SUBSIDY.
+   [OVERRIDE-2 / §11.2] Angka summary dari prompt (Total 156→157, RENDAH
+   31→32, OPEN 87→88, range TD-058 s/d TD-162 → TD-058 s/d TD-163) —
+   SEMUA BENAR dan diterapkan apa adanya, dikonfirmasi parser.
+
+   KOREKSI TAMBAHAN DI §2: baris TOTAL HUTANG TEKNIS TERIDENTIFIKASI
+   sebelumnya menulis "(46 FIXED + 14 CLOSED + 7 DEFERRED + 89 OPEN =
+   156)". Angka itu snapshot sesi TD-160/161/162 yang TERTINGGAL setelah
+   TD-047 + TD-048 berubah FIXED di sesi berikutnya (entry §2 STATUS
+   sendiri sudah mencatat FIXED 46 → 48, OPEN 89 → 87). Parser sesi ini
+   memberi FIXED 48, CLOSED 14, DEFERRED 7, OPEN 87 pada 156 entry
+   sebelum edit, jadi baris TOTAL dikoreksi ke angka yang sama dengan
+   blok STATUS. Tanpa koreksi ini, §2 akan menampilkan dua snapshot
+   berbeda di halaman yang sama (V2/V3 akan terlihat tidak sinkron).
+
+   PERUBAHAN ANGKA:
+   - Prioritas: RENDAH 31 → 32 (+1 entry baru). KRITIS 8, TINGGI 41,
+     SEDANG 76 tetap → 8 + 41 + 76 + 32 = 157.
+   - Status: OPEN 87 → 88 (+1). FIXED 48, CLOSED 14, DEFERRED 7,
+     FIXED/CLOSED 62 tetap → 48 + 14 + 7 + 88 = 157.
+   - TOTAL: 156 → 157. Range SECTION F: TD-058 s/d TD-162 → TD-058 s/d
+     TD-163.
+
+   CATATAN: dokumen ini tetap v2.0. satu entry baru menambah SECTION F
+   saja; tidak ada perubahan struktur dokumen, tidak ada kode diubah, dan
+   tidak ada commit (R10 — Developer commit via PowerShell).
 
 ============================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
