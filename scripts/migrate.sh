@@ -65,4 +65,10 @@ psql $DATABASE_URL -f migrations/017_remove_default_admin.up.sql
 # ter-rollback (lihat migrations/018_add_ride_orders_updated_at.up.sql).
 psql $DATABASE_URL -f migrations/018_add_ride_orders_updated_at.up.sql
 
+# Migration 019 — wallet sistem SYSTEM_PLATFORM_SUBSIDY (TD-132). Tanpa wallet
+# ini, subsidi shortfall delta fare (TD-069) tercampur ke saldo/komisi
+# SYSTEM_PLATFORM. JANGAN jalankan dengan --single-transaction: nilai enum baru
+# tidak boleh dipakai di transaksi yang sama dengan ALTER TYPE ADD VALUE.
+psql $DATABASE_URL -f migrations/019_add_platform_subsidy_wallet.up.sql
+
 echo "Migrations completed."

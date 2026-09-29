@@ -66,4 +66,11 @@ if errorlevel 1 exit /b 1
 psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\018_add_ride_orders_updated_at.up.sql
 if errorlevel 1 exit /b 1
 
+:: Migration 019 - wallet sistem SYSTEM_PLATFORM_SUBSIDY (TD-132). Tanpa wallet
+:: ini, subsidi shortfall delta fare (TD-069) tercampur ke saldo/komisi
+:: SYSTEM_PLATFORM. JANGAN tambahkan --single-transaction: nilai enum baru
+:: tidak boleh dipakai di transaksi yang sama dengan ALTER TYPE ADD VALUE.
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\019_add_platform_subsidy_wallet.up.sql
+if errorlevel 1 exit /b 1
+
 echo Migrations completed.

@@ -1058,7 +1058,8 @@ func TestIntegrationRide_DeltaFareSurplus(t *testing.T) {
 // Subtest A: customer saldo CUKUP → delta di-debit penuh dari customer,
 // tanpa subsidi & tanpa overdue_debt.
 // Subtest B: customer saldo KURANG → kekurangan ditutup subsidi
-// SYSTEM_PLATFORM (fallback sementara, TD-132) + dicatat overdue_debt.
+// SYSTEM_PLATFORM_SUBSIDY (wallet sistem dedicated, TD-132) + dicatat
+// overdue_debt.
 func TestIntegrationRide_DeltaFareShortfall(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -1136,6 +1137,7 @@ func TestIntegrationRide_DeltaFareShortfall(t *testing.T) {
 
 		escrowBefore := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
 		platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+		subsidyBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM_SUBSIDY")
 
 		orderID, estimated := bookRide(t, e, custToken, "WALLET")
 		const actualFare = 60000
@@ -1179,8 +1181,12 @@ func TestIntegrationRide_DeltaFareShortfall(t *testing.T) {
 			"customer balance=%v want 0", e.getBalance(t, ctx, custWallet))
 		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBefore),
 			"escrow=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW"), escrowBefore)
-		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore.Add(commission).Sub(shortfall)),
-			"platform=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"), platformBefore.Add(commission).Sub(shortfall))
+		// TD-132: subsidi shortfall TIDAK lagi tercampur ke SYSTEM_PLATFORM —
+		// platform hanya mendapat komisi, shortfall diserap wallet subsidi.
+		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore.Add(commission)),
+			"platform=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"), platformBefore.Add(commission))
+		require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM_SUBSIDY").Equal(subsidyBefore.Sub(shortfall)),
+			"subsidy=%v want %v", e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM_SUBSIDY"), subsidyBefore.Sub(shortfall))
 		require.True(t, e.getBalance(t, ctx, drvWallet).Equal(earning), "driver=%v want %v", e.getBalance(t, ctx, drvWallet), earning)
 
 		// Kekurangan yang ditutup subsidi dicatat sebagai overdue_debt customer.

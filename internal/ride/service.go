@@ -78,6 +78,11 @@ const (
 	WalletTypeDriver         = "DRIVER"
 	WalletTypeSystemPlatform = "SYSTEM_PLATFORM"
 
+	// Wallet sistem khusus subsidi shortfall delta fare (LOGIC_FLOW 2.2 §2
+	// / migration 019, TD-132). Dipisah dari SYSTEM_PLATFORM supaya saldo
+	// subsidi shortfall TIDAK tercampur dengan komisi platform.
+	WalletTypeSystemPlatformSubsidy = "SYSTEM_PLATFORM_SUBSIDY"
+
 	// Reference type double-entry ledger untuk settlement & refund ride.
 	referenceTypeRideSettlement      = "RIDE_SETTLEMENT"
 	referenceTypeRideRefund          = "RIDE_REFUND"
@@ -926,8 +931,8 @@ func cancellationFeeFor(orderStatus, reason string) decimal.Decimal {
 // TD-069 (delta fare): driver boleh mengirim actual_fare opsional. Jika
 // kosong/nol → pakai fareBasis (estimated_fare − discount; TD-070). Jika ada:
 //   - Shortfall (actual > fareBasis): debit customer delta; jika saldo
-//     customer kurang, kekurangan dari subsidi SYSTEM_PLATFORM (wallet
-//     SYSTEM_PLATFORM_SUBSIDY belum ada, TD-132) + record overdue_debt.
+//     customer kurang, kekurangan dari subsidi SYSTEM_PLATFORM_SUBSIDY
+//     (TD-132) + record overdue_debt.
 //   - Surplus (actual < fareBasis): credit customer delta, debit escrow.
 //
 // Settlement selalu memakai actual_fare (driver 80%, platform 20%).
@@ -977,7 +982,7 @@ func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrd
 // untuk payment WALLET (ada escrow):
 //   - Shortfall (actual > fareBasis): menahan delta ke escrow — DEBIT customer
 //     selisih; jika saldo customer kurang, kekurangan ditutup subsidi
-//     SYSTEM_PLATFORM + dicatat overdue_debt.
+//     SYSTEM_PLATFORM_SUBSIDY (TD-132) + dicatat overdue_debt.
 //   - Surplus (actual < fareBasis): refund — DEBIT escrow, CREDIT customer.
 func (s *Service) applyFareDelta(ctx context.Context, tx pgx.Tx, order *RideOrder, actualFare decimal.Decimal) error {
 	delta := actualFare.Sub(fareBasis(order)).Round(2)
@@ -1025,8 +1030,8 @@ func (s *Service) refundSurplusDelta(ctx context.Context, tx pgx.Tx, order *Ride
 
 // collectShortfallDelta menahan selisih shortfall (actual − estimated) ke
 // escrow. Debit sebesar saldo customer (maksimal delta); kekurangan ditutup
-// subsidi SYSTEM_PLATFORM (fallback sementara, TD-132) dan dicatat sebagai
-// overdue_debt customer (LOGIC_FLOW 2.2 §2).
+// subsidi SYSTEM_PLATFORM_SUBSIDY (wallet sistem dedicated, migration 019 —
+// TD-132) dan dicatat sebagai overdue_debt customer (LOGIC_FLOW 2.2 §2).
 func (s *Service) collectShortfallDelta(ctx context.Context, tx pgx.Tx, order *RideOrder, escrowID uuid.UUID, delta decimal.Decimal) error {
 	if err := lockWalletsAsc(ctx, tx, *order.CustomerWalletID, escrowID); err != nil {
 		return err
@@ -1063,9 +1068,10 @@ func (s *Service) collectShortfallDelta(ctx context.Context, tx pgx.Tx, order *R
 		)
 	}
 	if shortfall.IsPositive() {
-		// Wallet SYSTEM_PLATFORM_SUBSIDY belum ada (TD-132) — fallback sementara
-		// memakai SYSTEM_PLATFORM sebagai sumber subsidi shortfall.
-		subsidyID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemPlatform)
+		// Subsidi shortfall memakai wallet sistem dedicated SYSTEM_PLATFORM_SUBSIDY
+		// (migration 019, TD-132) — bukan SYSTEM_PLATFORM, supaya saldo subsidi
+		// tidak tercampur komisi platform.
+		subsidyID, err := s.repo.SystemWalletID(ctx, tx, WalletTypeSystemPlatformSubsidy)
 		if err != nil {
 			return err
 		}
@@ -1079,7 +1085,7 @@ func (s *Service) collectShortfallDelta(ctx context.Context, tx pgx.Tx, order *R
 				Amount:        shortfall,
 				ReferenceID:   order.ID,
 				ReferenceType: referenceTypeRideFareAdjustment,
-				Description:   "RIDE_FARE_ADJUSTMENT - DEBIT SYSTEM_PLATFORM (subsidy shortfall)",
+				Description:   "RIDE_FARE_ADJUSTMENT - DEBIT SYSTEM_PLATFORM_SUBSIDY (subsidy shortfall)",
 			},
 			wallet.LedgerEntry{
 				WalletID:      escrowID,

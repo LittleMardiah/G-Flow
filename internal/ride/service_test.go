@@ -205,6 +205,7 @@ var (
 	svcWalletID       = uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	svcEscrowID       = uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	svcPlatformID     = uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	svcSubsidyID      = uuid.MustParse("88888888-8888-8888-8888-888888888888")
 	svcDriverID       = uuid.MustParse("55555555-5555-5555-5555-555555555555")
 	svcOrderID        = uuid.MustParse("66666666-6666-6666-6666-666666666666")
 	svcDriverWalletID = uuid.MustParse("77777777-7777-7777-7777-777777777777")
@@ -1602,6 +1603,7 @@ func TestSettlement_ShortfallDelta_Insufficient_SubsidyOverdue(t *testing.T) {
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).
 		Return(&RideWallet{ID: uuid.New(), UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatformSubsidy).Return(svcSubsidyID, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
@@ -1616,7 +1618,7 @@ func TestSettlement_ShortfallDelta_Insufficient_SubsidyOverdue(t *testing.T) {
 		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
 	mDB.ExpectQuery("SELECT balance FROM wallets").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.Zero))
-	// Subsidi: lock SYSTEM_PLATFORM (fallback TD-132).
+	// Subsidi: lock SYSTEM_PLATFORM_SUBSIDY (wallet dedicated, TD-132).
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 1"))

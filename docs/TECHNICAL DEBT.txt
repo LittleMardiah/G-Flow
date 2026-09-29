@@ -1728,14 +1728,55 @@ Kategori   : BACKEND / FITUR
 Judul      : Wallet SYSTEM_PLATFORM_SUBSIDY TIDAK ada di kode/migration —
              hanya di LOGIC_FLOW.txt:351. Shortfall delta fare (TD-069)
              ditutup pakai wallet SYSTEM_PLATFORM (fallback sementara di
-             collectShortfallDelta, service.go:917-925).
+             collectShortfallDelta, service.go — bukan 917-925, see Note).
 Dampak     : Dana subsidi shortfall tercampur dengan saldo platform & komisi;
              audit/isomorfisme dana subsidi tidak transparan; konsisten
              dengan LOGIC_FLOW §2.2 yang menyebut SYSTEM_PLATFORM_SUBSIDY.
 Solusi     : Seed wallet sistem SYSTEM_PLATFORM_SUBSIDY (migration) & alihkan
              fallback shortfall ke wallet tersebut, bukan SYSTEM_PLATFORM.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-29, commit TD-132)
+Note       : Migration 019_add_platform_subsidy_wallet.up.sql menambah nilai
+             enum 'SYSTEM_PLATFORM_SUBSIDY' ke wallet_type_enum (001:48-49
+             hanya punya SYSTEM_ESCROW/SYSTEM_PLATFORM/SYSTEM_BANK_GATEWAY;
+             010:42-52 hanya menambah SYSTEM_RECEIVABLE_OVERDRAFT) lalu seed
+             system user + system wallet user_id NULL dengan id deterministik
+             ...0005 (pola 010:57-63, wallet sistem sebelumnya ...0004).
+             Idempotent: ADD VALUE IF NOT EXISTS + ON CONFLICT DO NOTHING —
+             Aman terhadap idx_system_wallet_unique UNIQUE (wallet_type)
+             WHERE user_id IS NULL (001:134-135), dan Seed wajib user_id NULL
+             karena repository SystemWalletID mencari
+             `WHERE wallet_type = $1 AND user_id IS NULL` (repository.go:279).
+             ⚠️ File migration TIDAK boleh dibungkus BEGIN/COMMIT atau
+             dijalankan `psql -1/--single-transaction`: PostgreSQL menolak
+             pemakaian nilai enum baru di transaksi yang sama dengan
+             ALTER TYPE ADD VALUE (SQLSTATE 55000 "unsafe use of new value") —
+             dibuktikan dry-run di dev DB. scripts/migrate.sh & migrate.bat
+             sengaja tetap per-statement (tidak --single-transaction).
+             Kode: konstanta baru WalletTypeSystemPlatformSubsidy
+             (service.go:84) + collectShortfallDelta diarahkan ke wallet itu
+             (service.go:1074), bukan WalletTypeSystemPlatform. Description
+             ledger DEBIT diubah jadi "... DEBIT SYSTEM_PLATFORM_SUBSIDY
+             (subsidy shortfall)" — reference_type tetap RIDE_FARE_ADJUSTMENT
+             (TD-069; ledger_entries.reference_type = VARCHAR(100), tanpa enum
+             — \d ledger_entries, jadi tidak perlu migration).
+             Bukti (V1-V7 sesi ini, DB dev g_flow_dev + Postgres 15):
+             `SELECT id,wallet_type FROM wallets WHERE
+             wallet_type='SYSTEM_PLATFORM_SUBSIDY'` → 1 baris
+             ...0005; enum 7 → 8 label; re-run migration: NOTICE "enum label
+             already exists, skipping" + INSERT 0 0 + INSERT 0 0, jumlah baris
+             tetap 1 (idempoten). Unit test
+             TestSettlement_ShortfallDelta_Insufficient_SubsidyOverdue PASS
+             (mock kini separates subsidy vs platform). Integration test
+             TestIntegrationRide_DeltaFareShortfall PASS end-to-end
+             (`go test -tags integration`, DATABASE_URL=...15432/g_flow_dev):
+             saldo SYSTEM_PLATFORM_SUBSIDY turun sebesar shortfall, saldo
+             SYSTEM_PLATFORM HANYA naik sebesar komisi (sebelum fix platform
+             = before + komisi − shortfall). Coverage internal/ride 84.5%.
+             Catatan: prompt TD-132 menyebut "service.go:917" untuk fallback —
+             aktual baris SystemWalletID(.., WalletTypeSystemPlatform) di
+             collectShortfallDelta adalah service.go:1068 SEBELUM fix
+             (917 = wilayah completeOrderTx). [OVERRIDE-1].
 Referensi  : LOGIC_FLOW.txt:351, TD-069 (temuan OpenCode 2026-09-23)
 
 ID         : TD-133
@@ -2440,12 +2481,163 @@ Referensi  : TD-158 (ketemu saat verifikasi sesi TD-158 — tidak dalam scope
              TD-158, dicatat sesuai R8), TD-150 (coupling test integrasi
              ↔ auto-create wallet auth)
 
+ID         : TD-160
+Kategori   : SECURITY
+Judul      : scripts/migrate.sh TIDAK pakai -v ON_ERROR_STOP=1 (berbeda dari
+             migrate.bat). Kegagalan migration di produksi silent — script
+             lanjut walau migration fail.
+Bukti      : (a) `grep -c "ON_ERROR_STOP" scripts/migrate.sh` = 0,
+             `grep -c "ON_ERROR_STOP" scripts/migrate.bat` = 19. Kedua
+             file memanggil 19 migration yang sama (001 s/d 019) dan
+             bedanya HANYA flag itu.
+             (b) scripts/migrate.sh:11-72 — 19 baris `psql $DATABASE_URL -f
+             migrations/NNN_*.up.sql`, tidak satu pun punya
+             `-v ON_ERROR_STOP=1`. Bandingkan scripts/migrate.bat:9-73 yang
+             19/19 punya flag tersebut.
+             (c) scripts/migrate.sh TIDAK punya `set -e` / `set -o
+             pipefail` (grep = 0 hit), sehingga exit code psql yang
+             non-zero TIDAK menghentikan script.
+             (d) scripts/migrate.sh:74 `echo "Migrations completed."`
+             berjalan tanpa syarat apa pun — dieksekusi walau 1..19
+             migration gagal.
+Dampak     : Tanpa ON_ERROR_STOP, psql -f hanya ME-REPORT error per
+             statement tapi tetap keluar dengan exit code 0 kecuali error
+             fatal, jadi `psql` tidak berhenti di statement pertama yang
+             gagal. Script tetap lanjut ke migration berikutnya dan tetap
+             mencetak "Migrations completed." Migration yang gagal berarti
+             schema produksi tidak sesuai kode — dan tidak ada yang
+             memperingatkan.
+             Yang paling berbahaya: migration 010 (ALTER TYPE ADD VALUE
+             wallet_type_enum) dan 011 (CREATE INDEX CONCURRENTLY) GAGAL di
+             dalam transaction block, tapi tetap dilaporkan sukses; atau
+             migration 001 gagal total sehingga tabel inti tidak pernah
+             dibuat, dan deployment tetap terlihat "hijau". Migration
+             018/019 yang sudah lewat bisa juga gagal diam-diam di
+             environment yang berbeda dari dev.
+Solusi     : Tambah `-v ON_ERROR_STOP=1` di setiap psql command migrate.sh
+             (19 baris), mirror persis migrate.bat. Tambahkan juga
+             `set -e` di header script sebagai pagar kedua, dan (opsional)
+             exit non-zero kalau ada migration yang gagal. JANGAN menambah
+             `--single-transaction` / `-1` — lihat catatan migration 019
+             (enum baru tidak boleh dipakai di transaksi yang sama dengan
+             ALTER TYPE ADD VALUE) dan TD-035/036/037.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-132 (temuan OpenCode), TD-035, TD-036, TD-037 (custom
+             migration runner), TD-156 (worker belum ter-cover integration
+             test — alasan kenapa regresi migration tidak tertangkap)
+
+ID         : TD-161
+Kategori   : HYGIENE / DATABASE
+Judul      : Dev DB drift — wallet sistem (SYSTEM_ESCROW/SYSTEM_PLATFORM/
+             SYSTEM_BANK_GATEWAY) punya UUID acak (bukan fixed
+             ...0001-0003), SYSTEM_RECEIVABLE_OVERDRAFT tidak ada padahal
+             enum ada, 0 user system.
+Bukti      : Query ke dev DB g_flow_dev (localhost:15432, PostgreSQL 15):
+             (a) `SELECT id, wallet_type, user_id, balance FROM wallets
+             WHERE user_id IS NULL` → 4 baris: SYSTEM_ESCROW =
+             a212785f-1523-471b-8b32-b507feebfb3e, SYSTEM_PLATFORM =
+             d623ce6e-55ec-4c66-b7a9-0c1e9687b3e4, SYSTEM_BANK_GATEWAY =
+             cf8cf0aa-183f-4ed9-b403-d1649482abc3 — ketiganya UUID acak,
+             BUKAN seed deterministik 001:366-368 (00000000-0000-0000-0000-
+             000000000001/0002/0003). `SELECT count(*) FROM wallets WHERE
+             user_id IS NULL AND id IN (...0001,...0002,...0003)` = 0.
+             (b) `SELECT enumlabel FROM pg_enum WHERE typname=
+             'wallet_type_enum'` → 8 label termasuk
+             SYSTEM_RECEIVABLE_OVERDRAFT (artinya migration 010 pernah
+             jalan), TAPI `wallets` tidak punya baris
+             SYSTEM_RECEIVABLE_OVERDRAFT — seed 010:57-63 tidak pernah
+             tereksekusi utuh.
+             (c) `SELECT count(*) FROM users WHERE user_type='system'` =
+             1, dan itu hanya ...0005 hasil migration 019 (sesi TD-132).
+             `SELECT count(*) FROM users WHERE id IN (...0001/0002/
+             0003)` = 0 → TIDAK ADA user system untuk seed 001:354-356.
+Dampak     : Test/verifikasi yang berharap UUID fixed gagal, dan id wallet
+             tidak portabel antar environment — wallet yang sama punya id
+             berbeda di dev, di CI, dan di produksi. State dev TIDAK match
+             schema state yang di-apply migration, jadi debugging saldo
+             wallet sistem menghasilkan kesimpulan yang salah (mis. "saldo
+             escrow hilang" padahal barisnya ada dengan id lain). Akar
+             masalahnya belum terkonfirmasi: mungkin seed 001 dieksekusi
+             saat tabel wallets sudah terisi baris, mungkin
+             `ON CONFLICT DO NOTHING` meloloskan, atau DB pernah di-reset
+             sebagian. Selain itu idx_system_wallet_unique (001:133-135)
+             UNIQUE (wallet_type) WHERE user_id IS NULL membuat wallet
+             acak yang ada sekarang sulit dikoreksi tanpa DELETE dulu.
+Solusi     : Script reseed idempotent: DELETE wallet sistem lama +
+             INSERT ulang dengan UUID fixed ...0001/0002/0003 dan
+             user_id NULL (dengan wrap transaction + SET CONSTRAINTS),
+             ATAU update migration 001 seed untuk memakai
+             `ON CONFLICT (wallet_type) WHERE user_id IS NULL DO UPDATE
+             SET id = EXCLUDED.id` supaya UUID fixed ter-enforce. Kalau
+             mau fixing total, dev DB sebaiknya di-rebuild dari nol
+             (drop + re-run 001..019 berurutan) supaya drift tidak
+             menumpuk; verified bahwa urutan psql 001..019 re-run aman
+             untuk 019 (idempoten). Tambahkan smoke-test yang mengecek
+             `SELECT id FROM wallets WHERE user_id IS NULL` ke CI supaya
+             drift ketahuan otomatis.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-132 (temuan OpenCode), TD-056 (seed E2E di migrations),
+             TD-159 (semua integration suite reset saldo wallet sistem —
+             closely related)
+
+ID         : TD-162
+Kategori   : SECURITY / DATABASE
+Judul      : Wallet SYSTEM_PLATFORM_SUBSIDY kena CHECK balance_non_negative
+             (>= -1_000_000, migration 001:125). Shortfall delta fare
+             aggregated akhirnya bisa menolak UPDATE → settlement ride
+             gagal.
+Bukti      : (a) migrations/001_initial_schema.up.sql:125 —
+             `CONSTRAINT balance_non_negative CHECK (balance >= -1000000)`
+             dengan komentar "negatif diizinkan utk cash settlement
+             (ceiling -1jt)". Constraint ini level TABEL (bukan per
+             wallet_type), jadi otomatis berlaku juga untuk
+             SYSTEM_PLATFORM_SUBSIDY yang di-seed 019. Tidak ada
+             ALTER TABLE ... DROP CONSTRAINT /ADD CHECK baru di 019.
+             (b) Bukti di dev DB: saldo wallet subsidi sekarang
+             -20.000 (shortfall diserap) sementara SYSTEM_PLATFORM
+             +12.000 (hanya komisi) — ini konfirmasi bahwa akun
+             subsidi memang boleh tumbuh ke arah negatif.
+             (c) Path yang dipakai: collectShortfallDelta
+             (internal/ride/service.go) mem-DEBIT wallet subsidi sebesar
+             shortfall aggregated per order, dan settleOrderTx memanggilnya
+             dalam transaksi yang sama dengan komisi platform.Dampak     : Setelah total shortfall terkumpul mencapai ~1 juta, saldo
+             subsidi akan mentok di -1.000.000 dan UPDATE berikutnya
+             ditolak PostgreSQL dengan SQLSTATE 23514 (check constraint
+             violated). Karena penolakan terjadi DI DALAM transaksi
+             settlement, seluruh settlement ride itu me-rollback: order
+             tidak pernah SETTLED (status macet), dan kalau refund
+             berjalan di jalur yang sama, refund ikut rollback. Jadi
+             satu shortfall yang tidak tertutup customer escalating
+             menjadi order stuck. Saat ini belum terjadi (dev DB
+             -20.000, masih 50x lipatan dari batas), jadi ini risiko
+             bakal, bukan bug yang sudah DCHECK hari ini. Gate yang sama
+             sudah berlaku untuk SYSTEM_PLATFORM sejak TD-069 — memindahkan
+             beban ke wallet baru TIDAK menghapus risiko ceiling ini.
+Solusi     : Jangan andalkan saldo yang tak terbatas. Pilih salah satu:
+             (a) recurring top-up subsidi (cron/batch job) yang
+             menusipkan saldo subsidi sebelum mendekati batas; (b) naikkan
+             ceiling (ALTER TABLE wallets DROP CONSTRAINT
+             balance_non_negative; ADD CONSTRAINT ... dengan batas lebih
+             tinggi) — tapi ini tetapFinite, hanya menunda; (c) pisahkan
+             ledger subsidi ke tabel/constraint terpisah tanpa CHECK
+             (paling bersih secara desain, paling besar jejaknya). Apa
+             pun pilihannya, tambahkan monitoring/alert bila saldo
+             subsidi mendekati -1.000.000 supaya tidak menunggu sampai
+             order benar-benar mentok.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-132 (temuan OpenCode, wallet subsidi baru lahir di
+             migration 019), TD-069 (shortfall delta fare), TD-058
+             (settlement ride)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 153 item (TD-051 di-reserve/skip)
-                                       (45 FIXED + 14 CLOSED + 7 DEFERRED + 87 OPEN = 153)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 156 item (TD-051 di-reserve/skip)
+                                       (46 FIXED + 14 CLOSED + 7 DEFERRED + 89 OPEN = 156)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 41 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -2479,7 +2671,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 153 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 73 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159)
+- SEDANG  : 76 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162)
              [66 pada 2026-09-26: TD-145 s/d TD-148 ditambahkan (62→66). TD-113 TETAP di
              SEDANG — bucket ini berdasarkan Prioritas, bukan Status; TD-127
              (FIXED) juga tetap terdaftar di sini. 2026-09-26 (TD-147 FIXED):
@@ -2542,7 +2734,40 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 153 item (TD-051 di-reserve/skip)
               TD-158 add +1" — angka akhirnya kebetulan sama, tapi mekanismenya
               salah: kalau benar bucket ikut Status, TD-031 harus keluar dari
               daftar dan TD-158 harus masuk sebagai SEDANG (yang tidak terjadi —
-              TD-158 TINGGI). Lihat [OVERRIDE-2].]
+               TD-158 TINGGI). Lihat [OVERRIDE-2].]
+               [TETAP 73 pada 2026-09-29 (TD-132 FIXED): bucket SEDANG
+              mengikuti `Prioritas :`, dan TD-132 tetap `Prioritas : SEDANG`
+              (hanya Status OPEN → FIXED), jadi bucket ini TIDAK bergerak —
+              preseden identik TD-030, TD-031, TD-106, TD-113, TD-114,
+              TD-126, TD-127, TD-144, TD-147, TD-158. Prompt Reviewer menulis
+              "Bucket SEDANG turun karena TD-132 Prioritas SEDANG close
+              (verify parser!)" — SALAH: kalau bucket ikut Status, setiap
+              entry FIXED lain di daftar ini (mis. TD-113, TD-127, TD-147)
+              juga harus hilang dari daftar SEDANG, dan tidak satu pun
+              hilang. Parser atas 153 field `ID :` sebelum fix: KRITIS 8 +
+              TINGGI 41 + SEDANG 73 + RENDAH 31 = 153 ✓; kalau SEDANG 72
+              maka sum = 152 ≠ 153. Yang bergerak hanya bucket Status:
+              FIXED 45 → 46, FIXED/CLOSED 59 → 60, OPEN 87 → 86, Total
+               tetap 153. Lihat [OVERRIDE-1].]
+               [76 pada 2026-09-29: TD-160 (SECURITY — scripts/migrate.sh tidak
+              pakai `-v ON_ERROR_STOP=1` padahal migrate.bat 19/19 memakainya,
+              jadi kegagalan migration silent dan script tetap mencetak
+              "Migrations completed."), TD-161 (HYGIENE/DATABASE — drift dev DB:
+              wallet sistem punya UUID acak bukan ...0001-0003, wallet
+              SYSTEM_RECEIVABLE_OVERDRAFT tidak ada padahal enum ada, 0 user
+              system untuk seed 001), dan TD-162 (SECURITY — wallet
+              SYSTEM_PLATFORM_SUBSIDY dari migration 019 kena CHECK
+              balance_non_negative >= -1.000.000, 001:125) adalah 3 entry BARU
+              hasil TEMUAN DI LUAR SCOPE sesi TD-132 (R8 — dicatat, tidak
+              diperbaiki). Ketiganya `Prioritas : SEDANG` dan Status OPEN dari
+              awal, jadi bucket SEDANG 73 → 76 (+3) dan bucket Status OPEN
+              86 → 89 (+3); FIXED 46, CLOSED 14, DEFERRED 7 tetap. Total
+              153 → 156. Konsisten: 8 + 41 + 76 + 31 = 156 = TOTAL dan
+              46 + 14 + 7 + 89 = 156 = TOTAL. Range SECTION F: TD-058 s/d
+              TD-159 → TD-058 s/d TD-162. Parser atas 156 field `ID :`
+              mengonfirmasi sum Prioritas = sum Status = 156 (V3 sesi ini).
+              Tidak ada kode yang diubah — register dokumentasi saja. Tidak
+              commit (R10).]
 - RENDAH  : 31 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157)
               [31 pada 2026-09-27: TD-157 (KODE — `defer tx.Rollback(ctx)`
              dijalankan setelah Commit sukses di worker.go:175/288/398) adalah
@@ -2550,8 +2775,23 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 153 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 45 item, 14 item CLOSED (FIXED/CLOSED 59), 7 item DEFERRED,
-        87 item OPEN.  [45 + 14 + 7 + 87 = 153 = TOTAL]
+STATUS: ✅ FIXED 46 item, 14 item CLOSED (FIXED/CLOSED 60), 7 item DEFERRED,
+        89 item OPEN.  [46 + 14 + 7 + 89 = 156 = TOTAL]
+        [46/60/7/89 pada 2026-09-29 (part 2): TD-160 + TD-161 + TD-162 tiga
+        entry BARU (semua `Prioritas : SEDANG`, Status OPEN, hasil TEMUAN DI
+        LUAR SCOPE sesi TD-132 — R8): OPEN 86 → 89 (+3); FIXED 46, CLOSED 14,
+        DEFERRED 7, FIXED/CLOSED 60 tetap; TOTAL 153 → 156. Bucket Prioritas
+        ikut bergerak karena entry baru: SEDANG 73 → 76 (+3). Konsisten:
+        8 + 41 + 76 + 31 = 156 = TOTAL dan 46 + 14 + 7 + 89 = 156. Range
+        SECTION F: TD-058 s/d TD-159 → TD-058 s/d TD-162. Parser atas 156
+        field `ID :` mengonfirmasi sum Prioritas = sum Status = 156 (V3 sesi
+        ini). Tidak commit (R10). Lihat [OVERRIDE-2].]
+        [46/60/7/86 pada 2026-09-29: TD-132 OPEN → FIXED (+1 FIXED, -1 OPEN).
+        FIXED 45 → 46, FIXED/CLOSED 59 → 60, OPEN 87 → 86, TOTAL tetap 153
+        (tidak ada entry baru). Bucket Prioritas TIDAK bergerak: KRITIS 8 +
+        TINGGI 41 + SEDANG 73 + RENDAH 31 = 153. Parser atas 153 field
+        `ID :` mengonfirmasi sum Prioritas = sum Status = 153 (V7 sesi ini).
+        Tidak commit (R10).]
         [44/58/7/87 pada 2026-09-27: TD-030 + TD-031 OPEN → FIXED (+2 FIXED,
         -2 OPEN), TD-158 entry baru Status OPEN (+1 OPEN, +1 TOTAL). FIXED 42 →
         44, OPEN 88 → 87, TOTAL 151 → 152. Parser (152 field `ID :`):
@@ -2581,17 +2821,57 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-28):
-   - Total hutang teridentifikasi      : 153 item (TD-051 di-reserve/skip; 153 item aktif terdaftar).
-   - ✅ FIXED                           : 45 item
+3. RINGKASAN STATUS TERKINI (2026-09-29):
+   - Total hutang teridentifikasi      : 156 item (TD-051 di-reserve/skip; 156 item aktif terdaftar).
+   - ✅ FIXED                           : 46 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 59 item
+   - FIXED/CLOSED                       : 60 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 87 item (bukan hanya TD-058 s/d TD-159 — masih ada
+   - ❌ OPEN                              : 89 item (bukan hanya TD-058 s/d TD-162 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [45 + 14 + 7 + 87 = 153 = TOTAL]
+     [46 + 14 + 7 + 89 = 156 = TOTAL]
+     [Perubahan 2026-09-29 (part 2) — TD-160 + TD-161 + TD-162 entry BARU
+     (hasil TEMUAN DI LUAR SCOPE sesi TD-132, dicatat sesuai R8 — tidak
+     diperbaiki di sesi mana pun): TD-160 (SECURITY — scripts/migrate.sh
+     tidak pakai `-v ON_ERROR_STOP=1` pada 19 psql call, sedangkan
+     migrate.bat 19/19 memakainya, jadi kegagalan migration silent dan
+     script tetap mencetak "Migrations completed."); TD-161 (HYGIENE/DATABASE
+     — drift dev DB g_flow_dev: wallet sistem SYSTEM_ESCROW/PLATFORM/
+     BANK_GATEWAY punya UUID acak a212785f-…/d623ce6e-…/cf8cf0aa-… bukan
+     seed deterministik 001:366-368 (...0001-0003), wallet
+     SYSTEM_RECEIVABLE_OVERDRAFT tidak ada padahal enum-nya ada, dan 0 user
+     system untuk seed 001:354-356); TD-162 (SECURITY — wallet
+     SYSTEM_PLATFORM_SUBSIDY yang baru lahir di migration 019 tetap kena
+     CHECK balance_non_negative >= -1.000.000 (001:125) yang level TABEL,
+     jadi setelah shortfall teragregasi ~1 juta UPDATE-nya ditolak
+     SQLSTATE 23514 di dalam transaksi settlement → order macet).
+     Ketiganya `Prioritas : SEDANG` dan Status OPEN dari awal, jadi bucket
+     Prioritas SEDANG 73 → 76 (+3) dan bucket Status OPEN 86 → 89 (+3);
+     FIXED 46, CLOSED 14, DEFERRED 7, FIXED/CLOSED 60 tetap. Total
+     153 → 156. Konsisten: 8 + 41 + 76 + 31 = 156 = TOTAL dan
+     46 + 14 + 7 + 89 = 156 = TOTAL. Range SECTION F: TD-058 s/d TD-159 →
+     TD-058 s/d TD-162. Parser atas 156 field `ID :` mengonfirmasi sum
+     Prioritas = sum Status = 156 (V3 sesi ini). Tidak ada kode yang diubah
+     — register dokumentasi saja. Tidak commit (R10). Lihat [OVERRIDE-2].]
+     [Perubahan 2026-09-29 — TD-132 FIXED (wallet sistem
+     SYSTEM_PLATFORM_SUBSIDY, migration 019; dana subsidi shortfall delta
+     fare TD-069 tidak lagi tercampur ke saldo/komisi SYSTEM_PLATFORM —
+     dibuktikan integration test end-to-end, saldo wallet subsidi turun
+     sebesar shortfall sementara platform hanya naik sebesar komisi):
+     FIXED 45 → 46, FIXED/CLOSED 59 → 60, OPEN 87 → 86, Total tetap 153
+     (tidak ada entry baru). Bucket Prioritas TIDAK bergerak: KRITIS 8 +
+     TINGGI 41 + SEDANG 73 + RENDAH 31 = 153. SEDANG tetap 73 karena
+     bucket itu mengikuti `Prioritas :` dan TD-132 tetap `Prioritas :
+     SEDANG` — hanya Status-nya OPEN → FIXED. Preseden identik: TD-030,
+     TD-031, TD-106, TD-113, TD-114, TD-126, TD-127, TD-144, TD-147,
+     TD-158. Prompt Reviewer menulis "SEDANG 73 → 72 (TD-132 close)" —
+     SALAH: kalau bucket ikut Status, entry FIXED lain di daftar SEDANG
+     (mis. TD-113, TD-127, TD-147) juga harus hilang, dan tidak satu pun
+     hilang. Parser atas 153 field `ID :` mengonfirmasi sum Prioritas =
+     sum Status = 153 (V7 sesi ini). Tidak commit (R10). Lihat
+     [OVERRIDE-1].]
      [Perubahan 2026-09-28 (part 2) — TD-159 entry BARU (TESTING, SEDANG,
      Status OPEN): integration suite tidak bisa dijalankan lintas paket
      secara paralel karena semua suite me-reset saldo wallet sistem di
@@ -3815,6 +4095,209 @@ redis belum 7.4) seiring align versi Postgres docker-compose → 15.
         (wallet customer + ledger reference_id), bukan saldo absolut
         SYSTEM_ESCROW, supaya tidak ikut flak. Sudah didaftarkan sebagai
         TD-159 (TESTING, SEDANG, Status OPEN).
+
+2026-09-29 — SESI TD-132: Wallet SYSTEM_PLATFORM_SUBSIDY (migration 019)
+============================================================================
+   SCOPE: migrations/019_add_platform_subsidy_wallet.up.sql (BARU),
+   scripts/migrate.sh, scripts/migrate.bat, internal/ride/
+   (service.go, service_test.go, integration_test.go), docs (LOGIC_FLOW
+   + register ini). Tidak menyentuh mobile, food, send, auth.
+
+   ROOT CAUSE: TD-069 delta-fare shortfall (collectShortfallDelta) memakai
+   wallet SYSTEM_PLATFORM sebagai sumber dana subsidi. Dana subsidi
+   shortfall tercampur dengan komisi platform — rekonsiliasi "komisi
+   platform" vs "subsidi shortfall" mustahil dari saldo wallet, dan audit
+   dana subsidi tidak transparan. Wallet SYSTEM_PLATFORM_SUBSIDY yang
+   disebut LOGIC FLOW.txt:351 tidak pernah ada di enum wallet_type_enum
+   (001:48-49) maupun di kode.
+
+   FIX (4 bagian):
+   (1) Migration 019: ALTER TYPE wallet_type_enum ADD VALUE IF NOT EXISTS
+       'SYSTEM_PLATFORM_SUBSIDY' + seed system user & system wallet
+       (user_id NULL, id deterministik ...0005 — pola 010:57-63, wallet
+       sistem sebelumnya ...0004). Idempotent.
+   (2) internal/ride/service.go:84 — konstanta baru
+       WalletTypeSystemPlatformSubsidy; service.go:1074 fallback
+       diarahkan ke wallet itu; Description ledger DEBIT diubah.
+   (3) scripts/migrate.sh + scripts/migrate.bat mendaftarkan 019.
+   (4) docs: LOGIC FLOW.txt §2.2 diberi penanda TD-132; register ini
+       ditutup sebagai FIXED.
+
+   BUKTI (V1-V7, tidak ada yang dilewati):
+   - V1 `go build ./...` exit 0. V2 `go vet ./...` exit 0.
+   - V3 migration 019 di-apply ke dev DB (PostgreSQL 15, g_flow_dev):
+     `SELECT id,wallet_type FROM wallets WHERE
+     wallet_type='SYSTEM_PLATFORM_SUBSIDY'` → 1 baris
+     00000000-0000-0000-0000-000000000005. Enum 7 → 8 label. Re-run →
+     NOTICE "enum label already exists, skipping" + INSERT 0 0 + INSERT 0 0,
+     jumlah baris tetap 1 (idempoten terbukti).
+   - V4 `go test ./internal/ride/... -v` → 187 PASS / 0 FAIL / 0 SKIP.
+   - V5 coverage internal/ride = 84.5%.
+   - V6 grep: 12 kemunculan SYSTEM_PLATFORM_SUBSIDY / SystemPlatformSubsidy
+     di internal/ride/ (service.go, service_test.go, integration_test.go).
+   - V7 `git status --short` → 6 file dimodifikasi + 1 file baru.
+   - Tambahan di luar V1-V7: `go test -tags integration ./internal/ride/`
+     dengan DATABASE_URL=...15432/g_flow_dev → PASS, termasuk
+     TestIntegrationRide_DeltaFareShortfall (keduanya subtest). Bukti
+     Bukti end-to-end di DB: SYSTEM_PLATFORM_SUBSIDY = -20.000 (shortfall
+     diserap wallet subsidi) sementara SYSTEM_PLATFORM = +12.000 (hanya
+     komisi). SEBELUM fix, platform = before + komisi − shortfall.
+     `go test ./...` (seluruh repo) hijau.
+
+   CATATAN PENTING MIGRATION (bukan kode, tapi harus diketahui deploy):
+   File 019 TIDAK boleh dibungkus BEGIN/COMMIT, dan migrate.sh/.bat tidak
+   boleh ditambah --single-transaction / `psql -1`. PostgreSQL (termasuk
+   PG 15) menolak memakai nilai enum baru di transaksi yang sama dengan
+   ALTER TYPE ADD VALUE:
+     ERROR:  unsafe use of new value "SYSTEM_PLATFORM_SUBSIDY" of enum
+             type wallet_type_enum
+     HINT:  New enum values must be committed before they can be used.
+   Dibuktikan dry-run (BEGIN; ... ROLLBACK) di dev DB sebelum menulis
+   migration. Semua migration repo ini berjalan per-statement; 019
+   mengikuti pola yang sama. Ini PPM No. 2 §3 di register (custom
+   migrate_with_psql.sh) — 019 menambah satu lagi alasan kenapa wrapper
+   itu dibutuhkan.
+
+   [OVERRIDE-1 / §11.2] Dua fakta salah di prompt Reviewer, dikoreksi
+   dengan bukti:
+   (a) "internal/ride/service.go:917 (collectShortfallDelta) — fallback"
+       → SALAH. Baris 917 (dan rentang 917-925 yang disebut di entri
+       TD-132) adalah wilayah `completeOrderTx`. Fallback yang dimaksud
+       ada di service.go:1068 SEBELUM fix
+       (`s.repo.SystemWalletID(ctx, tx, WalletTypeSystemPlatform)` di
+       dalam collectShortfallDelta). Fix diterapkan di 1068 → 1074 (sesudah
+       penambahan konstanta menggeser baris); tidak ada keraguan letaknya
+       karena hanya ada SATU call Site WalletTypeSystemPlatform di dalam
+       collectShortfallDelta (V6/grep + baca fungsi 1030-1101).
+   (b) "Bucket SEDANG turun karena TD-132 Prioritas SEDANG close" dan
+       "SEDANG 73→72" → SALAH. Bucket Prioritas di §2 mengikuti field
+       `Prioritas :`, bukan `Status :`; TD-132 tetap `Prioritas : SEDANG`
+       (hanya Status OPEN → FIXED), jadi bucket SEDANG TETAP 73. Bukti:
+       parser atas 153 field `ID :` → KRITIS 8 + TINGGI 41 + SEDANG 73 +
+       RENDAH 31 = 153 ✓ SEBELUM edit; kalau SEDANG 72 maka sum = 152 ≠
+       153. Preseden identik sudah tercatat 4× di dokumen ini untuk
+       kesalahan yang sama: [OVERRIDE-1] TD-106 (TINGGI), [OVERRIDE-2]
+       TD-030 (TINGGI), [OVERRIDE-4] TD-158 (TINGGI), [OVERRIDE-2] TD-031
+       (SEDANG). Entah bucket itu dihitung bagaimana, entry FIXED lain di
+       daftar SEDANG (TD-113, TD-126, TD-127, TD-144, TD-147) juga akan
+       hilang — dan tidak satu pun hilang. Angka yang BENAR: FIXED 45→46,
+       FIXED/CLOSED 59→60, OPEN 87→86, Prioritas tidak bergerak, Total
+       tetap 153.
+   [OVERRIDE-2 / §11.2] Scope STEP B berbunyi "Ganti
+   `SystemWalletID(..., WalletTypeSystemPlatform)` di shortfall path" —
+   perlu dipastikan supaya tidak over-apply. Call site itu HANYA di
+   collectShortfallDelta. `settleOrderTx` (service.go:1134) juga memakai
+   WalletTypeSystemPlatform untuk KOMISI platform 20% dan itu BENAR
+   (LOGIC_FLOW §3 / API_CONTRACT 7.3) — tidak boleh dialihkan. Bukti:
+   grep WalletTypeSystemPlatform di service.go menunjukkan tepat 2 call
+   site — 1068 (subsidi, di-fix) dan 1134 (komisi, dibiarkan). Tidak ada
+   deviasi; hanya konfirmasi agar reviewer bisa cek.
+
+   TEMUAN DI LUAR SCOPE (dicatat, tidak diperbaiki — R8):
+   (1) Dev DB `g_flow_dev` TIDAK konsisten dengan hasil migration. Wallet
+       sistem ESCROW/PLATFORM/BANK_GATEWAY ada dengan UUID acak (bukan
+       ...0001/0002/0003 hasil seed 001), TIDAK ADA user system sama
+       sekali, dan wallet SYSTEM_RECEIVABLE_OVERDRAFT hasil seed 010:62
+       TIDAK ADA — padahal enum-nya ada (artinya 010 pernah jalan). Jadi
+       ada drift antara migration dan DB dev yang akan membingungkan saat
+       debugging saldo. Tidak diperbaiki di sesi ini (di luar scope: butuh
+       reseed/rebuild DB).
+   (2) CHECK balance_non_negative (001:125) membatasi saldo wallet subsidi
+       hanya sampai -1.000.000. Wallet subsidi di-DEBIT setiap shortfall
+       yang tidak tertutup customer; agregasi shortfall akhirnya akan
+       MENOLAK update saldo di bawah batas itu dan settlement ride akan
+       gagal. Batas yang sama sudah berlaku untuk SYSTEM_PLATFORM sejak
+       TD-069, jadi ini bukan regresi — tapi memindahkan beban ke wallet
+       baru tidak menghapus risiko ceiling ini. Layak TD terpisah
+       (monitoring/alerting saldo subsidi).
+    Tidak ada kode di luar scope yang diubah untuk kedua temuan ini.
+
+2026-09-29 — SESI TD-132 (part 2): Registrasi TD-160 / TD-161 / TD-162
+==========================================================================
+   SCOPE: docs/TECHNICAL DEBT.txt saja (register dokumentasi). Tidak ada
+   kode yang disentuh: scripts/migrate.sh, scripts/migrate.bat,
+   migrations/001, dan dev DB tidak diubah oleh sesi ini.
+
+   ALASAN: TEMUAN DI LUAR SCOPE pada sesi TD-132 (dicatat, tidak diperbaiki
+   — R8) menghasilkan 2 item, dan sekarang diregistrasi sebagai TD-161
+   (drift dev DB) dan TD-162 (ceiling CHECK wallet subsidi). Satu temuan
+   ketiga ditemukan ulang saat verifikasi kali ini dan masuk sebagai
+   TD-160 (migrate.sh tanpa ON_ERROR_STOP) — bukan gap TD-132, tapi
+   satu kelas bug yang sama: tooling migrasi tidak memverifikasi
+   dirinya sendiri.
+
+   ISI 3 ENTRY BARU (semua `Prioritas : SEDANG`, Status OPEN):
+   - TD-160 (SECURITY) — scripts/migrate.sh tidak pakai
+     `-v ON_ERROR_STOP=1` pada 19 psql call (grep ON_ERROR_STOP = 0),
+     sedangkan scripts/migrate.bat 19/19 memakainya. Script juga tidak
+     punya `set -e`, dan migrate.sh:74 tetap mencetak
+     "Migrations completed." tanpa syarat → kegagalan migration silent.
+     Kritis untuk migration 010 (ALTER TYPE ADD VALUE) dan 011
+     (CREATE INDEX CONCURRENTLY) yang memang GAGAL di dalam transaction
+     block — itu persis kelas kegagalan yang tidak boleh lolos diam-diam.
+   - TD-161 (HYGIENE/DATABASE) — drift antara hasil migration dan state
+     dev DB g_flow_dev.
+   - TD-162 (SECURITY/DATABASE) — ceiling CHECK balance_non_negative
+     (001:125) juga mengikat wallet SYSTEM_PLATFORM_SUBSIDY yang baru.
+
+   BUKTI KONKRET (R3 ZERO HALLUCINATION — semua diverifikasi ulang di
+   sesi ini, bukan disalin dari changelog TD-132):
+   - TD-160: `grep -c "ON_ERROR_STOP" scripts/migrate.sh` = 0 vs
+     `grep -c "ON_ERROR_STOP" scripts/migrate.bat` = 19. Kedua file
+     memanggil migration 001..019 yang sama. `grep -n "psql" scripts/
+     migrate.sh` = 19 call, semua tanpa flag. `set -e` = 0 hit.
+   - TD-161: `SELECT id, wallet_type FROM wallets WHERE user_id IS NULL`
+     → SYSTEM_ESCROW = a212785f-1523-471b-8b32-b507feebfb3e,
+     SYSTEM_PLATFORM = d623ce6e-55ec-4c66-b7a9-0c1e9687b3e4,
+     SYSTEM_BANK_GATEWAY = cf8cf0aa-183f-4ed9-b403-d1649482abc3 —
+     semua UUID acak, bukan ...0001/0002/0003 (001:366-368); count wallet
+     dengan id fixed itu = 0. Enum wallet_type_enum = 8 label (termasuk
+     SYSTEM_RECEIVABLE_OVERDRAFT) tapi wallet-nya tidak ada barisnya.
+     `SELECT count(*) FROM users WHERE user_type='system'` = 1, dan itu
+     hanya ...0005 (migration 019); count user dengan id ...0001-0003 = 0.
+     CATATAN KOREKSI FAKTA: changelog sesi TD-132 menulis "TIDAK ADA user
+     system sama sekali" — itu benar PADA SAAT itu, sebelum migration 019
+     di-apply. Sekarang ada 1 (hasil 019). Yang TETAP benar: 0 user system
+     untuk seed 001:354-356.
+   - TD-162: `grep -n "balance_non_negative" migrations/001_initial_
+     schema.up.sql` → 2 hit: :97 (min_balance_threshold, tabel lain) dan
+     :125 `CONSTRAINT balance_non_negative CHECK (balance >= -1000000)`
+     pada tabel wallets — level TABEL, jadi otomatis berlaku untuk
+     SYSTEM_PLATFORM_SUBSIDY. Migration 019 tidak menambah/melepas
+     constraint apa pun. Saldo subsidi di dev DB = -20.000 (ceiling masih
+     50x lipatan jauh).
+
+   PERUBAHAN ANGKA:
+   - Prioritas: SEDANG 73 → 76 (+3 entry baru). KRITIS 8, TINGGI 41,
+     RENDAH 31 tetap → 8 + 41 + 76 + 31 = 156.
+   - Status: OPEN 86 → 89 (+3). FIXED 46, CLOSED 14, DEFERRED 7,
+     FIXED/CLOSED 60 tetap → 46 + 14 + 7 + 89 = 156.
+   - TOTAL: 153 → 156. Range SECTION F: TD-058 s/d TD-159 → TD-058 s/d
+     TD-162.
+
+   [OVERRIDE-1 / §11.2] "OPEN 87→90" di prompt Reviewer → dikoreksi ke
+   OPEN 86 → 89. Bukti: parser atas 156 field `ID :` (semua entry
+   di-split pada `ID\s+: TD-\d+`, lalu `Status\s+:` dibaca) →
+   OPEN 86 + FIXED 46 + CLOSED 14 + DEFERRED 7 = 153 SEBELUM edit ini.
+   Angka 87 adalah snapshot sebelum TD-132 FIXED (lihat entri
+   "Perubahan 2026-09-29 — TD-132 FIXED" di §3, yang memang menulis
+   "OPEN 87 → 86"). Kalau dipakai 87 → 90, totalnya jadi 157 ≠ 156 dan
+   tidak akan reconcile dengan sum Prioritas 156. 3 entry baru, 3 OPEN baru:
+   86 + 3 = 89.
+
+   [OVERRIDE-2 / §11.2] Prompt Reviewer menyebut "SEDANG 73→76" dan
+   "range TD-058 s/d TD-159 → TD-058 s/d TD-162" — keduanya BENAR dan
+   diterapkan apa adanya. Dicatat agar tidak tertukar dengan pola
+   "bucket SEDANG turun saat entry FIXED" yang keliru terjadi 5× di
+   dokumen ini ([OVERRIDE-1] TD-106/TD-132, [OVERRIDE-2] TD-030/TD-031):
+   di sini bucket justru NAIK karena ketiganya entry BARU dengan
+   `Prioritas : SEDANG` dan Status OPEN — bukan karena ada entry FIXED
+   yang keluar.
+
+   CATATAN: dokumen ini tetap v2.0. tiga entry baru menambah SECTION F
+   saja; tidak ada perubahan struktur dokumen, tidak ada kode diubah, dan
+   tidak ada commit (R10 — Developer commit via PowerShell).
+
 
 ============================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
