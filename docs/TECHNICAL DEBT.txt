@@ -3224,25 +3224,110 @@ Solusi     : DIREKOMENDASIKAN: helper atau test-admin khusus yang membuat
              mengubah apa pun, putuskan juga apakah test ini wajar
              hidup di package auth (memakai seed admin) atau dipindah
              ke package admin.
-             BELUM dikerjakan di sesi ini: OpenCode STOP (§11.4 #2 —
-             auth/RBAC masuk kategori HARUS STOP). File test-nya memang
-             ada di SCOPE prompt, tetapi perbaikannya butuh keputusan
-             semantik RBAC (seed admin di test vs pindah ke package
-             admin) milik User/DeepSeek, bukan koreksi faktual sepele
-             yang boleh diasumsikan sendiri.
+             BELUM dikerjakan di sesi TD-166 (2026-09-29 pagi): OpenCode
+             STOP (§11.4 #2 — auth/RBAC masuk kategori HARUS STOP) karena
+             perbaikannya butuh keputusan semantik RBAC milik
+             User/DeepSeek, bukan koreksi faktual sepele. Keputusan User
+             (2026-09-29): OPSI "seed admin via pool.Exec" DIPILIH dan
+             scope ekspansi ke internal/auth/integration_test.go HANYA
+             disetujui. Test TIDAK dipindah ke package admin, dan
+             `allowedUserTypes` (handler.go:30-34) TIDAK disentuh.
+             SELESAI di sesi ini (2026-09-29, commit TD-168): helper
+             baru `seedAdminAndLogin` di integration_test.go —
+             (1) `bcrypt.GenerateFromPassword(<password test>,
+             bcrypt.MinCost)`, (2) `INSERT INTO users (email, name,
+             user_type, status, kyc_status, password_hash) VALUES
+             ($1,$2,'admin','ACTIVE','UNVERIFIED',$3) RETURNING id` lewat
+             `tc.pool.QueryRow` (pola seed yang sama dengan
+             TestAuthLogin_AccountInactive di baris 410 dan
+             internal/worker/ride_autocancel_integration_test.go:86),
+             (3) POST /api/v1/auth/login → token akses, plus assert
+             `user_type == "admin"` pada response login.
+             Password di-hash bcrypt SUNGGUHAN (bukan literal "x" seperti
+             wallet/integration_test.go:58 atau "seed-no-login" seperti
+             migration 015:12) supaya alur Login ikut ter-cover, bukan
+             token JWT yang dipalsukan di dalam test. Email unik per run
+             (`rbac-admin-<uuid>@test.com`) supaya constraint
+             `email UNIQUE` tidak bentrok lintas run. Wallet TIDAK dibuat
+             (admin tidak butuh — sama seperti catatan migration
+             014:44-46). Helper `registerAndLoginRole` TIDAK diubah dan
+             masih dipakai 2 test lain (customer).
+             HASIL: `TestAuthRBAC_Allowed` PASS (0.04s); suite integrasi
+             package auth 81 PASS + 1 SKIP + 0 FAIL (sebelum fix: 1 FAIL).
+Prioritas  : SEDANG
+Status     : ✅ FIXED (2026-09-29, sesi TD-168)
+Referensi  : TD-166 (test stale lain di file yang sama — keduanya sudah
+            FIXED di sesi yang sama), TD-169 (test FLAKY di file
+            jwt_unit_test.go yang ditemukan saat verifikasi sesi ini),
+            TD-167 (kenapa keduanya tidak pernah terlihat di pipeline),
+            TD-030 (keputusan admin tidak lagi default),
+            internal/admin/login_test.go:38-43 (pola `mustHash` bcrypt
+            yang diikuti helper baru ini)
+
+ID         : TD-169
+Kategori   : TESTING
+Judul      : `TestJWT_ValidateToken_InvalidSignature`
+              (internal/auth/jwt_unit_test.go) FLAKY ~6%: mutasi tanda
+              tangan `tokenStr[:len-1] + "x"` bisa menjadi NO-OP di level
+              byte, sehingga token hasil mutasi tetap LULUS validasi dan
+              test gagal secara acak.
+Dampak     : (1) `go test ./internal/auth/...` merah ~6% run tanpa ada
+              perubahan kode apa pun — sinyal hijau/hijau jadi tidak
+              bisa dipercaya, dan siapa pun yang kena akan membuang
+              waktu mengira ada regresi. (2) DI DALAM CI dampaknya
+              nyata: file ini tidak ber-tag `integration`, jadi ia tetap
+              dieksekusi pipeline `go test -short` — artinya CI bisa
+              merah secara acak (false alarm). (3) Tidak ada celah
+              keamanan: yang lemah testnya, bukan kode
+              `ValidateToken`.
+Bukti      : (a) Reproduksi di sesi ini: `go test ./internal/auth/ -run
+              'TestJWT_ValidateToken_InvalidSignature$' -count=300` ->
+              20 dari 300 run GAGAL dengan `jwt_unit_test.go:79: An
+              error is expected but got nil` (= 6,7%). (b) Mekanismenya
+              dibuktikan terpisah (Python, 20.000 sampel):
+              `base64.urlsafe_b64encode` 32 byte -> 43 char; indeks
+              alphabet base64url 'w' = 48 dan 'x' = 49, dan
+              `48 >> 2 == 49 >> 2 == 12`. Decoder Go pada quantum
+              3-char terakhir hanya memakai `dst[1] = dbuf[1]<<4 |
+              dbuf[2]>>2` (2 bit bawah diabaikan), jadi mengganti 'w'
+              -> 'x' TIDAK mengubah 32 byte signature yang dihasilkan
+              -> HMAC sama -> `ValidateToken` return nil error. 1.209
+              dari 20.000 sampel no-op = 6,0% ~ 1/16 (char terakhir
+              hanya bisa berindeks kelipatan 4, dan dari 16 nilai itu
+              hanya 'w' (48) yang sananya 'x'). (c) Sumbernya satu
+              baris: internal/auth/jwt_unit_test.go:77
+              `tokenStr = tokenStr[:len(tokenStr)-1] + "x"`.
+              (d) Terverifikasi BUKAN efek fix sesi ini: file ini tidak
+              ber-tag `integration`, jadi tidak ikut tercompile di
+              `go test -tags integration` dan tidak bisa disentuh
+              perubahan di internal/auth/integration_test.go.
+Solusi     : Ganti mutasi karakter terakhir dengan mutasi yang PASTI
+              mengubah bit signature — misalnya ubah karakter PERTENGAH
+              signature (bukan terakhir), atau validasi dengan secret
+              berbeda (pola yang sama seperti yang dipakai test JWT
+              lain: `NewJWTService("secret lain")` lalu
+              `ValidateToken(token)`), atau assertion langsung bahwa
+              signature bytes berbeda. JANGAN "perbaiki" dengan
+              `t.Skip` — itu menyembunyikan guard keamanan.
+              BELUM dikerjakan di sesi ini: file
+              internal/auth/jwt_unit_test.go di luar SCOPE prompt
+              (User menyetujui HANYA internal/auth/integration_test.go),
+              jadi dicatat saja sesuai R8.
 Prioritas  : SEDANG
 Status     : OPEN
-Referensi  : TD-166 (test stale lain di file yang sama — setelah
-             diperbaiki, inilah satu-satunya sisa merah di package
-             auth), TD-167 (kenapa dua-duanya tidak pernah terlihat di
-             pipeline), TD-030 (keputusan admin tidak lagi default)
+Referensi  : TD-168 (sesi yang sama — ditemukan saat verifikasi V4),
+            TD-167 (pipeline buta; ini kebalikannya — test TIDAK
+            diabaikan pipeline, tapi bisa merah sendiri secara acak),
+            internal/auth/jwt_test.go (test JWT non-flaky yang bisa
+            dijadikan pola), internal/admin/login_test.go:166-170
+            (test anti-timing-leak, sama-sama sadar determinisme)
 
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 162 item (TD-051 di-reserve/skip)
-                                       (50 FIXED + 14 CLOSED + 7 DEFERRED + 91 OPEN = 162)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 163 item (TD-051 di-reserve/skip)
+                                       (51 FIXED + 14 CLOSED + 7 DEFERRED + 91 OPEN = 163)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3283,7 +3368,23 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 162 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 80 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168)
+- SEDANG  : 81 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169)
+           [81 pada 2026-09-29 (sesi TD-168 FIXED + TD-169 entry baru): dua
+           perubahan yang SALAH SATUNNYA menggerakkan bucket ini. (a) TD-168
+           Status OPEN → FIXED, `Prioritas :`-nya tetap SEDANG → bucket ini
+           TIDAK bergerak untuk TD-168 (preseden: TD-047, TD-048, TD-113,
+           TD-121, TD-126, TD-127, TD-132, TD-144, TD-147, TD-166). Prompt
+           Reviewer menulis "SEDANG 80→79 (TD-168 close)" lalu di kalimat
+           yang sama "(...bucket SEDANG TIDAK bergerak saat close...)" —
+           angka 79 SALAH, yang benar 80 (lihat [OVERRIDE-1]).
+           (b) TD-169 (TESTING — `TestJWT_ValidateToken_InvalidSignature`
+           di internal/auth/jwt_unit_test.go:77 gagal ~6% karena mutasi
+           char terakhir signature 'w'→'x' adalah NO-OP di level byte
+           base64url; dibuktikan 20/300 run Go + 1.209/20.000 sampel
+           Python) adalah entry BARU dengan `Prioritas : SEDANG`, Status
+           OPEN → bucket SEDANG 80 → 81 (+1). KRITIS 8, TINGGI 42, RENDAH
+           32 tetap → 8 + 42 + 81 + 32 = 163 = TOTAL. Parser atas 163
+           field `ID :` mengonfirmasi (V3 sesi ini).]
            [80 pada 2026-09-29 (sesi TD-166 + TD-167 + TD-168): DUA entry
            baru dengan `Prioritas : SEDANG` — TD-166 (test integrasi
            merchant stale, FIXED di sesi yang sama) dan TD-168 (test
@@ -3456,8 +3557,22 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 162 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 50 item, 14 item CLOSED (FIXED/CLOSED 64), 7 item DEFERRED,
-        91 item OPEN.  [50 + 14 + 7 + 91 = 162 = TOTAL]
+STATUS: ✅ FIXED 51 item, 14 item CLOSED (FIXED/CLOSED 65), 7 item DEFERRED,
+        91 item OPEN.  [51 + 14 + 7 + 91 = 163 = TOTAL]
+        [51/65/7/91 pada 2026-09-29 (sesi TD-168 FIXED + TD-169 entry baru):
+        FIXED 50 → 51 (TD-168 — `TestAuthRBAC_Allowed` diperbaiki di SESI
+        INI dengan fixture admin hasil seed `pool.QueryRow` + login, bukan
+        self-register yang ditolak 422), FIXED/CLOSED 64 → 65, OPEN 91 → 90
+        (TD-168 ditutup) → 91 (+1 entry baru TD-169, jadi bucket OPEN
+        kembali ke 91), TOTAL 162 → 163. CLOSED 14 dan DEFERRED 7 tetap.
+        Bucket Prioritas: SEDANG 80 → 81 (HANYA karena TD-169 entry baru;
+        TD-168 tidak menggeser Prioritasnya), TINGGI 42, KRITIS 8, RENDAH
+        32 tetap → 8 + 42 + 81 + 32 = 163 = TOTAL. Parser atas 163 field
+        `ID :` mengonfirmasi kedua sum = 163 (V3 sesi ini). Prompt Reviewer
+        menulis "SEDANG 80→79" (kontradiktif dengan kalimatnya sendiri
+        "bucket SEDANG TIDAK bergerak saat close") dan "Total tetap 162" —
+        keduanya diluruskan di [OVERRIDE-1] dan [OVERRIDE-2] changelog
+        sesi ini.]
         [50/64/7/91 pada 2026-09-29 (sesi TD-166 FIXED + TD-167 + TD-168
         entry baru): FIXED 49 → 50 (TD-166 langsung FIXED — test-nya
         diperbaiki di sesi yang sama dengan pencatatan entry ini),
@@ -3580,16 +3695,41 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-29):
-   - Total hutang teridentifikasi      : 162 item (TD-051 di-reserve/skip; 162 item aktif terdaftar).
-   - ✅ FIXED                           : 50 item
+   - Total hutang teridentifikasi      : 163 item (TD-051 di-reserve/skip; 163 item aktif terdaftar).
+   - ✅ FIXED                           : 51 item
    - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 64 item
+   - FIXED/CLOSED                       : 65 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 91 item (bukan hanya TD-058 s/d TD-168 — masih ada
+   - ❌ OPEN                              : 91 item (bukan hanya TD-058 s/d TD-169 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [50 + 14 + 7 + 91 = 162 = TOTAL]
+     [51 + 14 + 7 + 91 = 163 = TOTAL]
+     [Perubahan 2026-09-29 (sesi TD-168 FIXED + TD-169 entry baru) —
+     SATU entry ditutup, SATU entry baru ditambahkan. (a) TD-168 (TESTING
+     — `TestAuthRBAC_Allowed` mencoba self-register role "admin" padahal
+     `allowedUserTypes` handler.go:30-34 hanya menerima
+     customer/driver/merchant → 422) FIXED di SESI INI: fixture admin
+     diubah dari self-register menjadi seed `INSERT INTO users` via
+     `tc.pool.QueryRow` + password bcrypt asli, lalu login lewat
+     /auth/login. `Prioritas :`-nya tetap SEDANG, jadi bucket Prioritas
+     TIDAK bergerak untuk TD-168 → FIXED 50 → 51, FIXED/CLOSED 64 → 65,
+     OPEN 91 → 90. (b) TD-169 (TESTING —
+     `TestJWT_ValidateToken_InvalidSignature` di
+     internal/auth/jwt_unit_test.go:77 flaky ~6%, dibuktikan 20 kegagalan
+     dari 300 run) entry BARU hasil TEMUAN DI LUAR SCOPE saat verifikasi
+     V4 sesi ini (R8 — dicatat, tidak diperbaiki; User menyetujui HANYA
+     internal/auth/integration_test.go): `Prioritas : SEDANG`, Status OPEN
+     → SEDANG 80 → 81, OPEN 90 → 91, TOTAL 162 → 163. CLOSED 14,
+     DEFERRED 7, KRITIS 8, TINGGI 42, RENDAH 32 tetap. Konsisten:
+     8 + 42 + 81 + 32 = 163 = TOTAL dan 51 + 14 + 7 + 91 = 163 = TOTAL.
+     Range SECTION F: TD-058 s/d TD-168 → TD-058 s/d TD-169. Parser atas
+     163 field `ID :` mengonfirmasi sum Prioritas = sum Status = 163
+     (V3 sesi ini). Koreksi fakta terhadap prompt Reviewer: "SEDANG
+     80→79" (prompt sendiri sekaligus menyebut bucket SEDANG tidak
+     bergerak saat close — angka 80 yang benar untuk TD-168) dan "Total
+     tetap 162" (naik 1 karena entry baru TD-169). Lihat [OVERRIDE-1]
+     dan [OVERRIDE-2] di changelog sesi ini. Tidak commit (R10).]
      [Perubahan 2026-09-29 (sesi TD-166 FIXED + TD-167 + TD-168 entry baru)
      — TIGA entry DITAMBAHKAN, jadi total naik 3, bukan 1. (a) TD-166
      (TESTING — TestAuthRegister_MerchantHasWallet_Integration masih
@@ -5759,6 +5899,159 @@ CHANGELOG — 2026-09-29 (sesi TD-166, integration test merchant wallet stale)
    assertion test yang sudah ditutup. Kalau nanti TD-165 diputuskan
    untuk ditutup penuh, TD-166 sebaiknya DICABUT (bukan dibiarkan
    FIXED) supaya tidak ada dua entri untuk satu keputusan yang sama.
+
+===========================================================================
+CHANGELOG — 2026-09-29 (sesi TD-168, integration test RBAC admin stale)
+===========================================================================
+   SCOPE: 1 file test (internal/auth/integration_test.go) + register
+   (2 entri: TD-168 FIXED, TD-169 OPEN). TIDAK ada file produksi
+   (handler.go / rbac.go / jwt.go / repository.go) dan TIDAK ada migration
+   yang disentuh (R8). Fix HANYA di test; User mengizinkan ekspansi ke
+   internal/auth/integration_test.go untuk TD-168.
+
+   ROOT CAUSE:
+   `TestAuthRBAC_Allowed` (integration_test.go:381-391 sebelum fix) memakai
+   `registerAndLoginRole(t, r, "admin")`, dan helper itu PUNYA pathway
+   `/auth/register`. Handler Register sengaja menolak `user_type='admin'`:
+   `allowedUserTypes` (handler.go:30-34) hanya {customer, driver, merchant},
+   jadi Register balas 422 INVALID_USER_TYPE (handler.go:160-163) ->
+   `t.Fatalf` di test. Kode produksi BENAR (self-register admin lewat
+   public API adalah lubang; konsisten dengan scripts/seed_admin.sh:126
+   dan migration 017). Yang usang FIXTURE-nya: sejak TD-030 admin tidak
+   lagi dibuat lewat API, dan tidak pernah ada jalur test untuk membuat
+   admin — `registerAndLoginRole` hanya punya cabang khusus "driver".
+
+   CEK (file:line + output, R1):
+   1. internal/auth/handler.go:30-34 — `allowedUserTypes` = customer /
+      driver / merchant. admin tidak ada. TIDAK diubah di sesi ini
+      (mengubahnya = membatalkan keputusan keamanan TD-030).
+   2. internal/auth/rbac.go:23-43 — `RBACMiddleware("admin")` hanya
+      membandingkan `user_type` dari context JWT, jadi 403 hilang begitu
+      ada user dengan role admin, tanpa perlu pathway register.
+   3. BASELINE (sebelum fix, DB dev nyata): `DATABASE_URL=postgresql://
+      postgres:password@localhost:15432/g_flow_dev?sslmode=disable go test
+      -tags integration ./internal/auth/... -count=1 -run TestAuthRBAC -v`
+      -> `--- FAIL: TestAuthRBAC_Allowed (0.02s)`,
+      `integration_test.go:386: register role admin gagal: 422 {"error":
+      {"code":"INVALID_USER_TYPE",...}}`. Sibling TestAuthRBAC_Forbidden
+      tetap PASS -> RBACMiddleware-nya sendiri sehat.
+   4. migrations/014_seed_admin.up.sql:27-42 (INSERT users admin, TIDAK
+      lewat API) dan migrations/015_seed_admin_e2e.up.sql:12-13
+      (`password_hash = 'seed-no-login'`) — pola seed admin yang sudah
+      ada di repo, dipakai sebagai rujukan.
+   5. Pola seed via pool di test lain: internal/auth/integration_test.go:410
+      (UPDATE status via `tc.pool.Exec`) dan
+      internal/worker/ride_autocancel_integration_test.go:86
+      (`INSERT INTO users ... RETURNING id`).
+   6. internal/admin/login_test.go:38-43 — `mustHash` dengan
+      `bcrypt.MinCost`, pola yang diikuti helper baru.
+
+   FIX (STEP A — fixture, bukan assertion, bukan production code):
+   internal/auth/integration_test.go. Helper baru `seedAdminAndLogin`:
+   bcrypt hash password test (MinCost) -> `INSERT INTO users (email,
+   name, user_type, status, kyc_status, password_hash) VALUES
+   ($1,$2,'admin','ACTIVE','UNVERIFIED',$3) RETURNING id` via
+   `tc.pool.QueryRow` -> POST /api/v1/auth/login -> token akses, plus
+   assert `user_type == "admin"` di response login. Email unik per run
+   (`rbac-admin-<uuid>@test.com`) agar `email UNIQUE` tidak bentrok.
+   `TestAuthRBAC_Allowed` sekarang memanggil helper itu; ekspektasi 200
+   untuk /api/v1/admin/panel TETAP (assertion tidak diturunkan jadi 422 —
+   itu akan menghapus coverage jalur "admin BOLEH akses endpoint admin").
+   Test TIDAK dipindah ke package admin (User memilih opsi seed), dan
+   `registerAndLoginRole` tidak diubah — masih dipakai 2 test lain
+   (customer). Password di-hash bcrypt sungguhan, bukan literal
+   placeholder, supaya alur Login ikut ter-cover.
+
+   [OVERRIDE-1 / §11.2] Prompt Reviewer menulis angka: "SEDANG 80->79
+   (TD-168 Prioritas SEDANG close — bucket SEDANG TIDAK bergerak saat
+   close; verify parser!)" — prompt ini kontradiktif di dalam satu
+   kalimat. Parser dijalankan SEBELUM menulis angka (R1/R2): atas 162
+   field `ID :` -> Prioritas KRITIS 8 + TINGGI 42 + SEDANG 80 + RENDAH
+   32 = 162, dan Status FIXED 50 + CLOSED 14 + DEFERRED 7 + OPEN 91 =
+   162. Jadi untuk TD-168 saja: bucket Prioritas SEDANG TIDAK bergerak
+   (tetap 80 — `Prioritas :`-nya tetap SEDANG, preseden TD-047, TD-048,
+   TD-113, TD-121, TD-126, TD-127, TD-132, TD-144, TD-147, TD-166),
+   FIXED 50 -> 51, FIXED/CLOSED 64 -> 65, OPEN 91 -> 90, TOTAL 162
+   tetap. Angka "79" tidak ditulis di mana pun karena bertentangan
+   dengan parser.
+
+   [OVERRIDE-2 / §11.2] Prompt Reviewer menulis "Total tetap 162". Itu
+   benar UNTUK TD-168 saja, tapi sesi ini juga menemukan TEMUAN DI LUAR
+   SCOPE yang wajib dicatat menurut R8 ("kalau nemu masalah di luar
+   scope -> catat TD"): `TestJWT_ValidateToken_InvalidSignature` di
+   internal/auth/jwt_unit_test.go:77 FLAKY ~6% (detail di entry
+   TD-169). Entry itu baru, `Prioritas : SEDANG`, Status OPEN, jadi
+   angka final sesi ini: TOTAL 162 -> 163, Prioritas SEDANG 80 -> 81
+   (+1 HANYA karena entry baru), OPEN 90 -> 91, FIXED 51, CLOSED 14,
+   DEFERRED 7, KRITIS 8, TINGGI 42, RENDAH 32. Konsisten: 8 + 42 + 81 +
+   32 = 163 dan 51 + 14 + 7 + 91 = 163. Bila User/DeepSeek memilih TIDAK
+   ingin TD-169 masuk register sesi ini: hapus entry TD-169 lalu
+   turunkan 1 bucket OPEN (91 -> 90), 1 SEDANG (81 -> 80), 1 TOTAL
+   (163 -> 162); angka lain tidak berubah (FIXED 51, FIXED/CLOSED 65).
+
+   TEMUAN DI LUAR SCOPE (R8 — dicatat sebagai TD-169, TIDAK diperbaiki):
+   saat menjalankan V4, `TestJWT_ValidateToken_InvalidSignature` GAGAL
+   SEKALI: `jwt_unit_test.go:79: An error is expected but got nil`.
+   Bukti itu pre-existing dan BUKAN efek fix sesi ini — file
+   jwt_unit_test.go tidak ber-tag `integration`, jadi tidak ikut
+   tercompile di `go test -tags integration` dan tidak bisa disentuh
+   oleh perubahan di integration_test.go. Root cause (dibuktikan, bukan
+   dugaan): baris 77 melakukan mutasi `tokenStr[:len(tokenStr)-1] +
+   "x"`; signature HS256 32 byte = 43 char base64url, dan decoder Go
+   hanya memakai 4 bit teratas char terakhir (`dst[1] = dbuf[1]<<4 |
+   dbuf[2]>>2`), sehingga 'w' (indeks 48) -> 'x' (indeks 49) menghasilkan
+   32 byte signature YANG IDENTIK -> HMAC sama -> `ValidateToken`
+   return nil -> `require.Error` gagal. Ukuran: `go test ./internal/auth/
+   -run 'TestJWT_ValidateToken_InvalidSignature$' -count=300` -> 20
+   kegagalan; uji base64 terpisah 20.000 sampel -> 1.209 no-op = 6,0%
+   ~ 1/16. Catatan: file ini TETAP ikut jalan di CI (`go test -short`),
+   jadi ini kebalikan dari TD-167 — bukan test yang tidak dijalankan,
+   tapi test yang bisa merah sendiri secara acak.
+
+   PERUBAHAN ANGKA (hasil parser, bukan hasil prompt):
+   - Total: 162 -> 163 (+1 entry baru TD-169). Range SECTION F:
+     TD-058 s/d TD-168 -> TD-058 s/d TD-169.
+   - Status: FIXED 50 -> 51, FIXED/CLOSED 64 -> 65, OPEN 91 -> 90 -> 91,
+     CLOSED 14 dan DEFERRED 7 tetap.
+   - Prioritas: SEDANG 80 -> 81 (hanya +1 dari TD-169; TD-168 tidak
+     menggeser Prioritasnya), TINGGI 42, KRITIS 8, RENDAH 32 tetap.
+
+   VERIFIKASI SESI INI:
+   - V1 `go build ./...` -> PASS (exit 0, tanpa output).
+   - V2 `go vet ./...` -> PASS (exit 0, tanpa output).
+   - V3 `DATABASE_URL=postgresql://postgres:password@localhost:15432/
+     g_flow_dev?sslmode=disable go test -tags integration ./internal/auth/
+     ... -count=1 -v` -> `--- PASS: TestAuthRBAC_Allowed (0.04s)`;
+     TOTAL paket: 81 PASS + 1 SKIP + 0 FAIL. (SKIP =
+     TestJWT_ValidateToken_InvalidAlg yang memang `t.Skip` di sumber.)
+     Package auth SEKARANG SEPENUHNYA HIJAU — TD-166 (sesi lalu) dan
+     TD-168 (sesi ini) sudah tertutup. Catatan: prompt Reviewer menulis
+     "Expected: 22/22 PASS"; angka itu SALAH — `-tags integration`
+     mengcompile unit test TANPA tag di package yang sama juga, jadi
+     totalnya 82 entri test (81 PASS + 1 SKIP), bukan 22.
+   - V4 `go test ./internal/auth/... -count=1` -> PASS pada 4 run
+     berturut-turut. Run PERTAMA gagal 1 test —
+     `TestJWT_ValidateToken_InvalidSignature` — dan itu flaky test
+     TD-169, bukan efek fix ini (A/B dengan `git stash` + 3 run ulang
+     mengonfirmasi file test yang diubah sesi ini tidak masuk build
+     tanpa tag sama sekali).
+   - V5 `git status --short` -> `M "docs/TECHNICAL DEBT.txt"` dan
+     `M internal/auth/integration_test.go` saja.
+   - V6 parser atas 163 field `ID :` -> Prioritas 8 + 42 + 81 + 32 = 163
+     dan Status 51 + 14 + 7 + 91 = 163.
+
+   SCOPE & RULES:
+   - Fix hanya di internal/auth/integration_test.go (file test, bukan
+     produksi). `handler.go`, `rbac.go`, `jwt.go`, migration, dan CI
+     tidak diubah.
+   - Tidak commit / tidak push (R10 — Developer commit via PowerShell).
+   - Dokumen tetap v2.0: 1 entry SECTION F baru (TD-169) + blok
+     ringkasan §2/§3 + 1 entri changelog; blok changelog historis
+     tidak disentuh.
+   - `gofmt -l internal/auth/` melaporkan `handler_test.go` sebagai
+     belum terformat — PRE-EXISTING, bukan hasil sesi ini (`git status`
+     membuktikan file itu tidak berubah); file yang diubah sesi ini
+     (`integration_test.go`) TIDAK muncul di `gofmt -l`.
 
 ===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

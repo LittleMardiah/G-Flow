@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/g-flow/g-flow/internal/auth"
 	"github.com/g-flow/g-flow/internal/db"
@@ -366,6 +367,50 @@ func TestAuthLogout_RevokesToken(t *testing.T) {
 	}
 }
 
+// adminFixturePassword adalah password TEST-ONLY untuk user admin yang di-seed
+// di dalam test. Bukan kredensial environment mana pun dan tidak bergantung
+// pada seed migration 014/015.
+const adminFixturePassword = "admin-test-password123"
+
+// seedAdminAndLogin membuat user admin langsung di DB lalu login lewat
+// /auth/login untuk mendapatkan access token.
+//
+// MENGAPA tidak lewat /auth/register: endpoint publik itu SENGAJA menolak
+// user_type=admin — allowedUserTypes di internal/auth/handler.go hanya
+// customer/driver/merchant (lihat juga walletsForUserType: admin tidak
+// self-register). Jadi fixture admin harus di-seed via INSERT, bukan lewat
+// endpoint publik. Password di-hash bcrypt sungguhan (MinCost, cukup untuk
+// test) supaya alur Login ikut ter-cover, bukan token JWT yang dipalsukan.
+func seedAdminAndLogin(t *testing.T, tc *testConfig, r *gin.Engine) string {
+	t.Helper()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(adminFixturePassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash password admin test: %v", err)
+	}
+
+	email := "rbac-admin-" + strings.ReplaceAll(uuid.New().String(), "-", "") + "@test.com"
+	var userID uuid.UUID
+	if err := tc.pool.QueryRow(t.Context(), `
+		INSERT INTO users (email, name, user_type, status, kyc_status, password_hash)
+		VALUES ($1, 'RBAC Test Admin', $2, 'ACTIVE', 'UNVERIFIED', $3)
+		RETURNING id`, email, "admin", string(hash)).Scan(&userID); err != nil {
+		t.Fatalf("seed admin gagal: %v", err)
+	}
+
+	wLogin, resp := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", gin.H{
+		"email":    email,
+		"password": adminFixturePassword,
+	}, "")
+	if wLogin.Code != http.StatusOK || resp.Data.AccessToken == "" {
+		t.Fatalf("login admin gagal: %d %s", wLogin.Code, wLogin.Body.String())
+	}
+	if resp.Data.UserType != "admin" {
+		t.Fatalf("user_type = %q, want admin", resp.Data.UserType)
+	}
+	return resp.Data.AccessToken
+}
+
 // TestAuthRBAC_Forbidden: role customer tidak boleh akses endpoint admin.
 func TestAuthRBAC_Forbidden(t *testing.T) {
 	tc := setupTestConfig(t)
@@ -379,11 +424,14 @@ func TestAuthRBAC_Forbidden(t *testing.T) {
 }
 
 // TestAuthRBAC_Allowed: role admin boleh akses endpoint admin.
+//
+// Fixture admin memakai seedAdminAndLogin (INSERT langsung ke DB) karena
+// /auth/register memang menolak user_type=admin sesuai desain produksi.
 func TestAuthRBAC_Allowed(t *testing.T) {
 	tc := setupTestConfig(t)
 	r := tc.newRouter()
 
-	token := registerAndLoginRole(t, r, "admin")
+	token := seedAdminAndLogin(t, tc, r)
 	w, _ := doJSON(t, r, http.MethodGet, "/api/v1/admin/panel", nil, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
