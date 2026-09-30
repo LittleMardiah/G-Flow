@@ -318,6 +318,51 @@ void main() {
       expect(o.pickupLat, 0);
       expect(o.paymentMethod, 'WALLET');
     });
+
+    test('fromJson parse cancellation_fee (num & string)', () {
+      final asNum = RideOrder.fromJson(const {'id': 'a', 'cancellation_fee': 10000});
+      expect(asNum.cancellationFee, 10000);
+      final asString = RideOrder.fromJson(const {'id': 'a', 'cancellation_fee': '5000'});
+      expect(asString.cancellationFee, 5000);
+      final absent = RideOrder.fromJson(const {'id': 'a'});
+      expect(absent.cancellationFee, isNull);
+      final zero = RideOrder.fromJson(const {'id': 'a', 'cancellation_fee': 0});
+      expect(zero.cancellationFee, 0);
+    });
+
+    test('copyWith set cancellationFee', () {
+      final o = RideOrder(id: 'x', status: 'DRIVER_ASSIGNED', pickupLat: 0, pickupLng: 0, dropoffLat: 1, dropoffLng: 1);
+      expect(o.cancellationFee, isNull);
+      final c = o.copyWith(status: 'CANCELLED', cancellationFee: 5000);
+      expect(c.cancellationFee, 5000);
+      expect(c.status, 'CANCELLED');
+      expect(o.copyWith().cancellationFee, isNull);
+    });
+  });
+
+  // TD-131: tabel preview fee harus sinkron dengan `cancellationFeeFor`
+  // di internal/ride/service.go (CancellationFeeAssigned/Arrived).
+  group('rideCancellationFeeForStatus', () {
+    test('cocok dengan cancellationFeeFor backend', () {
+      expect(rideCancellationFeeForStatus('SEARCHING_DRIVER'), 0);
+      expect(rideCancellationFeeForStatus('DRIVER_ASSIGNED'), 5000);
+      expect(rideCancellationFeeForStatus('DRIVER_ARRIVED'), 10000);
+      // TRIP_STARTED = 10.000 (regresi: sebelumnya jatuh ke 0).
+      expect(rideCancellationFeeForStatus('TRIP_STARTED'), 10000);
+    });
+
+    test('status terminal / unknown / null = 0', () {
+      expect(rideCancellationFeeForStatus('COMPLETED'), 0);
+      expect(rideCancellationFeeForStatus('SETTLED'), 0);
+      expect(rideCancellationFeeForStatus('CANCELLED'), 0);
+      expect(rideCancellationFeeForStatus('MADE_UP'), 0);
+      expect(rideCancellationFeeForStatus(null), 0);
+    });
+
+    test('konstanta fee sesuai service.go', () {
+      expect(kRideCancellationFeeAssigned, 5000);
+      expect(kRideCancellationFeeArrived, 10000);
+    });
   });
 
   group('DriverInfo', () {

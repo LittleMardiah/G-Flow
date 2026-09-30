@@ -87,11 +87,21 @@ class RideService {
 
   /// PATCH /rides/{order_id}/status untuk membatalkan ride (reason
   /// default CUSTOMER_CANCEL sesuai state machine ROADMAP 02 bagian 2.4).
-  Future<void> cancelRide(String orderId, {String reason = 'CUSTOMER_CANCEL'}) async {
-    await apiClient.patch(
+  ///
+  /// Mengembalikan objek `data` dari response — berisi `cancellation_fee`
+  /// yang benar-benar dipungut backend (TD-131). Field tersebut tidak
+  /// selalu ada: di-omitempty saat nil, dan tidak ada untuk status selain
+  /// CANCELLED. Pemanggil wajib tolerate key yang tidak ada.
+  Future<Map<String, dynamic>> cancelRide(
+    String orderId, {
+    String reason = 'CUSTOMER_CANCEL',
+  }) async {
+    final res = await apiClient.patch(
       '/api/v1/rides/$orderId/status',
       data: {'status': 'CANCELLED', 'reason': reason},
     );
+    final data = res.data is Map<String, dynamic> ? res.data['data'] : null;
+    return data is Map<String, dynamic> ? data : const <String, dynamic>{};
   }
 }
 

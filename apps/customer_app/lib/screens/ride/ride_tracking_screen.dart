@@ -241,11 +241,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     RideTrackingState tracking,
   ) async {
     final order = tracking.order;
-    final fee = switch (order?.status) {
-      'DRIVER_ASSIGNED' => 5000,
-      'DRIVER_ARRIVED' => 10000,
-      _ => 0,
-    };
+    // Preview fee mengikuti `cancellationFeeFor` backend untuk reason
+    // CUSTOMER_CANCEL: TRIP_STARTED → 10.000, bukan 0.
+    final fee = rideCancellationFeeForStatus(order?.status);
     final feeText = fee > 0
         ? 'Anda akan dikenakan biaya pembatalan ${_formatRupiah(fee)}.'
         : 'Pembatalan saat ini tidak dikenakan biaya.';
@@ -278,8 +276,18 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
     final success = await ref.read(rideTrackingProvider(args).notifier).cancelRide();
     if (success && context.mounted) {
+      // Fee dibaca dari response backend (bukan dari preview dialog) supaya
+      // angka yang tampil = angka yang benar-benar dipungut (TD-131).
+      final charged =
+          ref.read(rideTrackingProvider(args)).order?.cancellationFee ?? 0;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ride berhasil dibatalkan')),
+        SnackBar(
+          content: Text(
+            charged > 0
+                ? 'Ride dibatalkan. Biaya pembatalan ${_formatRupiah(charged)} telah dipotong.'
+                : 'Ride berhasil dibatalkan',
+          ),
+        ),
       );
     }
   }

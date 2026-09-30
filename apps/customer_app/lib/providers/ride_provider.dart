@@ -163,13 +163,21 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
 
   /// Membatalkan ride. Mengembalikan true jika sukses. Pada mode mock,
   /// request hanya disimulasikan (delay singkat) lalu status di-set CANCELLED.
+  ///
+  /// Fee yang benar-benar dipungut dibaca dari `cancellation_fee` pada
+  /// response PATCH status (TD-131) dan disimpan ke [RideOrder.cancellationFee]
+  /// supaya UI bisa memverifikasi & menampilkannya — bukan rely pada
+  /// preview dialog. Jika backend tidak mengirim field tersebut (omitempty
+  /// saat nil), fee jatuh ke 0.
   Future<bool> cancelRide() async {
     if (state.isCancelling || state.order?.isTerminal == true) return false;
     state = state.copyWith(isCancelling: true, error: null);
 
     try {
+      var fee = 0;
       if (!kUseMockRideData) {
-        await _service.cancelRide(_args.orderId);
+        final data = await _service.cancelRide(_args.orderId);
+        fee = _feeFrom(data['cancellation_fee']);
       } else {
         await Future<void>.delayed(const Duration(milliseconds: 800));
       }
@@ -178,7 +186,11 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
       state = RideTrackingState(
         isLoading: false,
         isMock: kUseMockRideData,
-        order: current?.copyWith(status: 'CANCELLED', cancellationReason: 'CUSTOMER_CANCEL'),
+        order: current?.copyWith(
+          status: 'CANCELLED',
+          cancellationReason: 'CUSTOMER_CANCEL',
+          cancellationFee: fee,
+        ),
         driver: current?.driver,
         message: 'Ride berhasil dibatalkan',
       );
@@ -191,6 +203,14 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
       );
       return false;
     }
+  }
+
+  /// `cancellation_fee` dikirim backend sebagai decimal → JSON number
+  /// (atau string bila kolom bertipe numerik). Toleran keduanya.
+  static int _feeFrom(Object? raw) {
+    if (raw is num) return raw.round();
+    if (raw == null) return 0;
+    return int.tryParse('$raw') ?? 0;
   }
 
   @override

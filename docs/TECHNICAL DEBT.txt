@@ -1897,8 +1897,75 @@ Dampak     : User tidak lihat berapa fee yang dikenakan saat cancel —
 Solusi     : Update customer/driver screen cancel confirmation dialog untuk
              tampilkan cancellation_fee dari response.
 Prioritas  : SEDANG
-Status     : OPEN
-Referensi  : TD-068 (temuan OpenCode)
+Status     : ✅ FIXED (2026-09-30, sesi TD-131)
+Note       : Customer side selesai; driver side TIDAK ikut dan dipisah ke
+             TD-170 (R8 — di luar scope fix ini).
+             BUG NYATA YANG DIPERBAIKI (bukan sekadar UX): dialog
+             konfirmasi cancel di customer_app memakai switch
+             `switch (order?.status) { 'DRIVER_ASSIGNED' => 5000,
+             'DRIVER_ARRIVED' => 10000, _ => 0 }`, sehingga status
+             TRIP_STARTED jatuh ke `_ => 0` dan dialog menjanjikan
+             "tidak dikenakan biaya" padahal backend menagih 10.000.
+             Bukti backend (source of truth penentuan fee):
+             `cancellationFeeFor` (internal/ride/service.go:910) untuk
+             reason CUSTOMER_CANCEL masuk cabang
+             `case statusDriverArrived, statusTripStarted: return
+             decimal.NewFromInt(CancellationFeeArrived)`
+             (service.go:920-921) = 10.000 (konstanta service.go:105-106;
+             `statusTripStarted` service.go:61). Bandingkan komentar
+             service.go:908-909 yang memang menulis "DRIVER_ARRIVED/
+             TRIP_STARTED -> Rp 10.000" — jadi kode backend dan dialog
+             mobile memang berbeda, dan yang salah adalah mobile.
+             PERBAIKAN (6 file, semuanya di dalam customer_app):
+             (1) `kRideCancellationFeeByStatus` (models/ride_order.dart:31)
+             + `rideCancellationFeeForStatus()` (ride_order.dart:41) jadi
+             SATU sumber kebenaran untuk preview fee di dialog — kunci
+             statusnya sekarang persis mencerminkan switch
+             `cancellationFeeFor` backend, termasuk TRIP_STARTED → 10.000;
+             status yang tidak bisa di-cancel (COMPLETED/SETTLED) tetap 0
+             karena aksi cancel memang disembunyikan di status itu
+             (`kTerminalRideStatuses`, ride_order.dart:15).
+             (2) `RideOrder.cancellationFee` (ride_order.dart:99) +
+             parsing `cancellation_fee` (ride_order.dart:133): fee yang
+             benar-benar dipungut backend kini tersimpan di state, bukan
+             lagi tebakan lokal.
+             (3) `RideService.cancelRide` (services/ride_service.dart:95)
+             BALIK mengembalikan objek `data` (sebelumnya `Future<void>`),
+             dan `RideTrackingNotifier.cancelRide`
+             (providers/ride_provider.dart:172) membacanya secara toleran
+             lewat `_feeFrom` (ride_provider.dart:210) yang menerima num
+             maupun string dan jatuh ke 0 bila field tidak dikirim
+             backend (`cancellation_fee` di-omitempty saat nil).
+             (4) Dialog preview sekarang memanggil
+             `rideCancellationFeeForStatus(order?.status)`
+             (screens/ride/ride_tracking_screen.dart:246) dan SnackBar
+             setelah cancel (ride_tracking_screen.dart:283) menampilkan
+             fee ACTUAL dari response backend, bukan lagi teks generik
+             "Ride berhasil dibatalkan".
+             TES: 2 file test ikut berubah —
+             test/models_extended_test.dart (+45 baris) dan
+             test/ride_screens_test.dart (+131 baris).
+             [PERLU VERIFIKASI] Klaim prompt "flutter analyze clean + 118
+             test PASS (customer_app)" TIDAK dapat saya ulang di
+             environment ini: Flutter SDK di /mnt/d/flutter hanya berisi
+             binary Windows (`bin/cache/dart-sdk/bin/dart.exe`, tidak ada
+             `bin/dart`) dan `bin/flutter` gagal dijalankan
+             (`internal/shared.sh: line 5: $'\r': command not found` —
+             CRLF line ending). Yang TERBUKTI secara statis: 118
+             deklarasi test/testWidgets di apps/customer_app/test/
+             (cart_provider 15 + models_extended 51 + models 7 +
+             ride_screens 8 + services 32 + wallet_screens 4 + widget 1 =
+             118) — ANGKA COCOK dengan klaim prompt, tapi status PASS-nya
+             belum diulang oleh saya dan harus diulang User sebelum commit.
+             Catatan commit: fix masih BELUM di-commit saat entry ini
+             ditulis (`git status --short` = 6 file customer_app modified,
+             `git log --grep TD-131` = 0 hasil), jadi Status menulis
+             "sesi TD-131" bukan "commit TD-131" — lihat [OVERRIDE-1] di
+             ringkasan sesi ini.
+Referensi  : TD-068 (temuan OpenCode + basic cancellation fee/emergency
+             cancel backend), TD-170 (driver side cancel/emergency cancel
+             flow — dipisah dari TD-131), internal/ride/service.go:903-925
+             (cancellationFeeFor = source of truth fee)
 
 ID         : TD-132
 Kategori   : BACKEND / FITUR
@@ -3545,12 +3612,67 @@ Referensi  : TD-168 (sesi yang sama — ditemukan saat verifikasi V4),
             dijadikan pola), internal/admin/login_test.go:166-170
             (test anti-timing-leak, sama-sama sadar determinisme)
 
+ID         : TD-170
+Kategori   : MOBILE / FITUR
+Judul      : Driver app tidak punya cancel/emergency cancel flow untuk
+             ride order — tidak ada tombol cancel, dan
+             `order_service.updateRideStatus()` tidak punya param
+             `reason` untuk kirim DRIVER_EMERGENCY.
+Dampak     : Driver tidak bisa cancel order dari HP saat emergency —
+             harus menyelesaikan perjalanan atau menghubungi customer lewat
+             channel lain. Backend endpoint sudah support penuh:
+             PATCH /rides/:id/status dengan
+             reason=DRIVER_EMERGENCY (TD-068).
+Solusi     : 1) Tombol "Cancel (Emergency)" di
+             active_order_detail_screen (driver_app),
+             2) `updateRideStatus(id, status, {String? reason})` di
+             order_service.dart,
+             3) Dialog konfirmasi + info refund penuh customer,
+             4) Wire ke backend PATCH /rides/:id/status.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-131 (customer side selesai, driver side baru),
+             TD-068 (backend emergency cancel + fee)
+
+BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
+1. `apps/driver_app/lib/screens/active_order_detail_screen.dart` (327
+   baris) tidak punya aksi cancel sama sekali. Satu-satunya tombolnya:
+   dialog konfirmasi (`:88` TextButton "Batal", `:89` FilledButton "Ya"),
+   navigasi multi-stop (`:217`), dan tombol aksi status (`:227` →
+   `_applyAction(order, action)`). `_nextAction` (`:55-60`) hanya
+   menghasilkan 2 aksi: 'Mulai perjalanan' (DRIVER_ASSIGNED →
+   TRIP_STARTED, `:59`) dan 'Selesaikan perjalanan' (TRIP_STARTED →
+   COMPLETED, `:60`). `grep -ci cancel` pada file itu = 0 hasil.
+2. `apps/driver_app/lib/services/order_service.dart:156` —
+   `Future<Map<String, dynamic>> updateRideStatus(String orderId, String
+   status)` mengirim body `{'status': status}` saja (`:157-159`). Tidak
+   ada param `reason`, jadi driver_app secara fisik tidak bisa mengirim
+   reason apa pun, termasuk DRIVER_EMERGENCY. Satu-satunya pemanggilnya
+   (`order_provider.dart:168`) juga tidak punya jalur cancel.
+3. Backend SUDAH mendukung penuh, jadi ini murni gap mobile (bukan gap
+   backend): `reasonDriverEmergency = "DRIVER_EMERGENCY"`
+   (internal/ride/service.go:96); `cancelOrderTx` (service.go:826-833)
+   bahkan otomatis memakai reason itu bila driver yang membatalkan tidak
+   menyertakan reason; guard anti-bypass (service.go:841-846) mewajibkan
+   `order.DriverID == req.UserID` sehingga customer tidak bisa memalsukan
+   reason untuk menghindari fee; fee DRIVER_EMERGENCY = 0 / full refund
+   (service.go:914-915, komentar service.go:905 "DRIVER_EMERGENCY -> 0
+   (full refund, tanpa penalti)"). Jalur backend sudah teruji:
+   internal/ride/integration_test.go:812-847 (driver PATCH status
+   CANCELLED + DRIVER_EMERGENCY → order kembali IDLE,
+   `cancellation_reason` terisi, event cancel tercatat).
+CATATAN SCOPE : TD-131 sudah menutup sisi customer (parse
+`cancellation_fee` + preview dialog via single source of truth
+`kRideCancellationFeeByStatus`) dan note di sana sengaja menunjuk ke
+entry ini untuk sisi driver — supaya tidak ada satu entry TD yang
+meng klaim dua domain (mobile customer + mobile driver) sekaligus.
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 163 item (TD-051 di-reserve/skip)
-                                       (53 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN = 163)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 164 item (TD-051 di-reserve/skip)
+                                       (54 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN = 164)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3591,7 +3713,21 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 163 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 81 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169)
+- SEDANG  : 82 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170)
+           [82 pada 2026-09-30 (sesi TD-131 FIXED + TD-170 entry baru): bucket
+           ini berbasis `Prioritas :`, BUKAN `Status :`, jadi TEPAT SATU
+           perubahan yang menggerakkan: TD-170. (a) TD-131 Status OPEN →
+           FIXED dengan `Prioritas :`-nya tetap SEDANG → bucket ini TIDAK
+           bergerak untuk TD-131 (preseden: TD-047, TD-048, TD-113,
+           TD-121, TD-126, TD-127, TD-132, TD-144, TD-147, TD-166,
+           TD-168). (b) TD-170 (MOBILE / FITUR — driver_app tidak punya
+           cancel/emergency cancel flow: nol tombol cancel di
+           active_order_detail_screen.dart dan `updateRideStatus()`
+           order_service.dart:156 tidak punya param `reason`) adalah
+           entry BARU dengan `Prioritas : SEDANG`, Status OPEN dari awal
+           → bucket SEDANG 81 → 82 (+1). KRITIS 8, TINGGI 42, RENDAH 32
+           tetap → 8 + 42 + 82 + 32 = 164 = TOTAL. Parser atas 164 field
+           `ID :` mengonfirmasi kedua sum = 164 (V2 sesi ini).]
            [81 pada 2026-09-29 (sesi TD-168 FIXED + TD-169 entry baru): dua
            perubahan yang SALAH SATUNNYA menggerakkan bucket ini. (a) TD-168
            Status OPEN → FIXED, `Prioritas :`-nya tetap SEDANG → bucket ini
@@ -3780,8 +3916,29 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 163 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 51 item, 14 item CLOSED (FIXED/CLOSED 65), 7 item DEFERRED,
-        91 item OPEN.  [51 + 14 + 7 + 91 = 163 = TOTAL]
+STATUS: ✅ FIXED 54 item, 29 item CLOSED (FIXED/CLOSED 83), 7 item DEFERRED,
+        74 item OPEN.  [54 + 29 + 7 + 74 = 164 = TOTAL]
+        [54/83/7/74 pada 2026-09-30 (sesi TD-131 FIXED + TD-170 entry baru):
+        SATU entry ditutup, SATU entry baru ditambahkan. (a) TD-131 (MOBILE
+        — `cancellation_fee` response PATCH /rides/:id/status tidak
+        di-expose di customer_app; fix sesi ini menutupnya BERSAMA bug
+        nyata: dialog preview punya `_ => 0` untuk TRIP_STARTED padahal
+        backend `cancellationFeeFor` menagih 10.000) FIXED: FIXED 53 → 54,
+        FIXED/CLOSED 82 → 83, OPEN 74 → 73. (b) TD-170 (MOBILE / FITUR —
+        driver_app tidak punya cancel/emergency cancel flow) entry BARU
+        dengan `Prioritas : SEDANG`, Status OPEN: OPEN 73 → 74, TOTAL
+        163 → 164, dan bucket Prioritas SEDANG 81 → 82 (+1). CLOSED 29 dan
+        DEFERRED 7 tetap. Konsisten: 54 + 29 + 7 + 74 = 164 = TOTAL dan
+        8 + 42 + 82 + 32 = 164 = TOTAL. Parser atas 164 field `ID :`
+        mengonfirmasi kedua sum = 164 (V2 sesi ini).
+        ⚠️ Baris 2 baris di atas (53+29+7+74 = 163) adalah angka hasil
+        parser SESI INI — sebelumnya baris ini masih menulis
+        "51 FIXED, 14 CLOSED (65), 7 DEFERRED, 91 OPEN", angka sesi
+        TD-168/TD-169 (2026-09-29) yang TERTINGGAL karena sesi triage-v2
+        hanya memperbarui blok §3 + baris TOTAL §2 dan tidak menyentuh
+        blok STATUS §2 ini. Baris lama itu sendiri sudah tidak konsisten
+        dengan §3 (53/29/7/74) SEBELUM sesi ini; sesi ini menyinkronkan
+        keduanya ke hasil parser. Lihat [OVERRIDE-2].]
         [51/65/7/91 pada 2026-09-29 (sesi TD-168 FIXED + TD-169 entry baru):
         FIXED 50 → 51 (TD-168 — `TestAuthRBAC_Allowed` diperbaiki di SESI
         INI dengan fixture admin hasil seed `pool.QueryRow` + login, bukan
@@ -3918,18 +4075,56 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-09-30):
-   - Total hutang teridentifikasi      : 163 item (TD-051 di-reserve/skip; 163 item aktif terdaftar).
-   - ✅ FIXED                           : 53 item
+   - Total hutang teridentifikasi      : 164 item (TD-051 di-reserve/skip; 164 item aktif terdaftar).
+   - ✅ FIXED                           : 54 item
    - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
                                           2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 82 item
+   - FIXED/CLOSED                       : 83 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 74 item (bukan hanya TD-058 s/d TD-169 — masih ada
+   - ❌ OPEN                              : 74 item (bukan hanya TD-058 s/d TD-170 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [53 + 29 + 7 + 74 = 163 = TOTAL]
+     [54 + 29 + 7 + 74 = 164 = TOTAL]
+     [Perubahan 2026-09-30 (sesi TD-131 FIXED + TD-170 entry baru) — SATU
+     entry ditutup, SATU entry BARU ditambahkan; total naik 1, dan bucket
+     OPEN TIDAK bergerak karena keduanya saling meniadakan.
+     (a) TD-131 (MOBILE — `cancellation_fee` pada response PATCH
+         /rides/:id/status belum di-expose di customer_app) FIXED di SESI
+         INI, dan fix-nya menutup bug nyata: dialog konfirmasi cancel
+         punya cabang `_ => 0` sehingga TRIP_STARTED dijanjikan gratis
+         padahal backend `cancellationFeeFor` (service.go:910, cabang
+         service.go:920-921) menagih 10.000. Preview kini lewat single
+         source of truth `kRideCancellationFeeByStatus`
+         (models/ride_order.dart:31) + `rideCancellationFeeForStatus()`,
+         `cancellation_fee` diparse ke `RideOrder.cancellationFee`, dan
+         SnackBar menampilkan fee aktual dari response backend.
+         `Prioritas :`-nya tetap SEDANG → FIXED 53 → 54, FIXED/CLOSED
+         82 → 83, OPEN 74 → 73.
+     (b) TD-170 (MOBILE / FITUR — driver_app tidak punya
+         cancel/emergency cancel flow: tidak ada tombol cancel di
+         active_order_detail_screen.dart, dan
+         `updateRideStatus()` di order_service.dart:156 tidak punya param
+         `reason` sehingga DRIVER_EMERGENCY tidak bisa dikirim) entry BARU
+         hasil pemisahan sisi driver dari TD-131 (R8), `Prioritas :`
+         SEDANG, Status OPEN dari awal → OPEN 73 → 74, TOTAL 163 → 164,
+         bucket Prioritas SEDANG 81 → 82 (+1 HANYA karena entry baru).
+         Backend sudah mendukung: reason DRIVER_EMERGENCY +
+         full refund di internal/ride/service.go:96/845/914, teruji di
+         integration_test.go:812-847 — jadi ini murni gap mobile.
+     (c) CLOSED 29, DEFERRED 7, KRITIS 8, TINGGI 42, RENDAH 32 tetap.
+     Konsisten: 54 + 29 + 7 + 74 = 164 = TOTAL dan 8 + 42 + 82 + 32 =
+     164 = TOTAL. Range SECTION F: TD-058 s/d TD-169 → TD-058 s/d
+     TD-170. Parser dijalankan SEBELUM dan SESUDAH edit (R1/R2);
+     baseline sebelum edit = 8 + 42 + 81 + 32 = 163 = 53 + 29 + 7 + 74,
+     sesudah edit = 8 + 42 + 82 + 32 = 164 = 54 + 29 + 7 + 74.
+     Koreksi fakta terhadap prompt Reviewer: "OPEN 74 → 75" SALAH —
+     prompt menghitung hanya +TD-170 dan lupa bahwa TD-131 yang ditutup
+     ikut mengurangi bucket OPEN; dua-duanya +1 dan -1 jadi bucket OPEN
+     TETAP 74. Lihat [OVERRIDE-1]. Tidak ada kode yang diubah oleh sesi
+     ini — register dokumentasi saja; fix TD-131 sudah ada di working
+     tree dan BELUM di-commit. Tidak commit (R10).]
      [Perubahan 2026-09-30 (sesi triage-v2) — TIDAK ADA entry baru, TIDAK ADA
      entry dihapus dari register, hanya STATUS yang bergerak.
      (a) 15 item ditutup: CLOSED 14 → 29, OPEN 91 → 76.

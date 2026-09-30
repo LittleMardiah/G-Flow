@@ -50,7 +50,30 @@ class FakeStorage extends Fake implements FlutterSecureStorage {
   Future<void> delete({required String key, IOSOptions? iOptions, AndroidOptions? aOptions, LinuxOptions? lOptions, WebOptions? webOptions, MacOsOptions? mOptions, WindowsOptions? wOptions}) async => store.remove(key);
 }
 
-RideService makeRideService(DioAdapterMock adapter) =>
+/// Adapter yang membalas per-path, sehingga response GET detail (polling)
+/// dan response PATCH status (cancel) bisa dibedakan dalam satu test.
+class RoutingAdapterMock extends Fake implements HttpClientAdapter {
+  RoutingAdapterMock(this.responses);
+
+  final Map<String, Object?> responses;
+  final List<String> paths = [];
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options, Stream<List<int>>? requestStream, Future<void>? cancelFuture) async {
+    paths.add(options.path);
+    final body = responses[options.path] ?? const <String, dynamic>{};
+    return ResponseBody.fromString(
+      jsonEncode(body),
+      200,
+      headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+RideService makeRideService(HttpClientAdapter adapter) =>
     RideService(ApiClient(dio: Dio()..httpClientAdapter = adapter, storage: FakeStorage()));
 
 class _Harness {
@@ -182,6 +205,112 @@ void main() {
         find.text('Gagal memuat detail perjalanan (jaringan/API). Pastikan server aktif.'),
         findsOneWidget,
       );
+    });
+  });
+
+  // TD-131: fee pembatalan yang tampil setelah cancel harus berasal dari
+  // response backend (`cancellation_fee`), bukan angka hardcode.
+  group('RideTrackingNotifier.cancelRide', () {
+    const detailPath = '/api/v1/rides/r1';
+    const statusPath = '/api/v1/rides/r1/status';
+
+    const detailBody = {
+      'success': true,
+      'data': {
+        'order_id': 'r1',
+        'status': 'DRIVER_ARRIVED',
+        'pickup_lat': -6.2,
+        'pickup_lng': 106.8,
+        'dropoff_lat': -6.3,
+        'dropoff_lng': 106.9,
+        'estimated_fare': 30000,
+      },
+    };
+
+    RideTrackingNotifier notifier(RideService svc) {
+      final n = RideTrackingNotifier(
+        svc,
+        const RideTrackingArgs(
+          orderId: 'r1',
+          pickupLat: -6.2,
+          pickupLng: 106.8,
+          dropoffLat: -6.3,
+          dropoffLng: 106.9,
+          estimatedFare: 30000,
+        ),
+      );
+      n.start();
+      return n;
+    }
+
+    test('simpan cancellation_fee dari response PATCH', () async {
+      final adapter = RoutingAdapterMock({
+        detailPath: detailBody,
+        statusPath: {
+          'success': true,
+          'data': {'order_id': 'r1', 'status': 'CANCELLED', 'cancellation_fee': 10000},
+        },
+      });
+      final n = notifier(makeRideService(adapter));
+      addTearDown(n.dispose);
+
+      await pumpEventQueue();
+      expect(n.state.order?.status, 'DRIVER_ARRIVED');
+
+      expect(await n.cancelRide(), isTrue);
+      expect(n.state.order?.status, 'CANCELLED');
+      expect(n.state.order?.cancellationReason, 'CUSTOMER_CANCEL');
+      expect(n.state.order?.cancellationFee, 10000);
+      expect(adapter.paths, contains(statusPath));
+    });
+
+    test('cancellation_fee string juga diparse', () async {
+      final adapter = RoutingAdapterMock({
+        detailPath: detailBody,
+        statusPath: {
+          'success': true,
+          'data': {'order_id': 'r1', 'status': 'CANCELLED', 'cancellation_fee': '5000'},
+        },
+      });
+      final n = notifier(makeRideService(adapter));
+      addTearDown(n.dispose);
+
+      await pumpEventQueue();
+      expect(await n.cancelRide(), isTrue);
+      expect(n.state.order?.cancellationFee, 5000);
+    });
+
+    test('field cancellation_fee yang tidak ada → fee 0 (tanpa error)', () async {
+      final adapter = RoutingAdapterMock({
+        detailPath: detailBody,
+        statusPath: {
+          'success': true,
+          'data': {'order_id': 'r1', 'status': 'CANCELLED'},
+        },
+      });
+      final n = notifier(makeRideService(adapter));
+      addTearDown(n.dispose);
+
+      await pumpEventQueue();
+      expect(await n.cancelRide(), isTrue);
+      expect(n.state.order?.cancellationFee, 0);
+      expect(n.state.message, 'Ride berhasil dibatalkan');
+    });
+
+    test('fee preview dialog utuh status order dari API (DRIVER_ARRIVED = 10.000)', () async {
+      final adapter = RoutingAdapterMock({
+        detailPath: detailBody,
+        statusPath: const {
+          'success': true,
+          'data': {'order_id': 'r1', 'status': 'CANCELLED', 'cancellation_fee': 10000},
+        },
+      });
+      final n = notifier(makeRideService(adapter));
+      addTearDown(n.dispose);
+
+      await pumpEventQueue();
+      // Fungsi yang dipakai _confirmCancel untuk menyusun teks fee dialog.
+      expect(rideCancellationFeeForStatus(n.state.order?.status), 10000);
     });
   });
 }

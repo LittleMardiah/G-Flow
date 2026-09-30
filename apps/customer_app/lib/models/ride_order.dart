@@ -13,6 +13,34 @@ const List<String> kRideStatusFlow = [
 /// Status terminal: polling dihentikan & aksi cancel disembunyikan.
 const Set<String> kTerminalRideStatuses = {'COMPLETED', 'SETTLED', 'CANCELLED'};
 
+/// Nominal cancellation fee untuk reason CUSTOMER_CANCEL (TD-131).
+///
+/// HARUS sinkron dengan `CancellationFeeAssigned` / `CancellationFeeArrived`
+/// di internal/ride/service.go — backend adalah source of truth penentuan
+/// fee (`cancellationFeeFor`). Angka di sini hanya untuk *preview* di dialog
+/// konfirmasi; nilai yang benar-benar dipungut dibaca dari field
+/// `cancellation_fee` pada response PATCH /rides/:id/status.
+const int kRideCancellationFeeAssigned = 5000;
+const int kRideCancellationFeeArrived = 10000;
+
+/// Preview fee pembatalan per status order (reason CUSTOMER_CANCEL).
+///
+/// Padanan `cancellationFeeFor` (internal/ride/service.go) untuk reason
+/// CUSTOMER_CANCEL: cancel sebelum driver ditunjuk → 0; DRIVER_ASSIGNED →
+/// 5.000; DRIVER_ARRIVED maupun TRIP_STARTED → 10.000.
+const Map<String, int> kRideCancellationFeeByStatus = {
+  'SEARCHING_DRIVER': 0,
+  'DRIVER_ASSIGNED': kRideCancellationFeeAssigned,
+  'DRIVER_ARRIVED': kRideCancellationFeeArrived,
+  'TRIP_STARTED': kRideCancellationFeeArrived,
+};
+
+/// Fee pembatalan untuk [status] (0 bila status tidak dikenali atau tidak
+/// bisa di-cancel). Status COMPLETED/SETTLED tidak bisa dibatalkan sehingga
+/// selalu 0 — aksi cancel memang disembunyikan di status tersebut.
+int rideCancellationFeeForStatus(String? status) =>
+    status == null ? 0 : (kRideCancellationFeeByStatus[status] ?? 0);
+
 /// Model ride order.
 ///
 /// Disimpan lokal di customer_app (packages/core belum ada di monorepo ini).
@@ -40,6 +68,7 @@ class RideOrder {
     this.completedAt,
     this.settledAt,
     this.cancellationReason,
+    this.cancellationFee,
   });
 
   final String id;
@@ -63,6 +92,11 @@ class RideOrder {
   final DateTime? completedAt;
   final DateTime? settledAt;
   final String? cancellationReason;
+
+  /// Fee pembatalan yang benar-benar dipungut backend (TD-131). Null sebelum
+  /// order dibatalkan atau saat response tidak menyertakan field ini
+  /// (`cancellation_fee` di-omitempty di PATCH status saat nil).
+  final int? cancellationFee;
 
   factory RideOrder.fromJson(Map<String, dynamic> j) {
     final driverJson = j['driver'];
@@ -96,12 +130,14 @@ class RideOrder {
       completedAt: _date(j['completed_at']),
       settledAt: _date(j['settled_at']),
       cancellationReason: _str(j['cancellation_reason']),
+      cancellationFee: _intNullable(j['cancellation_fee']),
     );
   }
 
   RideOrder copyWith({
     String? status,
     String? cancellationReason,
+    int? cancellationFee,
     DriverInfo? driver,
   }) {
     return RideOrder(
@@ -126,6 +162,7 @@ class RideOrder {
       completedAt: completedAt,
       settledAt: settledAt,
       cancellationReason: cancellationReason ?? this.cancellationReason,
+      cancellationFee: cancellationFee ?? this.cancellationFee,
     );
   }
 
