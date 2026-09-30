@@ -785,7 +785,17 @@ Solusi     : Wire ticker worker auto-cancel ride di main.go (pola worker food/se
             + test worker.
 Estimasi   : 2-3 jam
 Prioritas  : KRITIS
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, stale — sudah fixed)
+Note       : Fixed di commit 834a9f9 ("feat(worker): wire ride auto-cancel
+             (TD-067)"). Bukti: internal/worker/worker.go:112 memanggil
+             `w.CancelRideOrders(ctx)`; :371-391 CancelRideOrders; :392+
+             cancelOneRideOrder. Wiring produksi: cmd/api/main.go:116
+             `worker.NewWorker(workerRepository, pool, rdb, workerLedger)` dan
+             :306 `go autoCancelWorker.Run(workerCtx)`. Regression test nyata:
+             internal/worker/ride_autocancel_integration_test.go (TC-INT-RD-007).
+             Side effect yang ditemukan: kolom ride_orders.updated_at tidak ada
+             di skema → worker meledak SQLSTATE 42703; sudah_fixed di TD-158
+             (migration 018).
 Referensi  : audit_r02.log (GAP: "Ride auto-cancel tidak di-wire")
 
 ID         : TD-068
@@ -936,7 +946,6 @@ Solusi     : Register alias /drivers/{id}/available-orders ATAU ubah app ke endp
             unified; tambah GET /rides/{id}; hapus panggilan unavailable dari app.
 Estimasi   : 4-6 jam
 Prioritas  : KRITIS
-Status     : OPEN
 Progress   : 2026-09-21 — Step A1 DONE (GET /rides/{id}, 6 test,
              cover 85.5%). Step A2 DONE (GET /drivers/orders,
              route+RBAC driver, 36 test PASS, cover 73.8% —
@@ -946,6 +955,26 @@ Progress   : 2026-09-21 — Step A1 DONE (GET /rides/{id}, 6 test,
              (commit 43209bc), Step C2+C3 DONE (ride history + detail
              screens; TD-072 → FIXED). Remaining: C4 (close docs +
              review final). Status TETAP OPEN sampai C4 close.
+             C4 DONE 2026-09-30 (triage-v2) — lihat Note di bawah.
+Status     : ✅ CLOSED (triage-v2 2026-09-30, stale — Step A1..C3 +
+             C4 close docs sudah selesai)
+Note       : Fixed di commit f48bc51 (A1 GET /rides/{id}), 6c9fabf (A2
+             GET /drivers/orders), 07634b0 (B mobile driver refactor),
+             43209bc (C1 ride history), b820f3e (C2+C3 ride detail+history
+             + TD-072 closed). C4 = close docs = entri ini.
+             Bukti kode: cmd/api/main.go:195 `api.GET("/rides/:order_id",
+             rideHandler.GetRide)`, :211 `/drivers/available-orders`,
+             :214 `/drivers/orders`. Sisi mobile sudah pindah ke endpoint
+             unified — driver_app/lib/services/order_service.dart:44
+             `get('/api/v1/drivers/available-orders')`, :67
+             `get('/api/v1/drivers/orders')`; customer_app/lib/services/
+             ride_service.dart:54 `get('/api/v1/rides/$orderId')`. Endpoint
+             lama (/rides/available, /food-orders/available,
+             /send-orders/available, /drivers/{id}/available-orders) tidak
+             pernah didaftarkan dan tidak dipanggil app mana pun.
+             Sisa gap repo read-only: TD-110 (item low-ROI triage-v2) —
+             TIDAK ikut tertutup oleh entri ini; TD-077 ditutup karena
+             bagian endpoint + mobile yang menjadi Dampak-nya sudah selesai.
 Referensi  : audit_r03.log (GAP-3), audit_r02.log (GAP driver app)
 
 ID         : TD-078
@@ -1051,7 +1080,13 @@ Dampak     : Kriteria GO/NO-GO (15+ integration TC) tidak terpenuhi; cakupan alu
 Solusi     : Tambah integration TC food & send ke ≥15 + real-device/cold-start test.
 Estimasi   : 4-6 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, low ROI)
+Note       : Low ROI per triage-v2. Solusi (tambah TC food/send ke 15+) sudah
+             terpenuhi secara tidak langsung: send kini punya 5 test integrasi
+             DAN unit test error-path worker yang jauh lebih luas (sesi TD-106,
+             coverage 97.4%); definisi GO/NO-GO "15+" sendiri sudah usang.
+             Menambah TC hanya menambah waktu mesin tanpa menutup risk nyata.
+             Kalau GO/NO-GO 15+ diaktifkan kembali, buka lagi entri ini.
 Referensi  : audit_r03.log (GAP-9, 4.xb; usulan TD-066)
 
 ID         : TD-086
@@ -1075,7 +1110,13 @@ Dampak     : Saat deploy/restart request in-flight terpotong; data bisa hilang; 
 Solusi     : signal.Notify + http.Server.Shutdown (timeout 25s) + drain worker.
 Estimasi   : 1-2 jam
 Prioritas  : KRITIS
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, stale — sudah fixed)
+Note       : Fixed di commit 121164a ("feat(main): add graceful shutdown
+             (SIGINT/SIGTERM, 25s drain) [TD-087]"). Bukti kode:
+             cmd/api/main.go:325 `signal.Notify(quit, syscall.SIGINT,
+             syscall.SIGTERM)` + :331 `srv.Shutdown(shutdownCtx)`; context
+             terpisah untuk worker di main.go:296/:310. Register stale —
+             Judul masih menulis "TIDAK ada".
 Referensi  : audit_r04.log (GAP-2, GAP-25; usulan TD-066)
 
 ID         : TD-088
@@ -1099,7 +1140,16 @@ Solusi     : render.yaml (2 instance standard, GOMAXPROCS=2, maxShutdownDelay=30
             build artifact + healthCheckPath (TD-088).
 Estimasi   : 4-6 jam
 Prioritas  : KRITIS
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, user-skip deployment)
+Note       : User-skip deployment. Keputusan Owner: backend belum di-deploy ke
+             Render/Supabase, jadi render.yaml + Dockerfile + start command
+             tidak dikerjakan sekarang. Konsisten dengan 7 entri lain yang
+             sudah diberi status `🔵 DEFERRED (triage — user skip deploy)`
+             (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
+             TINDAK LANJUT saat deploy benar-benar dimulai — item ini tidak
+             hilang, hanya ditunda. Peringatan: label "low ROI" TIDAK berlaku
+             di sini; kalau deploy masuk roadmap, Prioritas KRITIS + fakta
+             "backend tidak bisa di-hosting di Render" kembali berlaku.
 Referensi  : audit_r04.log (GAP-1; usulan TD-068)
 
 ID         : TD-090
@@ -1146,7 +1196,17 @@ Dampak     : Klaim deadlock-free/pessimistic lock tanpa test langsung; regressio
 Solusi     : Tulis kedua test (timeout lock & starvation) + bench WS broadcast.
 Estimasi   : 3-4 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, low ROI)
+Note       : Low ROI per triage-v2. Dua test lock contention yang diminta
+             (TestPessimisticLock_Timeout, TestLockStarvation) + bench
+             broadcast WS adalah item benchmark/load-testing, bukan gap
+             kebenaran: kode lock sudah ter-cover 97.4% lewat pgxmock error
+             path (sesi TD-106 termasuk kode 55P03 timeout dan 40P01 deadlock)
+             dan integrasi ride/food/send. Menulis ulang test +
+             load-test infra adalah investasi besar dengan return rendah
+             sebelum ada trafik nyata. Risiko residual dicatat di TD-156
+             (semantics PostgreSQL belum ter-cover). Buka lagi kalau ada
+             incident lock di produksi.
 Referensi  : audit_r04.log (GAP-9; usulan TD-072)
 
 ID         : TD-094
@@ -1158,7 +1218,19 @@ Dampak     : Regresi alur DB (settlement, idempotency, lock) lolos di CI; cakupa
 Solusi     : Job `go test -tags integration -p 1` dengan service postgres+redis.
 Estimasi   : 2-3 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, duplikat TD-167)
+Note       : Dedup dengan TD-167. Gap yang sama persis: pipeline GitHub
+             Actions tidak pernah mengompilasi/menjalankan test ber-tag
+             `integration`. Entri ini (2026-08-30, dari audit_r04.log GAP-18)
+             hanya 4 baris tanpa bukti; TD-167 (2026-09-29) memuat bukti
+             lengkap — .github/workflows/ci.yml:77-80 `go test -short -race`
+             tanpa `-tags integration` (`grep -n "go test" ci.yml` = 1 hasil),
+             11 file test ber-tag integration dengan total 87 fungsi Test, dan
+             pola service postgres+redis yang sudah dipakai job e2e-admin
+             (ci.yml:198-220) sebagai rujukan. Prioritas juga dikoreksi di sana:
+             TD-094 menulis SEDANG, TD-167 menulis TINGGI (lebih tepat — ini
+             gap deteksi yang membiarkan 4 hari regresi lolos). Fix nanti
+             di TD-167; entri ini dicabut agar tidak dihitung 2×.
 Referensi  : audit_r04.log (GAP-18; usulan TD-073)
 
 ID         : TD-095
@@ -1397,8 +1469,17 @@ Solusi     : Extend internal/driver/repository_test.go (pattern
              pgxmock existing) — tambah 3 test untuk 3 method,
              happy path + empty + error.
 Prioritas  : SEDANG
-Status     : OPEN
-Referensi  : TD-077 A2 (commit akan datang)
+Status     : ✅ CLOSED (triage-v2 2026-09-30, low ROI)
+Note       : Low ROI per triage-v2. Ketiga method adalah query READ-only
+             (GetActiveRideOrders/FoodOrders/SendOrders) yang sudah dipakai
+             worker auto-cancel yang sekarang jalan (TD-067, commit 834a9f9) dan
+             ter-cover end-to-end oleh
+             internal/worker/ride_autocancel_integration_test.go terhadap DB
+             nyata — test yang lebih bernilai daripada unit test pgxmock
+             untuk query yang sama. Menambah 3 test read-only hanya menambah
+             coverage angka, bukan confidence. Buka lagi kalau query-nya diubah
+             (filter status/JOIN/subquery stop).
+Referensi  : TD-077 A2 (commit 6c9fabf)
 
 ID         : TD-111
 Kategori   : TESTING
@@ -1524,7 +1605,17 @@ Dampak     : Token refresh tidak bisa dipakai → access token yang expired
 Solusi     : Implement endpoint refresh (atau drop refresh_token dari
              response) + wire frontend admin_web.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, duplikat TD-061)
+Note       : Dedup dengan TD-061 ("OTP flow (screen + POST /auth/verify-otp)
+             belum ada; token refresh endpoint & suspend-blacklist-all-tokens
+             belum ada", Kategori BACKEND / AUTH, Prioritas TINGGI, Status OPEN).
+             TD-061 sudah mencakup kasus yang lebih luas; TD-115 cuma
+             mempersempitnya ke satu sudut (refresh_token di response admin
+             login, internal/admin/handler.go:260, tanpa endpoint
+             /auth/refresh) — dan itu tetap consequence dari endpoint refresh
+             yang belum ada. Tidak ada bukti independen di TD-115 (tidak ada
+             blok Bukti/Verifikasi), hanya duplikasi. Fix di TD-061; entri ini
+             dicabut agar tidak dihitung 2×.
 
 ID         : TD-116
 Kategori   : HYGIENE
@@ -1565,7 +1656,13 @@ Judul      : TECHNICAL DEBT.txt punya duplikat header "2. RINGKASAN"
              (baris ~1365, pre-existing).
 Solusi     : Hapus salah satu.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, stale — header sudah unik)
+Note       : Fixed di commit 25d90f7 ("docs(td): triage cleanup — 19 FIXED
+             marking, 6 DEFER deploy, 5 CLOSE low-ROI, fix dup header").
+             Bukti sekarang: `grep -nE "^[0-9]+\. RINGKASAN"
+             docs/TECHNICAL DEBT.txt` = 2 hasil — "2. RINGKASAN" (satu
+             header SECTION 2) dan "3. RINGKASAN STATUS TERKINI" (header
+             lain, bukan duplikat). Duplikat yang dimaksud sudah hilang.
 Referensi  : TD-058 SS4 (observasi OpenCode)
 
 ID         : TD-120
@@ -1579,7 +1676,15 @@ Solusi     : GET /api/v1/wallets/me (JWT) → auto-resolve wallet_id
              by user_id + wallet_type. Alternatif: extend login
              response dengan wallet_id.
 Prioritas  : KRITIS
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, stale — endpoint sudah ada)
+Note       : Fixed di commit 1b683cc. Bukti: cmd/api/main.go:199 mendaftarkan
+             `api.GET("/wallets/me", RBACMiddleware("customer","driver",
+             "merchant"), handler.GetMyWallet)`; internal/wallet/handler.go:222-246
+             (GetMyWallet, `?type=` default CUSTOMER); service.go:514-525;
+             repository.go:159-178. Test: internal/wallet/handler_test.go:368-445
+             (4 unit case) + internal/wallet/me_integration_test.go (8 integration
+             case, verdes — sesi TD-121). Sisi mobile: driver_app dashboard memakai
+             GET /wallets/me?type=DRIVER (lihat Progress TD-074).
 Referensi  : TD-060 SS5 (blocker OpenCode)
 
 ID         : TD-121
@@ -1663,7 +1768,15 @@ Dampak     : Wrapper field Order/Stops tanpa json tag "order"/"stops"
 Solusi     : Handler test tambah decode body & assert key `order`/`stops`
              sebelum deploy phase berikutnya.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, low ROI)
+Note       : Low ROI per triage-v2. Risiko yang ditulis di entri ini sudah
+             Closed: wrapper SendOrderDetail sudah punya json tag `order`/
+             `stops`, dan wire shape-nya sekarang dikunci di test yang lebih
+             dekat dengan konsumen — internal/wallet & internal/send integration
+             test decode body dan memverifikasi field; TD-153 (history tanpa
+             `stops`) + TD-151 (fare_breakdown_per_stop) yang tersisa adalah
+             gap FITUR, bukan gap test yang eksak ini. Buka lagi kalau ada
+             perubahan struct response tanpa test decode.
 Referensi  : SendOrderDetail wrapper fixes (OpenCode)
 
 ID         : TD-125
@@ -1979,7 +2092,15 @@ Dampak     : Integration suite auth punya 1 fail noise. Developer baru
 Solusi     : (a) pakai seeded admin (fixture) untuk RBAC test, atau
              (b) hapus test karena admin self-register memang dilarang.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, stale — sudah fixed)
+Note       : Fixed di commit 8182a8b ("test(auth): fix RBAC test seed admin
+             (TD-168) + log TD-169 flaky JWT"). Helper `seedAdminAndLogin`
+             mengganti `registerAndLoginRole(t, r, "admin")` yang menabrakan
+             allowedUserTypes (internal/auth/handler.go:30-34 hanya
+             customer/driver/merchant) → 422 INVALID_USER_TYPE. Kode produksi
+             TIDAK diubah; yang usang fixture-nya. Log tetap di-register
+             sebagai TD-168 (fix) — entri ini (TD-141) adalah catatan
+             findings yang sama dari sisi lain, ditutup agar tidak dihitung 2×.
 Referensi  : TD-128 (temuan OpenCode)
 
 ID         : TD-142
@@ -2002,7 +2123,17 @@ Dampak     : CI flaky fail auth package.
 Solusi     : Investigasi test race (time-dependent? shared state?) + fix
              (mock clock / t.Parallel isolation).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, duplikat TD-169)
+Note       : Dedup dengan TD-169. Keduanya menunjuk file dan test yang PERSIS
+             SAMA: internal/auth/jwt_unit_test.go, TestJWT_ValidateToken_
+             InvalidSignature (entri ini menyebut baris :79, TD-169 menyebut
+             :77 — keduanya baris `t.Fatal`/`require.Error` dari mutasi satu
+             baris yang sama). TD-169 dibuat 2026-09-29 dengan root cause
+             lengkap (base64url 43 char, 2 bit bawah quantum terakhir diabaikan,
+             'w'→'x' = no-op ~1/16 = 6%), bukti reproduksi 20/300 fail, dan
+             uji base64 terpisah atas 20.000 sampel. Entri ini tidak menambah
+             informasi apa pun dan tidak punya bukti sendiri — dicabut supaya
+             satu bug tidak dihitung dua kali. Fix dilakukan di TD-169 (sesi ini).
 Referensi  : TD-127 (temuan OpenCode)
 
 ID         : TD-144
@@ -2174,7 +2305,19 @@ Dampak     : Fragile test; refactor auth behavior ≠ isolated.
 Solusi     : Shared test helper cross-package (mis. testutil.Wallet)
              ATAU fixture terpisah yang independen dari auth behavior.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v2 2026-09-30, low ROI)
+Note       : Low ROI per triage-v2. Ini bukan bug, tapi KEBIJAKAN yang
+             disengaja dan sudah dibayar biayanya: helper newDriver di
+             internal/ride/integration_test.go dan internal/send/
+             integration_test.go sengaja bergantung pada auto-create wallet
+             /auth/register (TD-128), dengan komentar eksplisit di kedua file
+             menyatakan helper itu TIDAK boleh INSERT wallet lagi
+             (wallet_user_type_unique / SQLSTATE 23505). Memecah coupling
+             berarti membangun package testutil lintas 4 paket — biaya
+             arsitektur lebih besar daripada risiko yang dicegah. Yang
+             dijaga: selama TD-128 tidak di-revert, coupling ini aman; kalau
+             suatu saat di-revert, test akan merah dan itu memang sinyal yang
+             diinginkan (fail loud, bukan fail senyap).
 Referensi  : TD-147 (temuan OpenCode)
 
 ID         : TD-151
@@ -2586,7 +2729,47 @@ Solusi     : Tambah `-v ON_ERROR_STOP=1` di setiap psql command migrate.sh
              (enum baru tidak boleh dipakai di transaksi yang sama dengan
              ALTER TYPE ADD VALUE) dan TD-035/036/037.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-30, commit TD-160)
+Note       : Fixed 2026-09-30. scripts/migrate.sh: 19/19 baris `psql`
+             sekarang memakai `-v ON_ERROR_STOP=1`, mirror PERSIS scripts/
+             migrate.bat (`grep -c ON_ERROR_STOP` = 19 di KEDUA file, sebelum
+             fix .sh = 0). Ditambah `set -e` di baris 2 sebagai pagar kedua —
+             ini bukan tambahan dari prompt Reviewer, tapi prescription
+             dari Solusi TD-160 sendiri yang menyebut "Tambahkan juga `set -e`
+             di header script sebagai pagar kedua, dan exit non-zero kalau ada
+             migration yang gagal". `set -e` itu juga yang membuat
+             `echo "Migrations completed."` (baris bawah) menjadi kondisional:
+             dengan fail-fast, baris itu hanya tercapai kalau 19 migration
+             sukses semua — tidak perlu flag/guard tambahan. YANG TIDAK
+             DIPAKAI:
+             `--single-transaction` / `-1` (dilarang — migration 019 memakai
+             nilai enum baru yang tidak boleh dipakai di transaksi yang sama
+             dengan ALTER TYPE ADD VALUE; lihat catatan sesi TD-132), dan
+             tidak ada `2>/dev/null`/pipe yang bisa menutupi exit code.
+             BUKTI PERILAKU (bukan cuma grep) — `psql` palsu via bash
+             function, GAGAL di pemanggilan ke-3:
+             (a) SEBELUM fix (HEAD): script tetap memanggil migration 001..019
+                 semua 19, mencetak "Migrations completed.", dan keluar
+                 dengan EXIT CODE 0. Kegagalan diam-diam terbukti 100%.
+             (b) SESUDAH fix: berhenti tepat di migration 003, tidak mencetak
+                 "Migrations completed.", EXIT CODE 1.
+             (c) Happy path (semua psql sukses) → "Migrations completed." +
+                 EXIT CODE 0.
+             (d) Guard DATABASE_URL kosong tetap jalan → exit 1 tanpa memanggil
+                 psql sama sekali.
+             [PERLU VERIFIKASI] -before-apply: run `psql` sungguhan terhadap
+             dev DB BELUM dilakukan di sesi ini karena container tidak hidup
+             (`pg_isready -h localhost -p 15432` = "no response",
+             `docker ps` = kosong). Semantik `-v ON_ERROR_STOP=1` (psql berhenti
+             di statement pertama yang error dan keluar non-zero) adalah
+             perilaku psql standar dan sudah dipakai migrate.bat di produksi,
+             tapi jalur end-to-end ke DB nyata belum diuji ulang di sini.
+             Sisa gap yang SENGAJA dibiarkan: `set -e` tidak menangkap
+             kegagalan di tengah command substitution/pipe (tidak ada di file
+             ini sekarang), dan script tidak punya rollback — sebagian
+             migration yang sudah ter-apply tidak di-undo kalau migration
+             berikutnya gagal. Itu perilaku yang wajar untuk migration
+             forward-only dan di luar scope entri ini.
 Referensi  : TD-132 (temuan OpenCode), TD-035, TD-036, TD-037 (custom
              migration runner), TD-156 (worker belum ter-cover integration
              test — alasan kenapa regresi migration tidak tertangkap)
@@ -3314,7 +3497,47 @@ Solusi     : Ganti mutasi karakter terakhir dengan mutasi yang PASTI
               (User menyetujui HANYA internal/auth/integration_test.go),
               jadi dicatat saja sesuai R8.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-30, commit TD-169)
+Note       : Fixed 2026-09-30. internal/auth/jwt_unit_test.go:77 — mutasi
+             `tokenStr[:len(tokenStr)-1] + "x"` diganti bit-flip pada satu
+             byte di dalam segmen SIGNATURE:
+               broken := []byte(tokenStr)
+               broken[len(broken)-2] ^= 0xFF
+               tokenStr = string(broken)
+             Kenapa indeks `len-2`, bukan `len-1` dan bukan tengah token:
+             (a) `len-1` ADALAH bug-nya — char terakhir hanya menyumbang 2
+                 bit terendah ke byte signature terakhir, jadi bit-flip di
+                 situ bisa jadi no-op persis seperti kasus lama.
+             (b) char SEBELUM terakhir menyumbang 6 bit penuh ke satu byte
+                 signature, jadi `^= 0xFF` PASTI mengubah byte signature →
+                 HMAC pasti tidak cocok → error pasti. Deterministik 100%,
+                 tidak ada lagi branches yang bisa no-op.
+             (c) JELEK kalau memakai bit-frip di TENGAH token seperti usulan
+                 awal prompt: `len(tokenStr)/2` untuk token 309 char jatuh di
+                 segmen PAYLOAD, bukan signature. `ValidateToken`
+                 (internal/auth/jwt.go:84-86)-collapse SEMUA mode kegagalan ke
+                 satu `ErrInvalidToken`, jadi test akan tetap hijau — tapi lewat
+                 jalur JSON parse yang rusak, bukan lewat verifikasi HMAC.
+                 Nama test-nya `InvalidSignature`, jadi jalur yang diuji harus
+                 yang benar. [OVERRIDE-1 / §11.2] ini koreksi faktual terhadap
+                 usulan prompt, bukan perubahan scope.
+             BUKTI (R1, bukan asumsi):
+             - BASELINE diulang di sesi ini: `go test ./internal/auth/ -run
+               'TestJWT_ValidateToken_InvalidSignature$' -count=300` → 16 dari
+               300 run FAIL = 5,3% (rahasia TD-169 "~6%" terkonfirmasi ulang).
+             - SESUDAH fix: `-count=100` → ok, dan `-count=5000` → ok
+               (0.346s). Nol failure.
+             - MUTATION CHECK (bukti test tidak vacuous): probe sementara
+               3.000 iterasi (sudah DIHAPUS dari file, tidak ada sisa) →
+               token tidak dimutasi valid 3.000/3.000; token dengan bit-flip
+               di `len-2` invalid 3.000/3.000. Jadi test benar-benar
+               menangkap HMAC mismatch, bukan sekadar hijau di atas apa pun.
+             - `go test ./internal/auth/... -v` → seluruh paket hijau,
+               1 SKIP yang memang `t.Skip` di sumber
+               (TestJWT_ValidateToken_InvalidAlg, HS256-only).
+             - `gofmt -l internal/auth/jwt_unit_test.go` → bersih.
+             TIDAK ada file produksi yang disentuh (jwt.go utuh). Tidak ada
+             `t.Skip` dan tidak ada assertion yang dilonggarkan (R4).
 Referensi  : TD-168 (sesi yang sama — ditemukan saat verifikasi V4),
             TD-167 (pipeline buta; ini kebalikannya — test TIDAK
             diabaikan pipeline, tapi bisa merah sendiri secara acak),
@@ -3327,7 +3550,7 @@ Referensi  : TD-168 (sesi yang sama — ditemukan saat verifikasi V4),
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 163 item (TD-051 di-reserve/skip)
-                                       (51 FIXED + 14 CLOSED + 7 DEFERRED + 91 OPEN = 163)
+                                       (53 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN = 163)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3694,17 +3917,35 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-29):
+3. RINGKASAN STATUS TERKINI (2026-09-30):
    - Total hutang teridentifikasi      : 163 item (TD-051 di-reserve/skip; 163 item aktif terdaftar).
-   - ✅ FIXED                           : 51 item
-   - CLOSED                             : 14 item (9 lama TD-011 s/d TD-019 + 5 via triage
-                                          TD-062, TD-063, TD-075, TD-092, TD-097)
-   - FIXED/CLOSED                       : 65 item
+   - ✅ FIXED                           : 53 item
+   - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
+                                          2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
+                                          + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
+                                          2026-09-30] di bawah)
+   - FIXED/CLOSED                       : 82 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 91 item (bukan hanya TD-058 s/d TD-169 — masih ada
+   - ❌ OPEN                              : 74 item (bukan hanya TD-058 s/d TD-169 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [51 + 14 + 7 + 91 = 163 = TOTAL]
+     [53 + 29 + 7 + 74 = 163 = TOTAL]
+     [Perubahan 2026-09-30 (sesi triage-v2) — TIDAK ADA entry baru, TIDAK ADA
+     entry dihapus dari register, hanya STATUS yang bergerak.
+     (a) 15 item ditutup: CLOSED 14 → 29, OPEN 91 → 76.
+     (b) 2 item FIXED (TD-160 migrate.sh, TD-169 flaky JWT test):
+         FIXED 51 → 53, OPEN 76 → 74.
+     (c) Bucket PRIORITAS TIDAK BERGERAK sama sekali: KRITIS 8, TINGGI 42,
+         SEDANG 81, RENDAH 32 → 8 + 42 + 81 + 32 = 163 = TOTAL. Ini
+         konsekuensi langsung dari aturan yang sudah tertulis di dokumen ini:
+         bucket Prioritas mengikuti `Prioritas :`, BUKAN `Status :`, jadi
+         menutup item tidak pernah menggeser bucket (preseden: TD-047, TD-048,
+         TD-106, TD-113, TD-114, TD-126, TD-127, TD-132, TD-144, TD-147,
+         TD-151, TD-166, TD-168).
+     Konsisten: 53 + 29 + 7 + 74 = 163 = TOTAL dan 8 + 42 + 81 + 32 = 163.
+     Parser dijalankan SEBELUM dan SESUDAH edit (R1/R2); kedua kali hasilnya
+     identik dengan angka di blok ini. Ringkasan 15 item yang ditutup ada di
+     changelog "SESI TRIAGE-V2 2026-09-30" di akhir dokumen.]
      [Perubahan 2026-09-29 (sesi TD-168 FIXED + TD-169 entry baru) —
      SATU entry ditutup, SATU entry baru ditambahkan. (a) TD-168 (TESTING
      — `TestAuthRBAC_Allowed` mencoba self-register role "admin" padahal
@@ -6052,6 +6293,122 @@ CHANGELOG — 2026-09-29 (sesi TD-168, integration test RBAC admin stale)
      belum terformat — PRE-EXISTING, bukan hasil sesi ini (`git status`
      membuktikan file itu tidak berubah); file yang diubah sesi ini
      (`integration_test.go`) TIDAK muncul di `gofmt -l`.
+
+===========================================================================
+CHANGELOG — SESI TRIAGE-V2 2026-09-30 (15 CLOSED + TD-160 + TD-169)
+===========================================================================
+
+SCOPE: scripts/migrate.sh, internal/auth/jwt_unit_test.go, dan register ini.
+TIDAK ada file produksi .go yang disentuh (jwt.go, worker.go, main.go utuh).
+TIDAK ada file .github/workflows/ci.yml yang disentuh. Tidak commit (R10).
+
+CEK DULU (R1/R3) — tidak ada klaim yang ditulis tanpa bukti:
+- 6 item "stale": SETIAPNYA diverifikasi ke kode + `git log -S` untuk
+  commit fix-nya (bukan asal menutup). TD-120 → 1b683cc (cmd/api/main.go:199
+  + internal/wallet/handler.go:222-246). TD-087 → 121164a (main.go:325
+  signal.Notify, :331 srv.Shutdown). TD-067 → 834a9f9 (worker.go:112
+  CancelRideOrders; main.go:116 + :306 autoCancelWorker.Run).
+  TD-077 → f48bc51 + 6c9fabf + 07634b0 + 43209bc + b820f3e (A1/A2/B/C1/C2+C3;
+  C4 = entri ini). TD-141 → 8182a8b (helper seedAdminAndLogin). TD-119 →
+  25d90f7 (`grep -nE "^[0-9]+\. RINGKASAN"` = 2 hasil, header SECTION 2
+  unik).
+- 3 item "duplikat": setiap pasangannya DIBUKTIkan menunjuk gap yang sama
+  dan pasangannya lebih lengkap. TD-143 → TD-169 (file + test sama persis;
+  TD-169 punya root cause base64url penuh). TD-094 → TD-167 (pipeline tak
+  pernah jalankan `-tags integration`; TD-167 Prioritas TINGGI + 87 fungsi
+  Test terinventarisasi). TD-115 → TD-061 (endpoint refresh token memang
+  belum ada; TD-061 cakupannya lebih luas dan Prioritas TINGGI).
+- TD-089: konsisten dengan 7 entri `🔵 DEFERRED (triage — user skip
+  deploy)` yang sudah ada. DITANDAI eksplisit di Note-nya bahwa label
+  "low ROI" tidak berlaku di sini dan Prioritas KRITIS kembali berlaku
+  kalau deploy masuk roadmap.
+
+STEP A — 15 ITEM DITUTUP:
+  STALE (6, catat "Fixed di commit <hash>"):
+    TD-120 → 1b683cc | TD-087 → 121164a | TD-067 → 834a9f9
+    TD-077 → f48bc51/6c9fabf/07634b0/43209bc/b820f3e | TD-141 → 8182a8b
+    TD-119 → 25d90f7
+  DUPLIKAT (3, catat "Dedup dengan TD-XXX"):
+    TD-143 → TD-169 | TD-094 → TD-167 | TD-115 → TD-061
+  DEPLOY SKIP (1, catat "User-skip deployment"): TD-089
+  LOW ROI (5, catat "Low ROI per triage-v2"):
+    TD-085, TD-093, TD-110, TD-124, TD-150
+  SETIAP item dapat blok `Note` berisi alasan + bukti file:line, bukan
+  hanya status.
+
+STEP B — TD-160 FIXED (scripts/migrate.sh):
+  19/19 baris `psql` dapat `-v ON_ERROR_STOP=1` (mirror migrate.bat) +
+  `set -e` di baris 2. `grep -c ON_ERROR_STOP` = 19 (= migrate.bat).
+  `bash -n scripts/migrate.sh` PASS. Bukti perilaku fail-fast dengan
+  `psql` palsu ada di Note entry TD-160.
+
+STEP C — TD-169 FIXED (internal/auth/jwt_unit_test.go):
+  Bit-flip byte di `len(broken)-2` (segmen signature, bukan char terakhir,
+  bukan tengah token). Baseline 16/300 FAIL → sesudah fix 0/5000 FAIL.
+
+PARSER — SEBELUM vs SESUDAH (R1: dijalankan SEBELUM menulis angka):
+  SEBELUM : 163 entry. FIXED 51, CLOSED 14, DEFERRED 7, OPEN 91
+            (sum 163 ✓). Prioritas KRITIS 8 + TINGGI 42 + SEDANG 81 +
+            RENDAH 32 (sum 163 ✓).
+  SESUDAH : 163 entry. FIXED 53, CLOSED 29, DEFERRED 7, OPEN 74
+            (sum 163 ✓). Prioritas TIDAK BERGERAK: 8 + 42 + 81 + 32
+            (sum 163 ✓).
+  DELTA   : CLOSED 14 → 29 (+15) ✓ | OPEN 91 → 74 (-17 = 15 CLOSED + 2
+            FIXED) ✓ | FIXED 51 → 53 (+2) ✓ | TOTAL 163 → 163 ✓
+  Diverifikasi dua kali dengan dua metode independen (parser per-entry +
+  `grep -cE "^Status *: .*(FIXED|CLOSED|DEFERRED|OPEN)"`), dan angka
+  SESUDAH cocok dengan blok §2 dan §3 yang diperbarui di sesi ini.
+
+[OVERRIDE-1 / §11.2] Prompt Reviewer menyarankan bit-flip "di TENGAH token"
+(`broken[len(broken)/2] ^= 0xFF`). Angka itu SALAH untuk intent test.
+Bukti konkret: token hasil GenerateToken = 309 char = header(36) + "." +
+payload(228) + "." + signature(43), jadi `len/2` = 154 → DI DALAM segmen
+PAYLOAD, bukan signature. `ValidateToken` (internal/auth/jwt.go:84-86)
+me-return `ErrInvalidToken` untuk SEMUA mode kegagalan, jadi test akan
+tetap hijau — tapi lewat jalur JSON payload rusak, bukan lewat verifikasi
+HMAC. Nama test-nya `TestJWT_ValidateToken_InvalidSignature`, jadi jalur
+yang diuji harus yang benar. Fix yang dipakai: indeks `len(broken)-2`
+(dalam signature, bukan char terakhir — char terakhir hanya menyumbang 2
+bit terendah ke byte terakhir, justru sumber no-op yang asli).
+Deterministik: probe 3.000 iterasi → token tak-mutasi valid 3.000/3.000,
+token dengan bit-flip `len-2` invalid 3.000/3.000 (probe dihapus lagi
+setelah dipakai). Alignment: R1, R3, R4 (test jadi lebih ketat, bukan
+dilonggarkan), bukan §11.4.
+
+[OVERRIDE-2 / §11.2] Prompt Reviewer menyebut bonus "hapus atau buat
+kondisional `echo "Migrations completed."`". Tidak perlu flag/guard
+tambahan: `set -e` + `ON_ERROR_STOP=1` membuat script berhenti di
+migration pertama yang gagal, jadi `echo` hanya terjangkau kalau 19
+migration sukses semua. [OVERRIDE-2] yang sama: prompt menyebut
+`set -e` sebagai "opsional"; di register ini `set -e` justru prescription
+dari Solusi TD-160 sendiri, jadi ikut dipasang dan dicatat.
+
+TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
+- TD-167 (integration test tidak pernah jalan di CI) sekarang menjadi satu-
+  satunya penjaga gap itu, karena TD-094 ditutup sebagai duplikat. Prioritas
+  TINGGI, Status OPEN. Tidak ada file ci.yml yang disentuh di sesi ini.
+- TD-061 sekarang menjadi satu-satunya penjaga gap refresh token. Status
+  OPEN, Prioritas TINGGI.
+- `docker` tidak tersedia dan dev DB di localhost:15432 tidak merespons di
+  sesi ini, jadi test integrasi (`-tags integration`) TIDAK dijalankan. Tidak
+  ada file .go yang berubah di jalur integrasi, jadi risikonya nol, tetapi
+  angka test integrasi tidak boleh diklaim sebagai bukti PASS.
+
+VERIFIKASI SESI INI:
+- V1 `go build ./...` → PASS (exit 0).
+- V2 `bash -n scripts/migrate.sh` → PASS (exit 0).
+- V3 `go test ./internal/auth/... -run TestJWT_ValidateToken_InvalidSignature
+  -count=100` → ok. Stress `-count=5000` → ok (0.346s).
+- V4 `go test ./internal/auth/... -v` → PASS, 1 SKIP yang memang
+  `t.Skip` di sumber (TestJWT_ValidateToken_InvalidAlg).
+- V5 parser register SEBELUM & SESUDAH → lihat blok PARSER di atas.
+- V6 `grep -c ON_ERROR_STOP scripts/migrate.sh` = 19 (= scripts/migrate.bat).
+- V7 `git status --short` → hanya 3 file: docs/TECHNICAL DEBT.txt,
+  scripts/migrate.sh, internal/auth/jwt_unit_test.go.
+- Tambahan: `gofmt -l internal/auth/jwt_unit_test.go` → bersih;
+  `go vet ./...` → PASS (exit 0).
+
+===========================================================================
 
 ===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)

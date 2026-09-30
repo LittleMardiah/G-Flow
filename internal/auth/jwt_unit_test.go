@@ -74,7 +74,9 @@ func TestJWT_ValidateToken_InvalidSignature(t *testing.T) {
 	tokenStr, _, err := svc.GenerateToken(userID, "customer", "081234567890")
 	require.NoError(t, err)
 
-	tokenStr = tokenStr[:len(tokenStr)-1] + "x"
+	broken := []byte(tokenStr)
+	broken[len(broken)-2] ^= 0xFF
+	tokenStr = string(broken)
 	_, err = svc.ValidateToken(tokenStr)
 	require.Error(t, err)
 }
