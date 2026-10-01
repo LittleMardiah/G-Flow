@@ -468,6 +468,13 @@ func (r *Repository) CountOrdersByCustomer(ctx context.Context, customerID uuid.
 // transisi). Dipakai oleh UpdateRideStatus, CancelRide, Auto-Cancel Worker
 // dan Settlement agar dua transisi bersamaan tidak saling menimpa.
 // Mengembalikan ErrOrderNotFound jika order tidak ada.
+//
+// TD-107: lock ini SENGAJA tanpa guard is_settled — dipakai semua transisi
+// status (bukan hanya cancel), jadi memfilter is_settled di sini akan
+// mengubah error order SETTLED dari 409 (ErrInvalidTransition) jadi 404
+// (ErrOrderNotFound) pada PATCH status. Guard settlement ada di query
+// cancel/expired (GetExpiredSearchingOrders + CancelOrder) dan di worker
+// (LockRideOrder), cukup untuk menutup jalur refund.
 func (r *Repository) LockOrderForUpdate(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error) {
 	return scanOrderRow(q.QueryRow(ctx, `SELECT `+rideOrderColumns+` FROM ride_orders WHERE id = $1 FOR UPDATE`, orderID))
 }
@@ -475,10 +482,16 @@ func (r *Repository) LockOrderForUpdate(ctx context.Context, q Querier, orderID 
 // GetExpiredSearchingOrders mengembalikan ID order berstatus SEARCHING_DRIVER
 // yang sudah melewati expires_at (dipakai Auto-Cancel Worker). Partial index
 // idx_ride_expires mempercepat pencarian ini.
+//
+// Guard is_settled = FALSE (TD-107): order yang sudah settlement tidak pernah
+// di-cancel otomatis — mencegah refund escrow ke customer atas dana yang
+// sudah dibagi ke driver/platform (ride_orders tidak punya kolom
+// is_refunded, jadi guard-nya mirror LockSendOrder).
 func (r *Repository) GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id FROM ride_orders
 		WHERE status = 'SEARCHING_DRIVER'
+		  AND is_settled = FALSE
 		  AND expires_at IS NOT NULL
 		  AND expires_at < NOW()
 	`)
@@ -499,13 +512,15 @@ func (r *Repository) GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID
 }
 
 // CancelOrder menandai order CANCELLED + cancellation_reason secara atomik
-// (CAS) dengan guard status, sekaligus mencatat cancellation_fee yang
-// dipungut (0 jika tanpa penalti). Return true jika baris berubah.
+// (CAS) dengan guard status + is_settled = FALSE, sekaligus mencatat
+// cancellation_fee yang dipungut (0 jika tanpa penalti). Guard settlement
+// (TD-107) mencegah cancel/refund order yang datanya sudah settlement.
+// Return true jika baris berubah.
 func (r *Repository) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error) {
 	tag, err := q.Exec(ctx, `
 		UPDATE ride_orders
 		SET status = 'CANCELLED', cancellation_reason = $3, cancellation_fee = $4
-		WHERE id = $1 AND status = $2
+		WHERE id = $1 AND status = $2 AND is_settled = FALSE
 	`, orderID, fromStatus, reason, fee)
 	if err != nil {
 		return false, err

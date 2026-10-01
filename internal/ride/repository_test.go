@@ -434,7 +434,9 @@ func TestRepository_LockOrderForUpdate(t *testing.T) {
 func TestRepository_GetExpiredSearchingOrders(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
-	mDB.ExpectQuery("SELECT id FROM ride_orders").
+	// Guard is_settled = FALSE (TD-107) ikut diasersikan: order yang sudah
+	// settlement tidak boleh masuk daftar auto-cancel.
+	mDB.ExpectQuery("SELECT id FROM ride_orders WHERE status = 'SEARCHING_DRIVER' AND is_settled = FALSE").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(repoOrderID))
 
 	repo := NewRepository(mDB)
@@ -448,7 +450,7 @@ func TestRepository_GetExpiredSearchingOrders(t *testing.T) {
 func TestRepository_CancelOrder_True(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
-	mDB.ExpectExec("UPDATE ride_orders").
+	mDB.ExpectExec("UPDATE ride_orders SET status = 'CANCELLED', cancellation_reason = .* WHERE id = .* AND status = .* AND is_settled = FALSE").
 		WithArgs(repoOrderID, statusSearchingDriver, reasonExpired, decimal.Zero).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
@@ -463,7 +465,7 @@ func TestRepository_CancelOrder_WithFee(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 	fee := decimal.NewFromInt(5000)
-	mDB.ExpectExec("UPDATE ride_orders").
+	mDB.ExpectExec("UPDATE ride_orders SET status = 'CANCELLED', cancellation_reason = .* WHERE id = .* AND status = .* AND is_settled = FALSE").
 		WithArgs(repoOrderID, statusDriverAssigned, reasonCustomerCancel, fee).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
@@ -471,6 +473,24 @@ func TestRepository_CancelOrder_WithFee(t *testing.T) {
 	ok, err := repo.CancelOrder(context.Background(), mDB, repoOrderID, statusDriverAssigned, reasonCustomerCancel, fee)
 	assert.NoError(t, err)
 	assert.True(t, ok)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestRepository_CancelOrder_SettledGuard_NoRowChanged (TD-107) — guard
+// is_settled = FALSE pada CAS cancel: order yang settlement-nya sudah selesai
+// TIDAK boleh di-cancel (dan karena itu refund escrow di service tidak
+// tereksekusi — pemanggil melihat ok=false lalu ErrInvalidTransition).
+func TestRepository_CancelOrder_SettledGuard_NoRowChanged(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	mDB.ExpectExec("UPDATE ride_orders SET status = 'CANCELLED', cancellation_reason = .* WHERE id = .* AND status = .* AND is_settled = FALSE").
+		WithArgs(repoOrderID, statusSearchingDriver, reasonExpired, decimal.Zero).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+
+	repo := NewRepository(mDB)
+	ok, err := repo.CancelOrder(context.Background(), mDB, repoOrderID, statusSearchingDriver, reasonExpired, decimal.Zero)
+	assert.NoError(t, err)
+	assert.False(t, ok)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 

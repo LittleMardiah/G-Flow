@@ -1423,7 +1423,41 @@ Dampak     : Inkonsistensi pattern antar modul (R6). Aman sementara
 Solusi     : Align pattern — tambahkan guard flag yang sama
              (atau justifikasi kenapa ride beda).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-01, sesi TD-107)
+Note       : ride_orders TIDAK punya kolom is_refunded — hanya `is_settled
+             BOOLEAN DEFAULT FALSE` (migrations/004_ride_orders.up.sql:112;
+             `is_refunded` hanya ada di food_orders, 005_food_send_schema
+             .up.sql:313), jadi guard ride hanya satu flag, mirror
+             LockSendOrder (send juga tanpa is_refunded). Fix 5 query
+             (semua di lapisan SQL, atomik dengan lock/CAS):
+             (a) internal/worker/repository.go:246 LockRideOrder
+             `WHERE id = $1 AND is_settled = FALSE FOR UPDATE NOWAIT` —
+             ini gap yang palingserious: worker.go:418 (sebelum fix) me-refund
+             escrow HANYA dengan `PaymentMethod == WALLET` tanpa cek
+             is_settled, jadi order SEARCHING_DRIVER yang datanya sudah
+             settlement akan di-refund RIDE_REFUND kedua kali;
+             (b) internal/worker/repository.go:259 CancelRideOrder (CAS
+             cancel) `AND is_settled = FALSE`;
+             (c) internal/worker/repository.go:214 ExpiredRideOrderIDs
+             (daftar kandidat auto-cancel) `AND is_settled = FALSE`;
+             (d) internal/ride/repository.go:523 CancelOrder (dipakai
+             UpdateRideStatus→cancelOrderTx service.go:853 DAN
+             AutoCancelExpiredOrders service.go:1378) `AND is_settled =
+             FALSE` → refund escrow di service tidak tereksekusi karena
+             service sudah return ErrInvalidTransition saat ok=false
+             SEBELUM blok refund (service.go:855-857 vs :866).
+             SENGAJA tidak diguard: internal/ride/repository.go:472
+             LockOrderForUpdate — lock generik yang dipakai SEMUA transisi
+             status, bukan hanya cancel; memfilter is_settled di sana akan
+             mengubah error PATCH status pada order SETTLED dari 409
+             (ErrInvalidTransition) jadi 404 (ErrOrderNotFound). Alasan
+             ditulis di doc comment file tersebut.
+             Test: 3 test baru pgxmock (ride: CancelOrder_SettledGuard_
+             NoRowChanged; worker: AlreadySettled_LockGuardSkipsOrder +
+             CancelCASGuard_NoRowChanged) + 5 ekspektasi query lama
+             diketatkan jadi mengasersikan guard (sebelumnya hanya prefix
+             "UPDATE ride_orders"). Mutation check: guard dihapus → 7 test
+             FAIL. Migration tidak disentuh (kolom existing).
 Referensi  : TD-104 (temuan OpenCode)
 
 ID         : TD-108
@@ -3715,7 +3749,7 @@ meng klaim dua domain (mobile customer + mobile driver) sekaligus.
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 164 item (TD-051 di-reserve/skip)
-                                       (54 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN = 164)
+                                       (56 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 164)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3757,6 +3791,18 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 164 item (TD-051 di-reserve/skip)
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
 - SEDANG  : 82 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170)
+           [82 TETAP pada 2026-10-01 (sesi TD-107 FIXED): bucket ini berbasis
+           `Prioritas :`, bukan `Status :`, jadi TD-107 yang Status-nya OPEN
+           → FIXED dengan `Prioritas :`-nya tetap SEDANG TIDAK menggerakkan
+           bucket ini (preseden identik: TD-047, TD-048, TD-106, TD-113,
+           TD-121, TD-126, TD-127, TD-131, TD-132, TD-140, TD-144, TD-147,
+           TD-158, TD-160, TD-166, TD-168). Yang bergerak hanya bucket
+           Status: FIXED 55 → 56, FIXED/CLOSED 84 → 85, OPEN 73 → 72,
+           TOTAL tetap 164 (tidak ada entry baru). Parser atas 164 field
+           `ID :` SESUDAH edit: Prioritas 8 + 42 + 82 + 32 = 164 ✓ = Status
+           56 + 29 + 7 + 72 = 164 ✓. Prompt sesi ini menulis "SEDANG 82
+           (bucket Prioritas TIDAK bergerak saat close)" ✓ BENAR. Tidak
+           commit (R10).]
            [82 pada 2026-09-30 (sesi TD-131 FIXED + TD-170 entry baru): bucket
            ini berbasis `Prioritas :`, BUKAN `Status :`, jadi TEPAT SATU
            perubahan yang menggerakkan: TD-170. (a) TD-131 Status OPEN →
@@ -4117,19 +4163,42 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-09-30):
+3. RINGKASAN STATUS TERKINI (2026-10-01):
    - Total hutang teridentifikasi      : 164 item (TD-051 di-reserve/skip; 164 item aktif terdaftar).
-   - ✅ FIXED                           : 55 item
+   - ✅ FIXED                           : 56 item
    - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
                                           2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 84 item
+   - FIXED/CLOSED                       : 85 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 73 item (bukan hanya TD-058 s/d TD-170 — masih ada
+   - ❌ OPEN                              : 72 item (bukan hanya TD-058 s/d TD-170 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [55 + 29 + 7 + 73 = 164 = TOTAL]
+     [56 + 29 + 7 + 72 = 164 = TOTAL]
+     [Perubahan 2026-10-01 (sesi TD-107 FIXED) — SATU entry ditutup, TIDAK ada
+     entry baru; TOTAL TETAP 164.
+     (a) TD-107 (KODE / KONSISTENSI — ride tidak guard is_settled di query
+         lock/cancel auto-cancel, sementara Food pakai (!IsSettled &&
+         !IsRefunded) dan Send pakai (!IsSettled)) FIXED di SESI INI: 5 query
+         ride diberi guard `AND is_settled = FALSE` di lapisan SQL —
+         worker/repository.go LockRideOrder + CancelRideOrder +
+         ExpiredRideOrderIDs, dan ride/repository.go CancelOrder +
+         GetExpiredSearchingOrders. `Prioritas :`-nya tetap SEDANG →
+         FIXED 55 → 56, FIXED/CLOSED 84 → 85, OPEN 73 → 72, TOTAL 164 → 164.
+     (b) Bucket Prioritas TIDAK BERGERAK: KRITIS 8, TINGGI 42, SEDANG 82,
+         RENDAH 32 → 8 + 42 + 82 + 32 = 164 = TOTAL (bucket Prioritas
+         mengikuti `Prioritas :`, bukan `Status :` — preseden TD-047, TD-106,
+         TD-113, TD-131, TD-140, TD-147, TD-160, TD-166, TD-168).
+     (c) CATATAN STALE (bukan efek sesi ini): header blok §2 "RINGKASAN"
+         tertulis "54 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN = 164" —
+         angka itu sudah BASI sebelum sesi ini (parser sebelum edit = 55 FIXED
+         + 29 CLOSED + 7 DEFERRED + 73 OPEN = 164, sama persis dengan blok
+         §3). Baris §2 sekarang disinkronkan ke 56/29/7/72 hasil parser
+         SESUDAH, bukan hasil tebakan 54+1.
+     Konsisten: 56 + 29 + 7 + 72 = 164 = TOTAL dan 8 + 42 + 82 + 32 = 164 =
+     TOTAL. Parser dijalankan SEBELUM (55/29/7/73 = 164) dan SESUDAH
+     (56/29/7/72 = 164) edit status TD-107 (R1/R2). Tidak commit (R10).]
      [Perubahan 2026-09-30 (sesi TD-140 FIXED) — SATU entry ditutup, TIDAK
      ada entry baru; total TETAP 164.
      (a) TD-140 (MOBILE / UX — tab WAITING menampilkan order yang di-reject
@@ -6662,6 +6731,171 @@ VERIFIKASI SESI INI:
   scripts/migrate.sh, internal/auth/jwt_unit_test.go.
 - Tambahan: `gofmt -l internal/auth/jwt_unit_test.go` → bersih;
   `go vet ./...` → PASS (exit 0).
+
+===========================================================================
+
+===========================================================================
+CHANGELOG — 2026-10-01 (sesi TD-107, ride guard is_settled di lock/cancel)
+===========================================================================
+
+SCOPE: internal/ride/repository.go, internal/worker/repository.go,
+internal/ride/repository_test.go, internal/worker/worker_test.go, dan
+register ini. TIDAK ada file food/send/wallet/mobile yang disentuh, tidak
+ada migration yang disentuh (kolom existing), tidak ada `git commit`/`push`
+(R10).
+
+CEK DULU (R1/R3) — semua klaim di bawah punya bukti file:line:
+- `ride_orders` TIDAK punya kolom `is_refunded`. Bukti: satu-satunya
+  deklarasi `is_settled` = migrations/004_ride_orders.up.sql:112
+  (`is_settled BOOLEAN DEFAULT FALSE`, index :136), sedangkan
+  `is_refunded` cuma di migrations/005_food_send_schema.up.sql:313
+  (food_orders) + internal/food/*. `grep -rn "is_refunded" migrations/
+  internal/ride/` → 0 hasil di internal/ride. Jadi guard ride hanya satu
+  flag, sama seperti Send (send_orders juga tidak punya is_refunded).
+- Food = `!IsSettled && !IsRefunded` (internal/worker/worker.go:197),
+  Send = `!IsSettled` (worker.go:308), Ride = TIDAK ADA guard
+  (worker.go:418 `if locked.PaymentMethod == paymentMethodWallet {`).
+  Inilah bukti inkonsistensi R6 yang ditunjuk TD-107.
+- Food/send TIDAK punya guard `is_settled` di SQL lock/CAS-nya
+  (worker/repository.go LockFoodOrder :86, CancelFoodOrder :98,
+  LockSendOrder :170, CancelSendOrder :186 — semua `WHERE id = $1 AND
+  status = $2` atau `WHERE id = $1` polos); Food/Send memakai guard-nya
+  murni di Go. Sesi ini memakai GUARD SQL untuk ride sesuai DESIGN FIXED
+  di prompt (lebih ketat dari Food/Send, lihat KRITIK-1).
+- NAMA FUNGSI di prompt tidak sama dengan kode: tidak ada
+  `LockRideOrder`/`GetOrderForUpdate` di internal/ride/repository.go.
+  Yang ada `LockOrderForUpdate` (:471, lock generik) dan
+  `LockRideOrder` milik package worker (internal/worker/repository.go:231).
+- Konsekuensi nyata (bukan teoritis): auto-cancel worker memproses order
+  `status = 'SEARCHING_DRIVER'` (worker.go:412). Order SETTLED selalu punya
+  status 'SETTLED', jadi double-refund hanya mungkin kalau status/flag
+  tidak sinkron (data manual, migrasi, atau settlement yang gagal
+  halfway). Itu persis kelas risiko "situasi Tidak Normal" di TEAM
+  CONTRACT §0 — bukan bocor uang pada kondisi normal.
+
+STEP A/B/C — FIX (5 query, guard `AND is_settled = FALSE`):
+  internal/worker/repository.go
+   1. LockRideOrder :246 — `WHERE id = $1 AND is_settled = FALSE FOR
+      UPDATE NOWAIT` (ini yang paling serius: refund escrow terjadi
+      SETELAH lock ini, jadi tanpa guard order yang sudah settlement bisa
+      di-refund RIDE_REFUND kedua kali).
+   2. CancelRideOrder :259 — CAS cancel `AND is_settled = FALSE`.
+   3. ExpiredRideOrderIDs :214 — kandidat auto-cancel `AND is_settled =
+      FALSE` (order settled tidak perlu dikunci sama sekali).
+  internal/ride/repository.go
+   4. CancelOrder :523 — CAS cancel `AND is_settled = FALSE`. Ini menutup
+      DUA jalur refund di package ride: UpdateRideStatus → cancelOrderTx
+      (service.go:853; refund di :866) dan AutoCancelExpiredOrders
+      (service.go:1378; refund di :1383). Keduanya sudah `return
+      ErrInvalidTransition` saat ok=false SEBELUM blok refund, jadi guard
+      ini menutup refund tanpa perlu mengubah service.
+   5. GetExpiredSearchingOrders :494 — `AND is_settled = FALSE`.
+  SENGAJA TIDAK diguard: internal/ride/repository.go:471 LockOrderForUpdate.
+  Alasannya tertulis di doc comment file itu: lock itu dipakai SEMUA
+  transisi status (bukan hanya cancel), jadi memfilter is_settled di sana
+  mengubah error PATCH status pada order SETTLED dari 409
+  (ErrInvalidTransition) jadi 404 (ErrOrderNotFound) — regresi API pada
+  jalur yang tidak berkaitan dengan TD-107 (R8: dilogar, tidak dikerjakan).
+
+STEP D — TEST (3 test baru + 5 ekspektasi diketatkan):
+  - ride: TestRepository_CancelOrder_SettledGuard_NoRowChanged (UPDATE 0
+    → ok=false); TestRepository_CancelOrder_True/_WithFee dan
+    TestRepository_GetExpiredSearchingOrders sekarang mengasersikan
+    `is_settled = FALSE` (sebelumnya hanya prefix "UPDATE ride_orders",
+    jadi guard baru TIDAK akan tertangkap test lama).
+  - worker: TestCancelRideOrders_AlreadySettled_LockGuardSkipsOrder (lock
+    tidak dapat baris → skip, tanpa refund, tanpa UPDATE) dan
+    TestCancelRideOrders_CancelCASGuard_NoRowChanged (CAS ditolak →
+    rollback penuh, `cancelled` tetap 0); helper expectRideOrderIDs +
+    expectRideTxOpen + WalletRefund + ExpiredRideOrderIDs diketatkan.
+  - MUTATION CHECK (bukti test tidak hampa): `is_settled = FALSE` sengaja
+    dihapus dari kedua file repository → 7 test FAIL dengan pesan
+    "could not match actual sql ... with expected regexp ..." (ride 3,
+    worker 4); file dikembalikan dan semua test hijau lagi.
+
+STEP E — VERIFIKASI:
+  - V1 `go build ./...` → PASS (exit 0).
+  - V2 `go vet ./...` → PASS (exit 0).
+  - V3 `go test ./internal/ride/... -v -count=1` → PASS 188 test,
+    0 FAIL, 0 SKIP.
+  - V4 `go test ./internal/ride/... -cover` → 84.5% of statements
+    (worker 97.4%, tidak turun dari 97.4% sesi TD-106).
+  - V5 `go test ./internal/worker/... -v -count=1` → PASS 63 test,
+    0 FAIL, 0 SKIP.
+  - V6 integration `go test -tags integration ./internal/ride/... -run
+    TestIntegrationRide -count=1` → SKIP (TIDAK dijalankan). Dev DB
+    localhost:15432 tidak merespons: `dial tcp 127.0.0.1:15432: connect:
+    connection refused`. Container `g-flow-postgres-1` ADA tapi status
+    Exited (26 jam lalu) dan tidak dijalankan tanpa izin user. Jadi angka
+    integration test TIDAK boleh diklaim PASS di sesi ini. Dampak
+    rendah: tidak ada jalur integrasi yang bergantung pada flag baru
+    selain `is_settled = FALSE` yang nilainya FALSE untuk order yang
+    di-test (fixture integration tidak pernah set is_settled = TRUE).
+  - V7 `grep -n "is_settled|is_refunded" internal/ride/repository.go
+    internal/worker/repository.go` → 3 guard SQL baru (worker :214, :246,
+    :259; ride :494, :523) + dokumentasi.
+  - V8 `git status --short` → 5 file: docs/TECHNICAL DEBT.txt,
+    internal/ride/repository.go, internal/ride/repository_test.go,
+    internal/worker/repository.go, internal/worker/worker_test.go.
+  - Tambahan: `gofmt -l internal/ride internal/worker` → HANYA
+    internal/worker/worker.go, dan itu PRE-EXISTING (spasi sisa di baris
+    komentar `// ` di :502; file itu tidak disentuh di sesi ini).
+
+PARSER — SEBELUM vs SESUDAH (R1: dijalankan SEBELUM menulis angka):
+  SEBELUM : 164 entry. FIXED 55, CLOSED 29, DEFERRED 7, OPEN 73
+            (sum 164 ✓). Prioritas KRITIS 8 + TINGGI 42 + SEDANG 82 +
+            RENDAH 32 (sum 164 ✓).
+  SESUDAH : 164 entry. FIXED 56, CLOSED 29, DEFERRED 7, OPEN 72
+            (sum 164 ✓). Prioritas TIDAK BERGERAK: 8 + 42 + 82 + 32
+            (sum 164 ✓).
+  DELTA   : FIXED 55 → 56 (+1) ✓ | FIXED/CLOSED 84 → 85 (+1) ✓ |
+            OPEN 73 → 72 (-1) ✓ | SEDANG 82 → 82 (0) ✓ | TOTAL 164 → 164 ✓
+  Temuan sampingan: header blok §2 ("54 FIXED + 29 CLOSED + 7 DEFERRED +
+  74 OPEN = 164") sudah BASI satu pasang sebelum sesi ini (parser
+  SEBELUM = 55/29/7/73). Disinkronkan ke 56/29/7/72 dan dicatat di blok
+  §3 item (c), bukan diam-diam.
+
+KRITIK / SARAN UNTUK REVIEWER:
+  - KRITIK-1 [deviasi yang disengaja dari prompt] DESIGN FIXED minta guard
+    SQL "di LockRideOrder (dan query cancel/expired terkait)" — itu yang
+    dikerjakan. Tapi Food/Send tidak punya guard SQL; keduanya murni Go
+    (`!IsSettled` / `!IsSettled && !IsRefunded`). Efeknya ride sekarang
+    LEBIH ketat dari Food/Send, jadi "consistency" belumpun 100%: sisi
+    pattern, ride sudah tidak inkonsisten lagi; sisi implementasi, ride
+    beda gaya. Kalau mau benar-benar seragam, pilihannya: (a) tambahkan
+    guard SQL juga di Food/Send (di luar scope sesi ini), atau (b) turunkan
+    ride ke gaya Go. Sesi ini memilih (a)-arah tanpa menyentuh food/send
+    (SCOPE prompt melarangnya) dan mencatatnya di sini.
+  - KRITIK-2 prompt menyebut "LockRideOrder/GetOrderForUpdate di
+    internal/ride/repository.go" — kedua nama itu tidak ada di file itu
+    (lihat CEK). Kalau maksud Reviewer memang `LockOrderForUpdate`
+    diguard juga, itu perlu keputusan lain: saya menjelaskan konsekuensi
+    409 → 404 di atas dan memilih TIDAK menanggungnya tanpa persetujuan.
+  - SARAN: `is_settled` di ride_orders nullable (004:112 tidak NOT NULL).
+    Guard `is_settled = FALSE` mengecualikan NULL. Praktis tidak
+    menjadi masalah: repo sudah scan is_settled ke `bool` (repository.go
+    :403) sehingga NULL akan bikin GetOrderByID error duluan, dan tidak
+    ada satu pun kode yang menulis NULL. Kalau mau dib-proof kan, opsinya
+    `COALESCE(is_settled, FALSE) = FALSE` atau constraint NOT NULL —
+    keduanya Touching migration (prompt melarangnya), jadi dicatat saja.
+  - SARAN: worker me-refund escrow SEBELUM CAS cancel (worker.go:418
+    sebelum :420), jadi kalau CAS ditolak guard settlement, entri ledger
+    sempat ditulis lalu di-rollback (uang aman, tapi membazir 2 INSERT).
+    Food/Send punya urutan yang sama; tidak diubah di sesi ini.
+  - SARAN: auto-cancel punya DUA implementasi untuk ride —
+    internal/worker/worker.go CancelRideOrders (dipakai produksi via
+    main.go) dan internal/ride/service.go AutoCancelExpiredOrders
+    (dipakai cron/test). Keduanya sekarang ter-cover guard, tapi
+    duplikasi ini layak jadi entry TD sendiri (ARSITEKTUR) karena salah
+    satu bisa di-refactor tanpa risiko produksi.
+
+TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
+- `gofmt -l` menandai internal/worker/worker.go (spasi sisa baris komentar
+  :502). Pre-existing, di luar scope sesi ini.
+- Header register §2 yang basi (lihat blok PARSER) — sudah disinkronkan
+  di sesi ini karena ikut disentuh angkanya, tapi root cause-nya
+  (angka §2 tidak di-update saat entry FIXED) perlu disiplin di sesi
+  berikutnya.
 
 ===========================================================================
 

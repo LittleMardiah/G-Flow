@@ -13,8 +13,9 @@
 //     (double-entry refund via wallet.LedgerService).
 //   - Update status = 'CANCELLED' + cancellation_reason = 'EXPIRED'.
 //   - Insert audit event (food_order_events / send_order_events).
-//   - Idempoten: guard status (CAS) + flag is_refunded memastikan tidak ada
-//     double-refund.
+//   - Idempoten: guard status (CAS) + flag is_refunded (Food) / is_settled
+//     (Food, Send, Ride) memastikan tidak ada double-refund. Ride tidak punya
+//     kolom is_refunded, jadi guard-nya hanya is_settled (TD-107).
 package worker
 
 import (
@@ -202,10 +203,15 @@ func (r *Repository) InsertSendOrderEvent(ctx context.Context, q Querier, e Send
 // ExpiredRideOrderIDs mengembalikan ID ride order berstatus 'SEARCHING_DRIVER'
 // yang sudah melewati expires_at (TTL 15 menit sejak booking, TD-067). Partial
 // index idx_ride_expires mempercepat query ini.
+//
+// Guard is_settled = FALSE (TD-107): order yang settlement-nya sudah selesai
+// tidak boleh masuk daftar auto-cancel (ride_orders tidak punya kolom
+// is_refunded, jadi guard-nya mirror ExpiredSendOrderIDs + LockSendOrder).
 func (r *Repository) ExpiredRideOrderIDs(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id FROM ride_orders
 		WHERE status = 'SEARCHING_DRIVER'
+		  AND is_settled = FALSE
 		  AND expires_at IS NOT NULL
 		  AND expires_at < NOW()
 	`)
@@ -226,25 +232,31 @@ func (r *Repository) ExpiredRideOrderIDs(ctx context.Context) ([]uuid.UUID, erro
 }
 
 // LockRideOrder mengambil + mengunci baris ride_orders dengan SELECT ... FOR
-// UPDATE NOWAIT. Mengembalikan ErrLockTimeout (SQLSTATE 55P03) jika lock tidak
-// tersedia.
+// UPDATE NOWAIT. Guard is_settled = FALSE (TD-107) — order yang sudah
+// settlement TIDAK dikunci untuk auto-cancel, jadi refund escrow (RIDE_REFUND)
+// tidak mungkin terjadi pada order yang dananya sudah dibagi ke
+// driver/platform. Equivalent guard Send ada di worker.go:308
+// (PaymentMethod WALLET && !IsSettled); ride_orders tidak punya kolom
+// is_refunded sehingga tidak ada guard kedua seperti Food. Mengembalikan
+// ErrLockTimeout (SQLSTATE 55P03) jika lock tidak tersedia, atau
+// ErrRideOrderNotFound jika order tidak ada / sudah settlement.
 func (r *Repository) LockRideOrder(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error) {
 	return scanRideOrderRow(q.QueryRow(ctx, `
 		SELECT id, customer_wallet_id, payment_method, status, estimated_fare
-		FROM ride_orders WHERE id = $1 FOR UPDATE NOWAIT
+		FROM ride_orders WHERE id = $1 AND is_settled = FALSE FOR UPDATE NOWAIT
 	`, orderID))
 }
 
 // CancelRideOrder menandai ride order CANCELLED + cancellation_reason='EXPIRED'
-// secara atomik (CAS) dengan guard status 'SEARCHING_DRIVER'. Return true jika
-// baris berubah.
+// secara atomik (CAS) dengan guard status 'SEARCHING_DRIVER' + is_settled =
+// FALSE (TD-107). Return true jika baris berubah.
 func (r *Repository) CancelRideOrder(ctx context.Context, q Querier, orderID uuid.UUID) (bool, error) {
 	tag, err := q.Exec(ctx, `
 		UPDATE ride_orders
 		SET status = 'CANCELLED',
 		    cancellation_reason = 'EXPIRED',
 		    updated_at = NOW()
-		WHERE id = $1 AND status = $2
+		WHERE id = $1 AND status = $2 AND is_settled = FALSE
 	`, orderID, rideStatusSearchingDriver)
 	if err != nil {
 		return false, err

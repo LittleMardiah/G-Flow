@@ -142,7 +142,7 @@ func TestCancelRideOrders_WalletRefund(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
 		WithArgs(workerOrderID).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
 			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusSearchingDriver, workerFare))
@@ -153,7 +153,7 @@ func TestCancelRideOrders_WalletRefund(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
 	entries := setupLedgerCapture(lgr)
-	mDB.ExpectExec("UPDATE ride_orders").
+	mDB.ExpectExec("UPDATE ride_orders SET status = 'CANCELLED', cancellation_reason = 'EXPIRED', updated_at = NOW\\(\\) WHERE id = .* AND status = .* AND is_settled = FALSE").
 		WithArgs(workerOrderID, rideStatusSearchingDriver).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	mDB.ExpectExec("INSERT INTO ride_order_events").
@@ -224,20 +224,24 @@ func TestCancelRideOrders_AlreadyCancelled_Skip(t *testing.T) {
 
 // ---- CancelRideOrders: error paths (TD-106) ----
 
-// expectRideOrderIDs mengatur ekspektasi query ID ride order expired.
+// expectRideOrderIDs mengatur ekspektasi query ID ride order expired. Guard
+// is_settled = FALSE ikut diasersikan (TD-107): order yang sudah settlement
+// tidak boleh masuk daftar auto-cancel.
 func expectRideOrderIDs(mDB pgxmock.PgxPoolIface, rows *pgxmock.Rows) {
-	mDB.ExpectQuery("SELECT id FROM ride_orders").WillReturnRows(rows)
+	mDB.ExpectQuery("SELECT id FROM ride_orders WHERE status = 'SEARCHING_DRIVER' AND is_settled = FALSE").
+		WillReturnRows(rows)
 }
 
 // expectRideTxOpen mengatur ekspektasi transaksi sampai baris order ter-lock:
-// Begin, SET LOCAL statement_timeout, SELECT ... FOR UPDATE NOWAIT. Parameter
-// wallet boleh nil (kolom NULL) untuk menguji guard wallet. Query ID expired
-// hanya dieksekusi sekali per sweep, jadi dipisah lewat expectRideOrderIDs.
+// Begin, SET LOCAL statement_timeout, SELECT ... FOR UPDATE NOWAIT dengan
+// guard is_settled = FALSE (TD-107). Parameter wallet boleh nil (kolom NULL)
+// untuk menguji guard wallet. Query ID expired hanya dieksekusi sekali per
+// sweep, jadi dipisah lewat expectRideOrderIDs.
 func expectRideTxOpen(mDB pgxmock.PgxPoolIface, id uuid.UUID, wallet any, payment, status string, fare decimal.Decimal) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
 		WithArgs(id).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
 			AddRow(id, wallet, payment, status, fare))
@@ -398,6 +402,67 @@ func TestCancelRideOrders_LockNoRows_SkipsOrder(t *testing.T) {
 
 	assert.Zero(t, got)
 	lgr.AssertNotCalled(t, "CreateLedgerEntries")
+	require.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestCancelRideOrders_AlreadySettled_LockGuardSkipsOrder (TD-107) —
+// LockRideOrder sekarang punya guard `AND is_settled = FALSE`, jadi order
+// yang settlement-nya sudah selesai TIDAK menghasilkan baris (pgx.ErrNoRows) →
+// worker skip tanpa refund escrow dan tanpa UPDATE cancel. Ini yang mencegah
+// refund RIDE_REFUND ganda pada order yang dananya sudah dibagi.
+func TestCancelRideOrders_AlreadySettled_LockGuardSkipsOrder(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	w, lgr := newTestWorker(t, mDB)
+
+	expectRideOrderIDs(mDB, pgxmock.NewRows([]string{"id"}).AddRow(workerOrderID))
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
+		WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
+		WithArgs(workerOrderID).
+		WillReturnError(pgx.ErrNoRows)
+	mDB.ExpectRollback()
+
+	got := w.CancelRideOrders(context.Background())
+
+	assert.Zero(t, got)
+	lgr.AssertNotCalled(t, "CreateLedgerEntries")
+	require.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestCancelRideOrders_CancelCASGuard_NoRowChanged (TD-107) —
+// CancelRideOrder punya guard `AND is_settled = FALSE`; kalau baris tidak
+// berubah (order keburu settlement antara lock dan UPDATE) worker wajib
+// rollback. Urutan worker: refund escrow dulu, baru CAS cancel — jadi entri
+// ledger yang sudah terlanjur ditulis ikut ter-rollback (money safe), dan
+// order TIDAK dihitung cancelled.
+func TestCancelRideOrders_CancelCASGuard_NoRowChanged(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	w, lgr := newTestWorker(t, mDB)
+
+	custWallet := workerCustWallet
+	expectRideOrderIDs(mDB, pgxmock.NewRows([]string{"id"}).AddRow(workerOrderID))
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
+		WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
+		WithArgs(workerOrderID).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
+			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusSearchingDriver, workerFare))
+	expectEscrowLookupAndWalletLock(mDB)
+	setupLedgerCapture(lgr)
+	// CAS cancel ditolak guard settlement → RowsAffected 0 → rollback penuh.
+	mDB.ExpectExec("UPDATE ride_orders SET status = 'CANCELLED', cancellation_reason = 'EXPIRED', updated_at = NOW\\(\\) WHERE id = .* AND status = .* AND is_settled = FALSE").
+		WithArgs(workerOrderID, rideStatusSearchingDriver).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 0"))
+	mDB.ExpectRollback()
+
+	got := w.CancelRideOrders(context.Background())
+
+	assert.Zero(t, got)
+	lgr.AssertExpectations(t)
 	require.NoError(t, mDB.ExpectationsWereMet())
 }
 
