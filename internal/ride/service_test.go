@@ -1491,6 +1491,55 @@ func TestSettlement_NoDelta_ActualEqualEstimated(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// TestSettlement_ActualFareRoundsToZero_FallsBackToEstimated (TD-133):
+// actual_fare fraksional kecil (0.004) HARUS di-Round(2) lebih dulu, baru
+// dicek IsPositive. Jika urutannya terbalik, 0.004 lolos cek lalu_round ke 0
+// → CompleteOrder menerima actualFare 0 (bug senyap). Post-fix: 0.004 → 0 →
+// bukan positif → fallback ke fareBasis (estimated_fare 50000).
+func TestSettlement_ActualFareRoundsToZero_FallsBackToEstimated(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	drv := svcDriverID
+	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
+	// Kunci: CompleteOrder harus menerima fareBasis (50000), bukan 0.
+	repo.On("CompleteOrder", mock.Anything, mock.Anything, svcOrderID, statusTripStarted,
+		decMatch(decimal.NewFromInt(50000)), mock.Anything, mock.Anything).Return(true, nil)
+	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).
+		Return(&RideWallet{ID: uuid.New(), UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
+	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
+	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
+
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
+	mDB.ExpectCommit()
+
+	actual := decimal.RequireFromString("0.004")
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, statusSettled, resp.Status)
+	assert.True(t, actual.Round(2).IsZero(), "precondition: 0.004 harus round ke 0")
+	repo.AssertExpectations(t)
+	lgr.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 func TestSettlement_SurplusDelta_Refund(t *testing.T) {
 	repo := new(mockRepo)
 	lgr := new(mockLedger)

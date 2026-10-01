@@ -938,8 +938,11 @@ func cancellationFeeFor(orderStatus, reason string) decimal.Decimal {
 // Settlement selalu memakai actual_fare (driver 80%, platform 20%).
 func (s *Service) completeOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error) {
 	actualFare := fareBasis(order)
-	if req.ActualFare != nil && req.ActualFare.IsPositive() {
-		actualFare = req.ActualFare.Round(2)
+	if req.ActualFare != nil {
+		r := req.ActualFare.Round(2)
+		if r.IsPositive() {
+			actualFare = r
+		}
 	}
 
 	if err := s.applyFareDelta(ctx, tx, order, actualFare); err != nil {

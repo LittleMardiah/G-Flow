@@ -2066,8 +2066,25 @@ Dampak     : Edge case nyaris nol, tapi secara kontrak: user kirim
              actual_fare=1 (satuan rupiah) mungkin round ke 0 lalu
              diabaikan. Low impact untuk IDR (integer), tapi bug logika.
 Solusi     : Urutan seharusnya: Round(2) dulu → IsPositive() baru.
+Catatan    : FIXED 2026-10-01 (sesi TD-133). `completeOrderTx` di
+             internal/ride/service.go di-reorder: `Round(2)` dievaluasi
+             lebih dulu ke `r`, baru `r.IsPositive()` yang menentukan
+             fallback ke fareBasis. Unit test baru
+             TestSettlement_ActualFareRoundsToZero_FallsBackToEstimated
+             (internal/ride/service_test.go) mengirim actual_fare=0.004
+             dan meng-assert CompleteOrder menerima fareBasis (50000),
+             bukan 0. Test ini DIBUKTIKAN gagal pada urutan lama
+             (CompleteOrder menerima decimal 0 → bug senyap terkonfirmasi,
+             bukan hipotesis). Handler UpdateStatus (handler.go:215)
+             tidak diubah: body `actual_fare` sudah *int64 (API_CONTRACT
+             7.3 rupiah bulat) sehingga tidak bisa menghasilkan fraksi;
+             rounding tetap milik lapisan service. Perilaku nilai
+             negatif tidak berubah (fallback ke estimated, sama seperti
+             sebelumnya). Coverage internal/ride 84.5% → 84.6%.
+             [OVERRIDE-1: prompt menyebut service.go:941-943; baris aktual
+             sebelum fix = 941-942.]
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-01, sesi TD-133)
 Referensi  : TD-069 (temuan OpenCode)
 
 ID         : TD-134
@@ -3744,12 +3761,90 @@ CATATAN SCOPE : TD-131 sudah menutup sisi customer (parse
 entry ini untuk sisi driver — supaya tidak ada satu entry TD yang
 meng klaim dua domain (mobile customer + mobile driver) sekaligus.
 
+ID         : TD-171
+Kategori   : HYGIENE / DOKUMENTASI
+Judul      : Format `Status :` di TECHNICAL DEBT.txt TIDAK konsisten —
+             ada 68 varian string distinct untuk 164 entry (prompt awal
+             menyebut "56+"; hasil parser aktual = 68, jadi klaim itu
+             UNDER-count). Cuma ada 4 token prefix berbeda: `✅` (59),
+             `🔵` (2), `FIXED` (4), `OPEN` (3). Contoh varian:
+             `✅ FIXED (2026-10-01, commit TD-133)`,
+             `✅ FIXED (commit 74edaa6, triage 2026-09-25)`,
+             `✅ FIXED (commit TD-106, 2026-09-27)`,
+             `✅ FIXED (commit implisit di S3 4b13daa, triage
+             2026-09-25)`, `✅ FIXED [2026-09-20]` (kurung siku, bukan
+             bulat), `FIXED (STEP 1B, 2026-09-20)`, `FIXED` (tanpa
+             meta), `✅ CLOSED (triage-v2 2026-09-30, duplikat TD-169)`,
+             `🔵 DEFERRED (triage — user skip deploy; ...)`,
+             `OPEN (rencana: STEP 1E)`,
+             `OPEN (ga urgent untuk WSL x86_64)`.
+             Parser regex berbasis prefix jadi rapuh → future session
+             berisiko salah count.
+Dampak     : Parser count bisa salah → aritmetika register invalid →
+             sesi berikutnya salah propose angka. Pola berulang 6+ kali
+             di file ini: blok [OVERRIDE-1]/[OVERRIDE-2]/[OVERRIDE-4]
+             di §2 dan blok "CATATAN STALE" di §3 menunjukkan header
+             pernah BASI ("54 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN"
+             sementara parser = 55/29/7/73). Akar masalahnya bukan salah
+             hitung, tapi format `Status :` yang tidak punya enum → tiap
+             sesi baru harus parse ulang 164 baris dengan asumsi
+             berbeda.
+Solusi     : 1) Standarkan format: `Status : <VERB>` sebagai satu token
+             enum dengan VERB ∈ {FIXED, CLOSED, DEFERRED, OPEN}. Emoji
+             (`✅` untuk FIXED/CLOSED, `🔵` untuk DEFERRED) tetap boleh
+             TAMPIL sebagai dekorasi visual setelah verb, tapi TIDAK lagi
+             jadi bagian prefix yang di-parse; entry OPEN tidak perlu emoji
+             (SEMUA 72 entry OPEN sekarang tanpa emoji — 70 `OPEN` polos
+             + 2 dengan metadata dalam kurung — jadi membakukan
+             `✅ OPEN` justru menambah satu varian baru).
+             Metadata opsional (commit/date/triage/alasan) dipindah ke
+             field `Note :` supaya `Status :` tetap satu token.
+             2) Parser robust: normalisasi (strip emoji + metadata dalam
+             kurung) atau match enum role, bukan string bebas.
+             3) Optional tapi paling aman: tambah field terstruktur
+             `Status-Code : FIXED|CLOSED|DEFERRED|OPEN` supaya parsing
+             tidak bergantung string bebas sama sekali.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-133 (temuan OpenCode — parser dijalankan SEBELUM
+             menulis angka; preseden disiplin "verify, jangan tebak"),
+             TD-107 (blok "CATATAN STALE" §3 — bukti header pernah
+             basi), pola aritmetika register berulang
+
+BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
+1. Parser atas 164 field `ID :` di file ini menghasilkan 68 nilai
+   `Status :` DISTINCT (bukan 56+). Distribusi token prefix: `✅` 59,
+   `🔵` 2, `FIXED` 4, `OPEN` 3. Artinya 7 entry (4 FIXED + 3 OPEN)
+   TIDAK punya emoji sama sekali, sedangkan 96 entry lain punya — dan
+   kedua kelompok hidup berdampingan di register yang sama.
+2. Bentuk kurung tidak seragam: `✅ FIXED [2026-09-20]` memakai kurung
+   siku `[...]`, sementara sisanya memakai `(...)`. Regex yang mengasumsikan
+   satu bentuk kurung akan gagal pada entry itu.
+3. Field `Status :` di entry lama juga tidak rata kolom (lihat TD-001
+   s/d TD-003 pakai `Status : FIXED (...)`, sedangkan entry Section F
+   pakai `Status     : OPEN`) — perbandingan literal string tanpa
+   normalisasi whitespace langsung gagal.
+4. Dampak historis TERBUKTI di file ini, bukan teoritis: §3 punya blok
+   "CATATAN STALE" yang mencatat header §2 tertulis 54/29/7/74 padahal
+   parser = 55/29/7/73; dan §2 punya beberapa [OVERRIDE-2]/[OVERRIDE-4]
+   karena prompt Reviewer salah menghitung bucket Prioritas (menganggap
+   bucket ikut `Status :`, padahal harusnya ikut `Prioritas :`). Akar
+   masalahnya sama: tidak ada kontrak format yang eksplisit + parser
+   rapuh berbasis string.
+5. Self-check arah Solusi: entry TD-171 ini sendiri ditulis dengan
+   `Status     : OPEN` — persis bentuk yang sudah dipakai 70 entry lain —
+   sehingga jumlah varian `Status :` DISTINCT TETAP 68 sesudah
+   penambahan (parser sebelum = 68, sesudah = 68). Kalau nanti dibakukan
+   `✅ OPEN` untuk entry OPEN, angka itu naik ke 69 dan entry baru jadi
+   varian ke-69: bukti bahwa "mempercantik format tanpa kontrak enum"
+   menambah varian, bukan mengurangi.
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 164 item (TD-051 di-reserve/skip)
-                                       (56 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 164)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 165 item (TD-051 di-reserve/skip)
+                                       (57 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 165)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3790,7 +3885,15 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 164 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 82 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170)
+- SEDANG  : 83 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171)
+           [83 pada 2026-10-01 (sesi TD-171 entry baru): bucket ini berbasis
+           `Prioritas :`, jadi TEPAT SATU perubahan yang menggerakkan:
+           TD-171 (entry BARU, `Prioritas : SEDANG`, `Status : OPEN`).
+           Bucket Status: FIXED 57 tetap, CLOSED 29 tetap, DEFERRED 7 tetap,
+           OPEN 71 → 72, TOTAL 164 → 165. Parser atas 165 field `ID :`
+           SESUDAH edit: Prioritas 8 + 42 + 83 + 32 = 165 ✓ = Status
+           57 + 29 + 7 + 72 = 165 ✓. Konsisten dengan prompt Reviewer
+           (Total 164→165, SEDANG 82→83, OPEN 71→72). Tidak commit (R10).]
            [82 TETAP pada 2026-10-01 (sesi TD-107 FIXED): bucket ini berbasis
            `Prioritas :`, bukan `Status :`, jadi TD-107 yang Status-nya OPEN
            → FIXED dengan `Prioritas :`-nya tetap SEDANG TIDAK menggerakkan
@@ -4164,18 +4267,60 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-10-01):
-   - Total hutang teridentifikasi      : 164 item (TD-051 di-reserve/skip; 164 item aktif terdaftar).
-   - ✅ FIXED                           : 56 item
+   - Total hutang teridentifikasi      : 165 item (TD-051 di-reserve/skip; 165 item aktif terdaftar).
+   - ✅ FIXED                           : 57 item
    - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
                                           2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 85 item
+   - FIXED/CLOSED                       : 86 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 72 item (bukan hanya TD-058 s/d TD-170 — masih ada
+   - ❌ OPEN                              : 72 item (bukan hanya TD-058 s/d TD-171 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [56 + 29 + 7 + 72 = 164 = TOTAL]
+     [57 + 29 + 7 + 72 = 165 = TOTAL]
+     [Perubahan 2026-10-01 (sesi TD-171 entry BARU) — TIDAK ada entry
+     ditutup, TIDAK ada kode disentuh; TOTAL 164 → 165.
+     (a) TD-171 (HYGIENE / DOKUMENTASI — format `Status :` di register ini
+         tidak konsisten: 68 varian string distinct untuk 164 entry, cuma
+         4 token prefix (`✅` 59, `🔵` 2, `FIXED` 4, `OPEN` 3), bentuk
+         kurung campuran `(...)` dan `[...]`, plus metadata commit/date
+         yang menempel di field `Status :`. Parser regex berbasis prefix
+         jadi rapuh → aritmetika register bisa salah) DITAMBahkan sebagai
+         entry BARU dengan `Prioritas : SEDANG`, `Status : OPEN`. Dampaknya
+         bucket Prioritas SEDANG 82 → 83 dan bucket Status OPEN 71 → 72.
+     (b) Bucket Prioritas lain TIDAK BERGERAK: KRITIS 8, TINGGI 42,
+         RENDAH 32 → 8 + 42 + 83 + 32 = 165 = TOTAL (bucket Prioritas
+         mengikuti `Prioritas :`, bukan `Status :` — preseden TD-047,
+         TD-106, TD-113, TD-131, TD-140, TD-147, TD-160, TD-166, TD-168).
+     (c) KONSISTEN dengan prompt Reviewer: Total 164 → 165, SEDANG 82 → 83,
+         OPEN 71 → 72, range Section F TD-058 s/d TD-170 → TD-058 s/d
+         TD-171. Parser dijalankan SEBELUM (57/29/7/71 = 164; Prioritas
+         8/42/82/32 = 164) dan SESUDAH (57/29/7/72 = 165; Prioritas
+         8/42/83/32 = 165) — dua-duanya cocok, tidak ada tebakan (R1/R2).
+         Tidak commit (R10).]
+     [Perubahan 2026-10-01 (sesi TD-133 FIXED) — SATU entry ditutup, TIDAK ada
+     entry baru; TOTAL TETAP 164.
+     (a) TD-133 (KODE — completeOrderTx internal/ride/service.go cek
+         IsPositive() ActualFare SEBELUM Round(2), jadi fraksi kecil seperti
+         0.004 lolos cek lalu round ke 0 → order selesai dengan actual_fare 0)
+         FIXED di SESI INI: urutan dibalik jadi `r := ActualFare.Round(2)`
+         lalu `r.IsPositive()` → nilai yang sudah ternormalisasi yang
+         menentukan fallback ke fareBasis. Test regression baru
+         TestSettlement_ActualFareRoundsToZero_FallsBackToEstimated
+         membuktikan bug: pada urutan lama CompleteOrder menerima decimal 0
+         (dikonfirmasi dengan test yang sengaja dijalankan pada kode
+         pre-fix), pada urutan baru menerima fareBasis 50000.
+         `Prioritas :`-nya tetap SEDANG → FIXED 56 → 57,
+         FIXED/CLOSED 85 → 86, OPEN 72 → 71, TOTAL 164 → 164.
+     (b) Bucket Prioritas TIDAK BERGERAK: KRITIS 8, TINGGI 42, SEDANG 82,
+         RENDAH 32 → 8 + 42 + 82 + 32 = 164 = TOTAL (bucket Prioritas
+         mengikuti `Prioritas :`, bukan `Status :` — preseden TD-047, TD-106,
+         TD-113, TD-131, TD-140, TD-147, TD-160, TD-166, TD-168).
+     Konsisten: 57 + 29 + 7 + 71 = 164 = TOTAL dan 8 + 42 + 82 + 32 = 164 =
+     TOTAL. Parser dijalankan SEBELUM (56/29/7/72 = 164) dan SESUDAH
+     (57/29/7/71 = 164) edit status TD-133 (R1/R2). Coverage internal/ride
+     84.5% → 84.6% (189 test PASS, 0 FAIL). Tidak commit (R10).]
      [Perubahan 2026-10-01 (sesi TD-107 FIXED) — SATU entry ditutup, TIDAK ada
      entry baru; TOTAL TETAP 164.
      (a) TD-107 (KODE / KONSISTENSI — ride tidak guard is_settled di query
@@ -6900,6 +7045,100 @@ TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
 ===========================================================================
 
 ===========================================================================
+CHANGELOG — 2026-10-01 (sesi TD-133, urutan Round(2) vs IsPositive ActualFare)
+===========================================================================
+
+SCOPE: internal/ride/service.go, internal/ride/service_test.go, dan
+register ini. TIDAK ada file lain yang disentuh (food/send/wallet/mobile
+utuh), tidak ada migration, tidak ada `git commit`/`push` (R10).
+
+CEK DULU (R1/R3) — klaim punya bukti file:line:
+- Satu-satunya jalur ActualFare di service adalah `completeOrderTx`
+  (internal/ride/service.go), bukan handler. Bukti: `grep -rn "ActualFare"
+  internal/ride/service.go` → 4 hasil, satu-satunya aksinya di :941-942
+  (`if req.ActualFare != nil && req.ActualFare.IsPositive() {
+  actualFare = req.ActualFare.Round(2) }`). `grep -rn "ActualFare.*Round|
+  Round.*ActualFare"` di seluruh internal/ride → 1 hasil saja (:942),
+  jadi tidak ada jalur kedua yang terlewat.
+- Prompt menyebut "service.go:941-943"; baris aktual SEBELUM fix = 941-942
+  (blok 3 baris termasuk `}` penutup). Dicatat sebagai [OVERRIDE-1].
+- Handler `UpdateStatus` (internal/ride/handler.go:215) memang punya
+  gerbang `*body.ActualFare > 0`, tapi body-nya `ActualFare *int64`
+  (handler.go:185) — rupiah bilatan bulat per API_CONTRACT 7.3, jadi
+  TIDAK bisa menghasilkan nilai fraksi. Gerbang handler tidak diubah:
+  hanya service yang perlu normalisasi, dan menggeserlogic ke handler akan
+  menduplikasi aturan pembulatan di dua lapisan.
+
+ROOT CAUSE (bug senyap, terkonfirmasi bukan hipotesis):
+`IsPositive()` diuji pada nilai BELUM dinormalisasi, sedangkan `Round(2)`
+dipakai untuk nilai yang LANGSUNG disimpan ke DB. Untuk 0 ≤ v < 0.005
+(mis. 0.004) urutannya berarti: v lolos `IsPositive()` → di-Round(2) → 0
+→ `CompleteOrder` menerima actual_fare 0 dan settlement membagi 0 ke
+driver/platform. Order selesai dengan fare 0 padahal estimated_fare
+mis. 50000. Tidak ada error, tidak ada log — itu sebabnya "silen".
+
+STEP A — FIX (internal/ride/service.go, completeOrderTx):
+Urutannya dibalik. `Round(2)` dievaluasi lebih dulu ke `r`, baru
+`r.IsPositive()` yang memutuskan apakah `actualFare` memakai nilai driver
+atau fallback ke `fareBasis(order)`. Nilai yang disimpan ke DB sekarang
+pasti sudah ternormalisasi dan pasti positif — tidak ada lagi celah
+antara "nilai yang dicek" dan "nilai yang ditulis".
+Perilaku nilai negatif TIDAK berubah: `IsPositive()` sudah false untuk
+negatif, jadi fallback ke estimated sama seperti sebelumnya (fix ini bukan
+pelonggaran validasi, hanya menormalkan urutan).
+
+STEP B — TEST (internal/ride/service_test.go):
+`TestSettlement_ActualFareRoundsToZero_FallsBackToEstimated` mengirim
+actual_fare = 0.004 (dibangun via `decimal.RequireFromString`, bukan
+float) dan meng-assert `CompleteOrder` menerima fareBasis 50000 (mock
+`decMatch`) — bukan 0. Test ini mengunci perilaku "diabaikan dengan
+jelas" (fallback estimated), bukan "truncate ke 0", sesuai opsi yang
+diizinkan pada sesi ini; itu juga satu-satunya opsi yang konsisten dengan
+dokumentasi TD-069 ("kosong/nol → pakai fareBasis").
+Bukti test benar-benar menangkap bug (bukan test yang selalu hijau):
+fix dikembalikan sementara ke urutan lama dan test dijalankan → GAGAL
+dengan `mock: Unexpected Method Call ... 4: FAIL: (decimal.Decimal=0)
+not matched` di argumen actualFare `CompleteOrder`; setelah urutan
+dipulihkan → PASS. Baris precondition
+`assert.True(t, actual.Round(2).IsZero())` menjaga agar test ini tetap
+bermakna kalau someday library `decimal` mengubah aturan Round.
+
+STEP C — VERIFIKASI (V1 s/d V5):
+- V1 `go build ./...` PASS (exit 0).
+- V2 `go vet ./...` PASS (exit 0).
+- V3 `go test ./internal/ride/... -v` PASS: 189 test, 0 FAIL
+  (sebelum 188; +1 test baru).
+- V4 `go test ./internal/ride/... -cover` = 84.6% of statements
+  (sebelum 84.5%).
+- V5 `git status --short` = hanya `M internal/ride/service.go` +
+  `M internal/ride/service_test.go` + register ini.
+
+PARSER (R1/R2) — dijalankan SEBELUM menulis angka, hasilnya cocok dengan
+angka yang diharapkan sesi ini: TOTAL 164, FIXED 56, CLOSED 29,
+FIXED/CLOSED 85, DEFERRED 7, OPEN 72; Prioritas KRITIS 8, TINGGI 42,
+SEDANG 82, RENDAH 32. Sesudah edit: FIXED 57, CLOSED 29, FIXED/CLOSED 86,
+DEFERRED 7, OPEN 71, TOTAL tetap 164; bucket Prioritas TIDAK bergerak
+(SEDANG tetap 82) karena `Prioritas :`-nya tidak diubah — preseden
+TD-047, TD-106, TD-113, TD-131, TD-140, TD-147, TD-160, TD-166, TD-168.
+Header blok §2 disinkronkan 57/29/7/71 dari hasil parser SESUDAH, bukan
+dari tebakan 56+1.
+
+TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
+- Fraksi masih bisa masuk lewat jalur selain handler ini hanya kalau ada
+  pemanggil service internal yang mengirim ActualFare fraksional
+  (mis. worker/replay). Tidak ada pemanggil lain di repo saat ini, tapi
+  idempotensi di lapisan DB untuk actual_fare fraksional belum dicek
+  (kolom bertipe NUMERIC(14,2) sendiri sudah aman karena PostgreSQL akan
+  membulatkan) — layak jadi entry TD sendiri kalau ever relevan.
+- `handler.go:215` masih menyalin nilai mentah ke service tanpa
+  `Round(2)`; aman sekarang karena *int64, tapi akan jadi titik rapuh
+  kalau tipe body diubah ke float/decimal nanti. Tidak disentuh (di luar
+  scope TD-133).
+
+===========================================================================
+
+===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
-================================================================================
+===========================================================================
+=====
 
