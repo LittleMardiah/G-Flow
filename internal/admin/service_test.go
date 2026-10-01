@@ -586,25 +586,6 @@ func TestGetUserRole(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// TestUpdateWalletBalance: update saldo wallet eksplisit (auto-sweep).
-func TestUpdateWalletBalance(t *testing.T) {
-	mDB, err := pgxmock.NewPool()
-	require.NoError(t, err)
-
-	mDB.ExpectBegin()
-	mDB.ExpectExec("UPDATE wallets SET balance = balance").
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
-		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
-	mDB.ExpectCommit()
-
-	tx, err := mDB.Begin(context.Background())
-	require.NoError(t, err)
-	repo := NewRepository(mDB)
-	require.NoError(t, repo.UpdateWalletBalance(context.Background(), tx, testEscrowID, decimal.NewFromInt(5000)))
-	require.NoError(t, tx.Commit(context.Background()))
-	assert.NoError(t, mDB.ExpectationsWereMet())
-}
-
 // TestReverseTransaction_NotBalanced: tidak ada entry DEBIT (tanpa refund wallet)
 // -> reversal ditolak karena tidak seimbang.
 func TestReverseTransaction_NotBalanced(t *testing.T) {

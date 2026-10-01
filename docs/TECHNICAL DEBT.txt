@@ -525,7 +525,55 @@ Judul      : UpdateWalletBalance (repository, auto-sweep/adjustment) TIDAK
              Invariant double-entry bisa dilanggar.
 Solusi     : audit & enforce semua perubahan balance lewat ledger_entries.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-01, sesi TD-049)
+Note   : OPSI A — method DIHAPUS, bukan di-refactor ke ledger. Bukti cek
+             (R1/R3): (1) `grep -rn "UpdateWalletBalance" internal/` =
+             5 hasil, SEMUA di declaration (repository.go:226-234) +
+             unit test (service_test.go:589-606). Prod caller = 0
+             (handler.go, service.go, cmd/, worker, ride/food/send/
+             wallet TIDAK punya satupun pemanggil). (2) Auto-sweep yang
+             diklaim di doc-comment method itu (`Dipakai untuk auto-sweep`)
+             sudah ledger-first BUKAN lewat method ini: ada di
+             `Service.ReverseTransaction` internal/admin/service.go:406-416
+             → shortfall di-INSERT sebagai `LedgerInsert{EntryType: "DEBIT",
+             ReferenceType: "OVERDRAFT_SWEEP", WalletID: receivableID}`
+             lewat `repo.InsertLedgerEntries` (service.go:424), dengan
+             validasi double-entry `isBalanced(entriesToInsert)`
+             (service.go:419) dan shortfall dipatok `FOR UPDATE` bareng
+             wallet lain (service.go:351-357) sesuai kontrak trigger di
+             migrations/001_initial_schema.up.sql:238-241. Jadi tidak ada
+             flow admin yang sah butuh update balance tanpa ledger →
+             Opsi A, bukan Opsi B. (3) Kenapa bypass itu destruktif:
+             `wallets.balance` adalah proyeksi yang DIKELOLA trigger
+             `sync_wallet_balance` (001_initial_schema.up.sql:244-281,
+             dipanggil `BEFORE INSERT OR UPDATE OF is_reversed ON
+             ledger_entries`), jadi raw `UPDATE wallets SET balance = ...`
+             menghasilkan saldo tanpa ledger entry pendukung — langsung
+             tidak konsisten dengan `VerifyWalletLedger`
+             (repository.go:713, bandingkan `wallets.balance` vs
+             `SUM(ledger_entries)` DEBIT/CREDIT) yang jadi sumber angka
+             endpoint `GET /admin/ledger/verify/{id}` (service.go:704) —
+             persis "sumber discrepancy" seperti judul TD ini.
+             Yang dihapus: `Repository.UpdateWalletBalance` (repository.go
+             226-234, blok `UPDATE wallets SET balance = balance + $1,
+             updated_at = NOW() WHERE id = $2`) + test tautologisnya
+             `TestUpdateWalletBalance` (service_test.go:589-606, cuma
+             assert string SQL dieksekusi pgxmock, 0 behaviour bisnis).
+             Diganti komentar invariant di tempat yang sama (repository.go
+             :226-235) yang melarang nulis `wallets.balance` langsung dan
+             menunjuk `InsertLedgerEntries`. Tidak ada coverage hilang:
+             auto-sweep tetap teruji `TestReverseTransaction_Shortfall`
+             (service_test.go:129, assert `res.HasSweep == true` +
+             shortfall 50000) dan `TestReverseTransaction_Success`
+             (service_test.go:54, `HasSweep == false`). `go build ./...` PASS,
+             `go vet ./...` PASS, `go test ./internal/admin/... -v` = 96 PASS
+             / 0 FAIL, coverage 83.6% → 83.5% (592 → 591 statement; yang
+             hilang 1 block fully-covered). `Prioritas :` tetap TINGGI
+             (bucket Prioritas TIDAK ikut Status — preseden TD-030, TD-031,
+             TD-106, TD-114, TD-158). Tidak commit (R10).
+Referensi  : triage_v2.log (root cause), migrations/001_initial_schema
+             .up.sql:244-281 (trigger sync_wallet_balance), 169-206
+             (constraint trigger validate_ledger_balance).
 
 ID         : TD-050
 Kategori   : KODE
@@ -3844,7 +3892,7 @@ BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 165 item (TD-051 di-reserve/skip)
-                                       (57 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 165)
+                                       (58 FIXED + 29 CLOSED + 7 DEFERRED + 71 OPEN = 165)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3852,6 +3900,21 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 165 item (TD-051 di-reserve/skip)
             TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128,
             TD-158, TD-167)
+            [TETAP 42 pada 2026-10-01 (sesi TD-049 FIXED): prompt Reviewer
+            menulis "TINGGI 42→41 (bucket Prioritas TD-049 = TINGGI)",
+            tapi angka 41 SALAH dan kontradiksi dengan kalimat berikutnya di
+            prompt yang sama ("TINGGI TETAP 42 (bukan turun)"). Bucket
+            Prioritas mengikuti field `Prioritas :`, bukan `Status :` —
+            TD-049 closing hanya mengubah `Status :` OPEN → FIXED, field
+            `Prioritas : TINGGI`-nya tetap, jadi bucket ini TIDAK bergerak
+            (preseden identik: TD-030, TD-031, TD-106, TD-114, TD-158 —
+            semuanya FIXED tapi tetap terdaftar di bucket Prioritasnya).
+            Parser atas 165 field `ID :` SESUDAH edit: Prioritas
+            8 + 42 + 83 + 32 = 165 ✓ = Status 58 + 29 + 7 + 71 = 165 ✓.
+            Kalau TINGGI 41 maka sum Prioritas = 164 ≠ 165 = jumlah entry.
+            Yang bergerak hanya bucket Status: FIXED 57 → 58,
+            FIXED/CLOSED 86 → 87, OPEN 72 → 71, TOTAL 165 → 165.
+            Lihat [OVERRIDE-1] di changelog sesi ini.]
             [42 pada 2026-09-29 (sesi TD-166 + TD-167 + TD-168): TD-167 entry
             BARU dengan `Prioritas : TINGGI` (pipeline tidak menjalankan
             test `integration`) → bucket TINGGI 41 → 42 (+1). TD-166 dan
@@ -4268,17 +4331,51 @@ REKOMENDASI:
 
 3. RINGKASAN STATUS TERKINI (2026-10-01):
    - Total hutang teridentifikasi      : 165 item (TD-051 di-reserve/skip; 165 item aktif terdaftar).
-   - ✅ FIXED                           : 57 item
+   - ✅ FIXED                           : 58 item
    - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
                                           2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 86 item
+   - FIXED/CLOSED                       : 87 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 72 item (bukan hanya TD-058 s/d TD-171 — masih ada
-                                          TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
+   - ❌ OPEN                              : 71 item (bukan hanya TD-058 s/d TD-171 — masih ada
+                                          TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [57 + 29 + 7 + 72 = 165 = TOTAL]
+     [58 + 29 + 7 + 71 = 165 = TOTAL]
+     [Perubahan 2026-10-01 (sesi TD-049 FIXED) — SATU entry ditutup, TIDAK
+     ada entry baru; TOTAL TETAP 165.
+     (a) TD-049 (ARSITEKTUR — `Repository.UpdateWalletBalance`
+         internal/admin/repository.go:226-234 menjalankan raw
+         `UPDATE wallets SET balance = balance + $1` sehingga saldo berubah
+         tanpa `ledger_entries` pendukung; itu persis sumber discrepancy
+         yang dibaca `VerifyWalletLedger` / `GET /admin/ledger/verify/{id}`)
+         FIXED di SESI INI dengan OPSI A: method DIHAPUS + test tautologisnya
+         `TestUpdateWalletBalance` (service_test.go:589-606) dihapus,
+         digantikan komentar invariant yang melarang tulis `wallets.balance`
+         langsung. Opsi B (refactor ke ledger) TIDAK dipakai karena
+         `grep -rn "UpdateWalletBalance" internal/` = 5 hasil dan semuanya
+         declaration + unit test → prod caller 0; auto-sweep yang diklaim
+         doc-comment method itu sudah ledger-first di
+         `Service.ReverseTransaction` (service.go:406-416 → DEBIT ke
+         SYSTEM_RECEIVABLE_OVERDRAFT via `InsertLedgerEntries`,
+         reference_type `OVERDRAFT_SWEEP`, double-entry dicek `isBalanced`
+         service.go:419). `Prioritas :`-nya tetap TINGGI →
+         FIXED 57 → 58, FIXED/CLOSED 86 → 87, OPEN 72 → 71,
+         TOTAL 165 → 165.
+     (b) Bucket Prioritas TIDAK BERGERAK: KRITIS 8, TINGGI 42, SEDANG 83,
+         RENDAH 32 → 8 + 42 + 83 + 32 = 165 = TOTAL (bucket Prioritas
+         mengikuti `Prioritas :`, bukan `Status :` — preseden TD-030,
+         TD-031, TD-047, TD-106, TD-107, TD-113, TD-114, TD-131, TD-140,
+         TD-133, TD-147, TD-158, TD-160, TD-166, TD-168). Prompt sesi ini
+         menulis "TINGGI 42→41" lalu di kalimat yang sama "TINGGI TETAP 42
+         (bukan turun)" — angka 41 SALAH, lihat [OVERRIDE-1] di changelog
+         sesi ini.
+     (c) Konsisten: 58 + 29 + 7 + 71 = 165 = TOTAL dan 8 + 42 + 83 + 32 =
+         165 = TOTAL. Parser dijalankan SEBELUM (57/29/7/72 = 165; Prioritas
+         8/42/83/32 = 165) dan SESUDAH (58/29/7/71 = 165; Prioritas
+         8/42/83/32 = 165) edit status TD-049 (R1/R2). Coverage
+         internal/admin 83.6% → 83.5% (592 → 591 statement, blok yang hilang
+         fully-covered), 96 test PASS / 0 FAIL. Tidak commit (R10).]
      [Perubahan 2026-10-01 (sesi TD-171 entry BARU) — TIDAK ada entry
      ditutup, TIDAK ada kode disentuh; TOTAL 164 → 165.
      (a) TD-171 (HYGIENE / DOKUMENTASI — format `Status :` di register ini
@@ -7134,6 +7231,229 @@ TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
   `Round(2)`; aman sekarang karena *int64, tapi akan jadi titik rapuh
   kalau tipe body diubah ke float/decimal nanti. Tidak disentuh (di luar
   scope TD-133).
+
+===========================================================================
+CHANGELOG — 2026-10-01 (sesi TD-049, hapus bypass ledger UpdateWalletBalance)
+
+KEPUTUSAN: OPSI A (HAPUS), bukan Opsi B (refactor ke ledger service).
+Prompt memberi "pilih SATU" dan Reviewer diminta cek dulu apakah ada flow
+admin yang sah butuh update balance tanpa ledger. Jawaban: TIDAK ADA.
+Bukti parser/grep di bawah, bukan asumsi.
+
+CEK (R1 — sebelum eksekusi):
+  1. `internal/admin/repository.go:226-234` (SEBELUM hapus):
+       // UpdateWalletBalance menambah/mengurangi saldo wallet secara
+       // eksplisit (amount positif = CREDIT, negatif = DEBIT). Dipakai
+       // untuk auto-sweep dan penyesuaian yang tidak melalui batch
+       // ledger trigger.
+       func (r *Repository) UpdateWalletBalance(ctx context.Context,
+           tx pgx.Tx, walletID uuid.UUID, delta decimal.Decimal) error {
+           _, err := tx.Exec(ctx, `
+               UPDATE wallets SET balance = balance + $1, updated_at = NOW()
+               WHERE id = $2
+           `, delta, walletID)
+           return err
+       }
+  2. `grep -rn "UpdateWalletBalance" internal/` = 5 hasil, 100% di
+     internal/admin (decl + test). Prod caller = 0. Cek tambahan di
+     cmd/, internal/{auth,ride,food,send,wallet,worker,location}/
+     middleware,db,config: 0 pemanggil. Konfirmasi independen: reviewer
+     prompt juga menulis "0 prod caller per triage-v2" ✓.
+  3. `internal/admin/service.go` — adakah flow yang butuh bypass?
+     TIDAK. Auto-sweep yang disebut doc-comment method itu sudah
+     ledger-first:
+       - service.go:10  header: "4. Auto-sweep journal memindahkan dana
+         yang tersedia ke receivable."
+       - service.go:46  referenceTypeSweep = "OVERDRAFT_SWEEP"
+       - service.go:52  walletTypeSDROverdraft
+                       = "SYSTEM_RECEIVABLE_OVERDRAFT"
+       - service.go:351-357 SystemWalletID + GetWalletBalances
+         (`ORDER BY id ASC FOR UPDATE`, locking semua wallet + receivable
+         satu transaksi — persis kontrak trigger di
+         migrations/001_initial_schema.up.sql:238-241)
+       - service.go:406-416 shortfall → `LedgerInsert{EntryType: "DEBIT",
+         ReferenceType: referenceTypeSweep, WalletID: receivableID}`
+       - service.go:419 `isBalanced(entriesToInsert)` guard
+       - service.go:424 `repo.InsertLedgerEntries(...)`
+       - service.go:433 `UpdateLedgerReversal` (trigger mengembalikan
+         saldo entry asli)
+     Tidak ada satu pun baris di service.go/handler.go yang memanggil
+     `UpdateWalletBalance`.
+  4. wallet.LedgerService — TIDAK ADA tipe dengan nama itu (cek
+     `grep -n "func (s *Service)" internal/wallet/service.go`: TopUp:178,
+     Transfer:370, ProcessTopUpWebhook:490, GetBalance:498,
+     GetMyWallet:514, GetWalletHistory:531, UpdateWalletStatus:581 —
+     tidak ada service yang menangani "bypass"/adjustment). Pattern ledger
+     yang benar di modul admin adalah `Repository.InsertLedgerEntries`
+     (repository.go:168) yang andal pada trigger `sync_wallet_balance`.
+  5. Kenapa `service_test.go:589-606` "butuh" bypass? Tidak butuh —
+     test itu tautologis: hanya `ExpectExec("UPDATE wallets SET balance
+     = balance")` lalu assert error nil. 0 assertion perilaku bisnis.
+     Ia ada hanya untuk meng-cover method yang tidak punya caller
+     (coverage theater). Perilaku yang diklaim diuji — auto-sweep —
+     sudah diuji lewat jalur ledger: `TestReverseTransaction_Shortfall`
+     (service_test.go:129) assert `res.HasSweep == true` dan shortfall
+     50000 ke receivable; `TestReverseTransaction_Success`
+     (service_test.go:54) assert `HasSweep == false` +
+     `InsertLedgerEntries` x4.
+
+KENAPA OPSI B TIDAK DIPILIH (argumen penolakan eksplisit):
+  Opsi B (bungkus jadi `LedgerService.CreateLedgerEntries`) akan
+  MEMBUAT production code untuk sesuatu yang tidak pernah dipanggil —
+  persisted bypass yang lebih sulit dilacak daripada function yang
+  dihapus. Prinsip contract §0: "Zero Risk, No Bypass". Hapus = nol
+  permukaan bypass. Kalau nanti ada flow sungguhan (mis. adjustment
+  manual ber-2FA), correct-nya flow BARU yang memanggil
+  `InsertLedgerEntries` dengan reference_type sendiri — bukan resurrect
+  method yang nilainya tidak punya provenance.
+
+KENAPA BYPASS INI DESTRUKTIF (bukan cuma "berantakan"):
+  `wallets.balance` bukan sumber kebenaran — itu proyeksi yang dikelola
+  trigger `sync_wallet_balance` (001_initial_schema.up.sql:244-281,
+  dipanggil `BEFORE INSERT OR UPDATE OF is_reversed ON ledger_entries`).
+  Raw `UPDATE wallets SET balance = ...` membuat saldo yang TIDAK punya
+  `ledger_entries` pendukung, dan langsung terlihat sebagai mismatch di
+  `Repository.VerifyWalletLedger` (repository.go:713, membandingkan
+  `wallets.balance` vs `SUM(amount) FILTER (entry_type)` DEBIT/CREDIT
+  dengan `is_reversed = FALSE`) — endpoint `GET /admin/ledger/verify/{id}`
+  (`Service.VerifyLedger`, service.go:704). Jadi method ini bukan sekadar
+  melanggar konvensi, dia adalah bug yang observabel dari luar.
+
+PERUBAHAN KODE (2 file, dalam SCOPE):
+  - internal/admin/repository.go: blok method 226-234 dihapus,
+    digantikan komentar invariant 10 baris di posisi yang sama yang
+    (a) melarang menulis `wallets.balance` langsung, (b) menjelaskan
+    `wallets.balance` = proyeksi trigger `sync_wallet_balance`,
+    (c) menunjuk `InsertLedgerEntries` sebagai satu-satunya jalur, dan
+    (d) mencatat TD-049 supaya method ini tidak "diperbaiki" diam-diam
+    nanti sebagai fitur.
+  - internal/admin/service_test.go: `TestUpdateWalletBalance` (589-606)
+    dihapus (test sesuatu yang sudah dihapus = compile error).
+  - internal/admin/service.go: TIDAK DIUBAH (0 byte). Syscall sudah
+    benar; yang salah memang hanya method yang tidak terpakai.
+  - Tidak ada file lain yang disentuh. Tidak commit (R10).
+
+PARSER — SEBELUM vs SESUDAH (R1: dijalankan SEBELUM menulis angka):
+  SEBELUM : 165 entry. FIXED 57, CLOSED 29, DEFERRED 7, OPEN 72
+            (sum 165 ✓). Prioritas KRITIS 8 + TINGGI 42 + SEDANG 83 +
+            RENDAH 32 (sum 165 ✓).
+  SESUDAH : 165 entry. FIXED 58, CLOSED 29, DEFERRED 7, OPEN 71
+            (sum 165 ✓). Prioritas TIDAK BERGERAK: 8 + 42 + 83 + 32
+            (sum 165 ✓).
+  DELTA   : FIXED 57 → 58 (+1) ✓ | FIXED/CLOSED 86 → 87 (+1) ✓ |
+            OPEN 72 → 71 (-1) ✓ | TINGGI 42 → 42 (0) ✓ | SEDANG 83 → 83
+            (0) ✓ | TOTAL 165 → 165 (0) ✓
+  Pipeline parser: regex `^ID\s*:\s*TD-(\d+)\s*$` untuk 165 blok entry,
+  lalu field `Prioritas :` / `Status :` diambil dari blok yang sama
+  (sampai baris `ID :` berikutnya). Klasifikasi Status: `CLOSED` kalau
+  "CLOSED" muncul di 30 karakter pertama, selain itu `FIXED` kalau prefix
+  `✅`/`FIXED`, `DEFERRED` kalau "DEFERRED" di 30 karakter pertama,
+  `OPEN` kalau prefix `🔵`/`OPEN`; sisanya dilapor sebagai OTHER
+  (hasil = 0 SEBELUM dan SESUDAH). Prefix distinct di register
+  SEBELUM: `✅` 79, `OPEN` 72, `FIXED` 7, `🔵` 7 = 165; SESUDAH:
+  `✅` 80, `OPEN` 71, `FIXED` 7, `🔵` 7 = 165 (delta `✅` +1, `OPEN` -1
+  = persis TD-049). 165 `ID :` unik, tanpa duplikat nomor TD.
+
+VERIFIKASI (V1 s/d V6):
+  - V1 `go build ./...` (timeout 600s) PASS, exit 0.
+  - V2 `go vet ./...` PASS, exit 0.
+  - V3 `go test ./internal/admin/... -v` PASS: 96 PASS / 0 FAIL.
+  - V4 `go test ./internal/admin/... -cover` = 83.5% of statements
+    (sebelum 83.6%). Turun 0.1pp karena blok yang dihapus 100%
+    covered: total statement 592 → 591 (dicek via `-coverprofile`
+    sebelum/sesudah, bukan dikira). TIDAK ada statement uncovered yang
+    jadi yatim.
+  - V5 `grep -rn "UpdateWalletBalance" internal/` = 1 hasil, dan itu
+    hanya komentar invariant di internal/admin/repository.go:231 yang
+    sengaja mencatat method ini sudah dihapus (0 pemanggilan kode).
+    `grep -rn "UPDATE wallets" internal/` → sisa-sisanya: (a) status
+    update di internal/wallet/repository.go:184,205 (bukan balance),
+    (b) seed/test di *_test.go. Tidak ada prod writer `wallets.balance`
+    yang tersisa di internal/admin.
+  - V6 `git status --short` = hanya `M internal/admin/repository.go`,
+    `M internal/admin/service_test.go`, `M docs/TECHNICAL DEBT.txt`.
+  - `gofmt -l internal/admin/` → 7 file (dashboard_test.go, handler.go,
+    ledger_admin_test.go, lockout.go, login_test.go, service.go,
+    service_test.go) — SEMUA PRE-EXISTING (dicek satu per satu terhadap
+    `git show HEAD:<file>`), bukan efek sesi ini. File
+    repository.go hasil edit sesi ini BERSIH (tidak masuk daftar). Penyebab pre-existing di
+    service_test.go cuma "No newline at end of file" — tidak disentuh
+    (R8).
+
+TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
+- `internal/wallet/repository.go:226` `Repository.UpdateBalance`
+  adalah bypass PERSIS yang sama bentuknya (`UPDATE wallets SET balance
+  = balance + $1, updated_at = NOW()`). Bedanya: modul wallet sudah
+  punya kontrak eksplisit di internal/wallet/ledger.go:8 dan
+  internal/wallet/service.go:12 ("layer TIDAK memanggil UpdateBalance
+  untuk operasi ledger"), dan `grep -rn "UpdateBalance" internal/`
+  menunjukkan 0 prod caller juga (hanya komentar + test). Jadi ini
+  kandidat entry TD baru yang layak, TAPI tidak saya masukkan di sesi
+  ini karena: (a) di luar SCOPE (`internal/wallet`, prompt hanya
+    `internal/admin/*`), dan (b) menambah entry akan mengubah TOTAL
+    165 → 166, sedangkan prompt mengunci "Total tetap 165". Rekomendasi
+    untuk Reviewer: prompt terpisah untuk entry TD baru (TD-172)
+    kalau mau diformalkan.
+- `docs/TDD.txt:487` dan `docs/TDD.txt:631-633` mendokumentasikan
+  anti-pattern yang sama sebagai design ("s.repo.UpdateWalletBalance(tx,
+  order.CustomerWalletID, fare.Neg())" setelah `CreateLedgerEntry`),
+  termasuk salah menaruh `WalletID: req.UserID` (user ID, bukan wallet
+  ID) di TDD.txt:479. Menurut R2 KODE = source of truth dan trigger
+  `sync_wallet_balance` sudah menghapus kebutuhan pemanggilan
+   manual saldo, jadi TDD.txt yang stale dan SALAH — tapi tidak saya ubah
+  (di luar SCOPE; prompt melarang sentuh modul/dokumen lain).
+- Test seeding `UPDATE wallets SET balance = $2` di
+  internal/{ride,food,send,wallet}/*_test.go menulis saldo tanpa
+  ledger entry. Itu test-fixture (integration test build-tag, tidak
+  jalan di CI pipeline), jadi risikonya rendah dan stdarnya berbeda
+  dengan unit test — dicatat saja.
+
+KRITIK / SARAN UNTUK REVIEWER:
+  - [OVERRIDE-1] Prompt sesi ini menulis dua hal yang bertentangan soal
+    bucket TINGGI: "TINGGI 42→41 (bucket Prioritas TD-049 = TINGGI)" di
+    bagian Ringkasan, lalu "WAJIB parse dulu — bucket Prioritas: TD-049
+    Prioritas TINGGI close → TINGGI TETAP 42 (bukan turun)" di paragraf
+    berikutnya. Angka 41 SALAH karena bucket Prioritas di register ini
+    berbasis field `Prioritas :`, bukan `Status :`: TD-049 tetap
+    `Prioritas : TINGGI`, jadi bucket TINGGI TETAP 42. Preseden identik
+    sudah tercatat di register untuk TD-030, TD-031, TD-106, TD-114,
+    TD-158 ("[TETAP 40 pada 2026-09-27 (TD-106 FIXED)]", "[41 TETAP
+    pada 2026-09-28 (TD-158 FIXED)]"). Parser independen mengonfirmasi
+    dua-duanya: 8 + 41 + 83 + 32 = 164 ≠ 165 entry, sedangkan
+    8 + 42 + 83 + 32 = 165 ✓. Jadi angka final = TINGGI 42 TETAP,
+    FIXED 58, FIXED/CLOSED 87, OPEN 71, TOTAL 165. Sesi ini memakai
+    angka 42 sesuai §11 (koreksi faktual + bukti konkret), bukan 41.
+  - [KRITIK-1] Prompt CEK step 4 menyebut "wallet.LedgerService — pattern
+    ledger creation". Tipe dengan nama itu tidak ada di repo. Kalau
+    maksudnya "layer ledger yang benar", yang dimaksud adalah trigger
+    `sync_wallet_balance` + `Repository.InsertLedgerEntries`. Saya tidak
+    Mengarang tipe yang tidak ada (R3).
+  - [KRITIK-2] Prompt CEK step 5 menanyakan "Test service_test.go:590 —
+    kenapa test ini butuh bypass?" dengan asumsi ada alasan bisnis.
+    Faktanya tidak: test itu tautologis (assert string SQL dieksekusi).
+    Kalau Reviewer menghapus method tanpa hati-hati, ia mungkin menulis
+    test pengganti yang menguji sesuatu yang tidak pernah ada —
+    menghindari jebakan itu, test-nya dihapus dan behavior-nya tetap
+    teruji lewat 2 test yang sudah ada.
+  - [SARAN] Pertimbangkan guard di level DB untuk menutup kelas bug
+    ini permanen: misalnya trigger `BEFORE UPDATE OF balance ON wallets`
+    yang `RAISE EXCEPTION` kalau session GUC penanda ledger-stack tidak
+    di-set. Dengan begitu raw UPDATE ke saldo tidak bisa lolos walau
+    ada coder yang menambah repo method baru di kemudian hari —
+    dokumentasi (komentar invariant yang saya tambahkan) bisa terlewat,
+    trigger tidak. Itu perubahan migration, jadi di luar scope sesi ini.
+  - [SARAN] `admin_action_logs.details` di service.go:444 sudah mencatat
+    `refunded` + `shortfall` untuk reversal. Kalau auto-sweep resmi
+    dijadikan fitur (bukan remediation dalam reversal), pertimbangkan
+    reference_type sendiri (`OVERDRAFT_SWEEP` sudah ada) + audit trail
+    yang menjelaskan dari mana shortfall berasal, supaya discrepancy di
+    verify endpoint bisa ditelusuri ke aksi admin tertentu.
+  - [RISIKO] Menghapus method memutus API publik Go package kalau ada
+    consumer di luar repo (unlikely untuk aplikasi server-to-server
+    Go; tidak ada `internal/` import path yang bisa dipakai module
+    luar, dan repo ini `main` package). Tidak ditemukan reference di
+    cmd/, scripts/, .github/. Risiko rendah, tapi R10 tetap: User yang
+    commit setelah review.
 
 ===========================================================================
 

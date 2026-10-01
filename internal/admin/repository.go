@@ -223,15 +223,15 @@ func (r *Repository) GetWalletBalances(ctx context.Context, tx pgx.Tx, walletIDs
 	return balances, nil
 }
 
-// UpdateWalletBalance menambah/mengurangi saldo wallet secara eksplisit
-// (amount positif = CREDIT, negatif = DEBIT). Dipakai untuk auto-sweep dan
-// penyesuaian yang tidak melalui batch ledger trigger.
-func (r *Repository) UpdateWalletBalance(ctx context.Context, tx pgx.Tx, walletID uuid.UUID, delta decimal.Decimal) error {
-	_, err := tx.Exec(ctx, `
-		UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE id = $2
-	`, delta, walletID)
-	return err
-}
+// CATATAN INVARIAN (TD-049): tidak ada method di repository ini yang boleh
+// menulis `wallets.balance` langsung. Kolom itu adalah proyeksi yang
+// dipertahankan trigger `sync_wallet_balance` (migrations/001_initial_schema
+// .up.sql:244-281) dari INSERT ledger_entries, jadi setiap perubahan saldo
+// WAJIB lewat InsertLedgerEntries (DEBIT/CREDIT). Raw `UPDATE wallets SET
+// balance = ...` pernah ada sebagai UpdateWalletBalance — sudah dihapus
+// (dead code, 0 prod caller) karena langsung merusak double-entry invariant
+// dan langsung terlihat sebagai discrepancy di VerifyWalletLedger
+// (repository.go di bawah).
 
 // CreateAdminActionLog menulis baris audit aksi admin (reversal, dsb).
 func (r *Repository) CreateAdminActionLog(ctx context.Context, tx pgx.Tx, adminID uuid.UUID, action, entityType string, entityID, referenceID *uuid.UUID, details map[string]any) error {
