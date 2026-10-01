@@ -2144,7 +2144,50 @@ Dampak     : Merchant lihat order reject di tab WAITING — confusing
 Solusi     : Ubah filter tab berdasarkan status order (bukan
              merchant_status), ATAU exclude status CANCELLED dari tab WAITING.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-09-30, sesi TD-140)
+Note       : Root cause diverifikasi ke QUERY backend, bukan asumsi.
+             `GetFoodOrdersByMerchant` (internal/food/repository.go:912) dan
+             `CountFoodOrdersByMerchant` (:938) memfilter
+             `WHERE merchant_id = $1 AND ($2 = '' OR status::text = $2 OR
+             merchant_status::text = $2)` — jadi OR, BUKAN merchant_status
+             saja. Handler (internal/food/handler.go:848) cuma
+             `strings.ToUpper(c.Query("status"))`, TANPA whitelist, jadi
+             `?status=CANCELLED` aman. Response sudah kirim dua-duanya
+             (`status` + `merchant_status`, repository.go:624-625).
+             KONSEKUENSI PENTING untuk Pilihan di prompt: karena
+             merchant_status tidak pernah bisa 'CANCELLED' (CHECK
+             migrations/005_food_send_schema.up.sql:318 hanya WAITING/
+             CONFIRMED/PREPARING/READY), `?status=CANCELLED` otomatis =
+             order yang `status='CANCELLED'` saja → tab CANCELLED
+             bekerja TANPA ubah backend (fix frontend murni). Tab WAITING
+             tetap bocor (cocok via merchant_status='WAITING'), dan karena
+             `repository.go:912` di luar SCOPE, exclusion dikerjakan
+             client-side.
+             FIX: (1) `OrdersState.visibleOrders` (order_provider.dart:24)
+             menyaring ulang hasil fetch by `MerchantOrder.displayStatus`,
+             yang sejak TD-138 (merchant_order.dart:55) prioritize status
+             terminal di atas merchant_status → order reject punya
+             displayStatus='CANCELLED' dan TIDAK lolos filter 'WAITING'.
+             Getter lama `OrdersNotifier.visibleOrders` dipertahankan sebagai
+             delegasi (API test lama tidak patah). (2) Screen pakai
+             `state.visibleOrders` (bukan `state.orders`) — ini yang
+             sebenarnya memperbaiki bug, karena sebelumnya getter tersebut
+             ada tapi TIDAK PERNAH dipakai UI mana pun. (3) Tab 'CANCELLED'
+             ("Dibatalkan") ditambahkan di orders_list_screen.dart:19 +
+             map label :21/:23; chip memanggil `load(status:'CANCELLED')` →
+             OrderService mengirim `?status=CANCELLED`
+             (order_service.dart:10-11).
+             5 test baru di test/order_provider_test.dart (payload request
+             dicek via `adapter.paths` + assertion `visibleOrders`) mencakup
+             kasus reproduksi aslinya: 2 order dari backend (satu
+             rejected + satu live) → tab WAITING tampil 1, tab CANCELLED
+             tampil 1, tab ALL tetap 2. Backend, customer_app, dan
+             driver_app TIDAK disentuh (R8). Tidak commit (R10).
+             BATAS YANG DISADARI: exclusion client-side hanya berlaku pada
+             1 halaman hasil fetch (page_size default 20, tanpa paginasi di
+             UI) — order WAITING yang valid bisa terdorong keluar halaman 1
+             kalau banyak order reject. Dicatat sebagai gap lanjutan di blok
+             TEMUAN DI LUAR SCOPE pada changelog sesi ini, tidak diperbaiki.
 Referensi  : Merchant S3 (temuan OpenCode)
 
 ID         : TD-141
@@ -4076,17 +4119,34 @@ REKOMENDASI:
 
 3. RINGKASAN STATUS TERKINI (2026-09-30):
    - Total hutang teridentifikasi      : 164 item (TD-051 di-reserve/skip; 164 item aktif terdaftar).
-   - ✅ FIXED                           : 54 item
+   - ✅ FIXED                           : 55 item
    - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
                                           2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 83 item
+   - FIXED/CLOSED                       : 84 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 74 item (bukan hanya TD-058 s/d TD-170 — masih ada
+   - ❌ OPEN                              : 73 item (bukan hanya TD-058 s/d TD-170 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-049,
                                           TD-052 s/d TD-057, dst/).
-     [54 + 29 + 7 + 74 = 164 = TOTAL]
+     [55 + 29 + 7 + 73 = 164 = TOTAL]
+     [Perubahan 2026-09-30 (sesi TD-140 FIXED) — SATU entry ditutup, TIDAK
+     ada entry baru; total TETAP 164.
+     (a) TD-140 (MOBILE / UX — tab WAITING menampilkan order yang di-reject
+         karena backend memfilter `status OR merchant_status`) FIXED di SESI
+         INI, fix frontend murni: tab "Dibatalkan" (CANCELLED) baru +
+         `OrdersState.visibleOrders` menyaring order terminal client-side,
+         dan layar pertama kali benar-benar memakai getter itu (sebelumnya
+         ada tapi tidak pernah dipakai UI). `Prioritas :`-nya tetap RENDAH →
+         FIXED 54 → 55, FIXED/CLOSED 83 → 84, OPEN 74 → 73, TOTAL 164 → 164.
+     (b) Bucket Prioritas TIDAK BERGERAK: KRITIS 8, TINGGI 42, SEDANG 82,
+         RENDAH 32 → 8 + 42 + 82 + 32 = 164 = TOTAL (bucket Prioritas
+         mengikuti `Prioritas :`, bukan `Status :` — preseden TD-047, TD-106,
+         TD-131, TD-160, TD-166, TD-168).
+     Konsisten: 55 + 29 + 7 + 73 = 164 = TOTAL dan 8 + 42 + 82 + 32 = 164 =
+     TOTAL. Parser dijalankan SEBELUM (54/29/7/74 = 164) dan SESUDAH
+     (55/29/7/73 = 164) edit (R1/R2). Tidak ada kode yang/backend disentuh
+     di luar apps/merchant_app. Tidak commit (R10).]
      [Perubahan 2026-09-30 (sesi TD-131 FIXED + TD-170 entry baru) — SATU
      entry ditutup, SATU entry BARU ditambahkan; total naik 1, dan bucket
      OPEN TIDAK bergerak karena keduanya saling meniadakan.

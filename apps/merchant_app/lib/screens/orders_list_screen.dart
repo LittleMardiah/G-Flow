@@ -12,7 +12,15 @@ class OrdersListScreen extends ConsumerStatefulWidget {
 }
 
 class _OrdersListScreenState extends ConsumerState<OrdersListScreen> {
-  static const _filters = ['ALL', 'WAITING', 'CONFIRMED', 'PREPARING', 'READY', 'DELIVERED'];
+  // Tab diurut: proses merchant dulu, terminal terakhir. 'CANCELLED' =
+  // order yang di-reject/dibatalkan; backend tidak punya merchant_status
+  // 'CANCELLED' (CHECK constraint), jadi tab ini difilter lewat `status`
+  // order (fix TD-140).
+  static const _filters = ['ALL', 'WAITING', 'CONFIRMED', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED'];
+
+  static const _labels = {'ALL': 'All', 'CANCELLED': 'Dibatalkan'};
+
+  static String _labelFor(String f) => _labels[f] ?? f;
 
   @override
   void initState() {
@@ -41,7 +49,7 @@ class _OrdersListScreenState extends ConsumerState<OrdersListScreen> {
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: ChoiceChip(
-                    label: Text(f == 'ALL' ? 'All' : f),
+                    label: Text(_labelFor(f)),
                     selected: selected,
                     onSelected: (_) => ref.read(orderProvider.notifier).load(status: f),
                   ),
@@ -82,10 +90,15 @@ class _OrdersListScreenState extends ConsumerState<OrdersListScreen> {
         ],
       );
     }
-    final orders = List.of(state.orders)
+    // visibleOrders menyaring order terminal (CANCELLED/DELIVERED/SETTLED)
+    // dari tab proses — backend masih mengirim order reject karena
+    // merchant_status-nya 'WAITING' (fix TD-140).
+    final orders = List.of(state.visibleOrders)
       ..sort((a, b) => (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
     if (orders.isEmpty) {
-      return const Center(child: Text('Belum ada pesanan'));
+      return Center(
+        child: Text(state.filter == null || state.filter == 'ALL' ? 'Belum ada pesanan' : 'Tidak ada pesanan di tab ini'),
+      );
     }
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),

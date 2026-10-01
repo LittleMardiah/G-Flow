@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:merchant_app/models/merchant_order.dart';
 import 'package:merchant_app/providers/auth_provider.dart';
 import 'package:merchant_app/providers/order_provider.dart';
 import 'package:merchant_app/services/api_client.dart';
@@ -14,12 +15,14 @@ class FakeDioAdapter implements HttpClientAdapter {
   final List<Map<String, dynamic>> responses;
   final List<Object> errors;
   int callCount = 0;
+  final List<String> paths = [];
 
   FakeDioAdapter({this.responses = const [], this.errors = const []});
 
   @override
   Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
     final idx = callCount++;
+    paths.add(options.uri.toString());
     if (idx < errors.length) {
       final e = errors[idx];
       if (e is DioException) throw e;
@@ -119,6 +122,102 @@ void main() {
 
       final filtered = notifier.state.orders.where((o) => o.displayStatus == 'WAITING').toList();
       expect(filtered.length, 1);
+    });
+
+    test('load sends status=CANCELLED so backend filters by order status (TD-140)', () async {
+      storage = FakeStorage()..store['merchant_id'] = 'm1';
+      final adapter = FakeDioAdapter(responses: [
+        {'body': {'data': {'orders': [_orderJson('o1', 'CANCELLED', 'WAITING')]}}},
+      ]);
+      final api = _api(adapter, storage);
+      container = ProviderContainer(overrides: [
+        storageProvider.overrideWithValue(storage),
+        apiClientProvider.overrideWithValue(api),
+        orderServiceProvider.overrideWithValue(OrderService(api)),
+      ]);
+      final notifier = container.read(orderProvider.notifier);
+      await notifier.load(status: 'CANCELLED');
+
+      expect(adapter.paths.single, contains('status=CANCELLED'));
+      expect(notifier.state.visibleOrders.length, 1);
+    });
+
+    test('WAITING tab hides rejected order (status CANCELLED, merchant_status WAITING) (TD-140)', () async {
+      storage = FakeStorage()..store['merchant_id'] = 'm1';
+      // Backend OR-filter mengembalikan order reject ini di tab WAITING karena
+      // merchant_status='WAITING' (repository.go:912).
+      final adapter = FakeDioAdapter(responses: [
+        {'body': {'data': {'orders': [
+          _orderJson('o-rejected', 'CANCELLED', 'WAITING'),
+          _orderJson('o-live', 'CREATED', 'WAITING'),
+        ]}}},
+      ]);
+      final api = _api(adapter, storage);
+      container = ProviderContainer(overrides: [
+        storageProvider.overrideWithValue(storage),
+        apiClientProvider.overrideWithValue(api),
+        orderServiceProvider.overrideWithValue(OrderService(api)),
+      ]);
+      final notifier = container.read(orderProvider.notifier);
+      await notifier.load(status: 'WAITING');
+
+      expect(adapter.paths.single, contains('status=WAITING'));
+      expect(notifier.state.orders.length, 2, reason: 'backend tetap mengirim 2 order');
+      expect(notifier.state.visibleOrders.length, 1, reason: 'order reject disaring client-side');
+      expect(notifier.state.visibleOrders.single.id, 'o-live');
+      expect(notifier.state.visibleOrders.single.displayStatus, 'WAITING');
+    });
+
+    test('CANCELLED tab shows rejected order and hides live WAITING order (TD-140)', () async {
+      storage = FakeStorage()..store['merchant_id'] = 'm1';
+      final adapter = FakeDioAdapter(responses: [
+        {'body': {'data': {'orders': [
+          _orderJson('o-rejected', 'CANCELLED', 'WAITING'),
+          _orderJson('o-live', 'CREATED', 'WAITING'),
+        ]}}},
+      ]);
+      final api = _api(adapter, storage);
+      container = ProviderContainer(overrides: [
+        storageProvider.overrideWithValue(storage),
+        apiClientProvider.overrideWithValue(api),
+        orderServiceProvider.overrideWithValue(OrderService(api)),
+      ]);
+      final notifier = container.read(orderProvider.notifier);
+      await notifier.load(status: 'CANCELLED');
+
+      expect(notifier.state.visibleOrders.length, 1);
+      expect(notifier.state.visibleOrders.single.id, 'o-rejected');
+      expect(notifier.state.visibleOrders.single.displayStatus, 'CANCELLED');
+    });
+
+    test('ALL tab keeps both rejected and live orders visible (TD-140)', () async {
+      storage = FakeStorage()..store['merchant_id'] = 'm1';
+      final adapter = FakeDioAdapter(responses: [
+        {'body': {'data': {'orders': [
+          _orderJson('o-rejected', 'CANCELLED', 'WAITING'),
+          _orderJson('o-live', 'CREATED', 'WAITING'),
+        ]}}},
+      ]);
+      final api = _api(adapter, storage);
+      container = ProviderContainer(overrides: [
+        storageProvider.overrideWithValue(storage),
+        apiClientProvider.overrideWithValue(api),
+        orderServiceProvider.overrideWithValue(OrderService(api)),
+      ]);
+      final notifier = container.read(orderProvider.notifier);
+      await notifier.load(status: 'ALL');
+
+      expect(adapter.paths.single, isNot(contains('status=')));
+      expect(notifier.state.visibleOrders.length, 2);
+    });
+
+    test('OrdersState.visibleOrders pure logic without notifier', () {
+      const rejected = MerchantOrder(id: 'a', status: 'CANCELLED', merchantStatus: 'WAITING');
+      const live = MerchantOrder(id: 'b', status: 'CREATED', merchantStatus: 'WAITING');
+      const s = OrdersState(orders: [rejected, live], filter: 'WAITING');
+      expect(s.visibleOrders.map((o) => o.id), ['b']);
+      expect(const OrdersState(orders: [rejected, live]).visibleOrders.length, 2);
+      expect(const OrdersState(orders: [rejected, live], filter: 'ALL').visibleOrders.length, 2);
     });
 
     test('load sets error when merchant id missing', () async {

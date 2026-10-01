@@ -10,6 +10,23 @@ class OrdersState {
 
   const OrdersState({this.orders = const [], this.isLoading = false, this.error, this.filter});
 
+  /// Order yang boleh ditampilkan untuk tab filter aktif.
+  ///
+  /// Backend `GET /merchants/:id/orders` memfilter dengan
+  /// `status::text = $2 OR merchant_status::text = $2`
+  /// (internal/food/repository.go:912), sehingga order yang di-reject /
+  /// dibatalkan merchant (status='CANCELLED', merchant_status='WAITING' —
+  /// CHECK constraint merchant_status tidak mengizinkan 'CANCELLED',
+  /// migrations/005_food_send_schema.up.sql:318) tetap ikut masuk ke tab
+  /// WAITING. Order terminal disaring ulang di sisi client lewat
+  /// [MerchantOrder.displayStatus] (fix TD-138: status terminal menang atas
+  /// merchant_status).
+  List<MerchantOrder> get visibleOrders {
+    final f = filter;
+    if (f == null || f == 'ALL') return orders;
+    return orders.where((o) => o.displayStatus == f).toList();
+  }
+
   OrdersState copyWith({List<MerchantOrder>? orders, bool? isLoading, String? error, String? filter}) {
     return OrdersState(
       orders: orders ?? this.orders,
@@ -25,11 +42,7 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
 
   final Ref ref;
 
-  List<MerchantOrder> get visibleOrders {
-    final f = state.filter;
-    if (f == null || f == 'ALL') return state.orders;
-    return state.orders.where((o) => o.displayStatus == f).toList();
-  }
+  List<MerchantOrder> get visibleOrders => state.visibleOrders;
 
   Future<void> load({String? status}) async {
     final merchantId = await ref.read(storageProvider).read(key: kMerchantIdKey);
