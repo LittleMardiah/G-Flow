@@ -1301,7 +1301,7 @@ Dampak     : Risiko clickjacking, MIME sniffing, downgrade HTTPS di API/web.
 Solusi     : Middleware security headers di semua response.
 Estimasi   : 1-2 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-02, sesi TD-096)
 Referensi  : audit_r04.log (GAP-3)
 
 ID         : TD-097
@@ -4072,7 +4072,7 @@ BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 167 item (TD-051 di-reserve/skip)
-                                       (59 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 167)
+                                       (60 FIXED + 29 CLOSED + 7 DEFERRED + 71 OPEN = 167)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4370,8 +4370,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 167 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 59 item, 29 item CLOSED (FIXED/CLOSED 88), 7 item DEFERRED,
-        72 item OPEN.  [59 + 29 + 7 + 72 = 167 = TOTAL]
+STATUS: ✅ FIXED 60 item, 29 item CLOSED (FIXED/CLOSED 89), 7 item DEFERRED,
+        71 item OPEN.  [60 + 29 + 7 + 71 = 167 = TOTAL]
         [59/88/7/72 pada 2026-10-02 (sesi TD-172 + TD-173 entry baru): blok
         STATUS §2 ini tertinggal 2 snapshot — sequential dari blok
         [Perubahan 2026-09-30] di bawah (54/83/7/74 = 164), padahal sesi
@@ -7922,6 +7922,7 @@ KRITIK / SARAN UNTUK REVIEWER:
 ===========================================================================
 CHANGELOG — 2026-10-02 (sesi TD-172 + TD-173, register gaps)
 ==========================================================================
+- TD-096: Security headers middleware (HSTS/CSP/XFO/XCTO) — ✅ FIXED (sesi TD-096). HSTS hanya saat HTTPS (X-Forwarded-Proto/TLS).
 
 ISI SESI INI:
   Register saja — pencatatan 2 entry baru hasil TEMUAN DI LUAR SCOPE sesi
@@ -7977,6 +7978,14 @@ ENTRY BARU — TD-173 (KODE / SEDANG / OPEN):
   migrations/004_ride_orders.up.sql:55/:102, bukan dari respons yang benar-
   benar diamati. Statusnya tetap OPEN, jadi tidak ada konsekuensi ke register.
 
+CHANGELOG — 2026-10-02 (sesi TD-096, security headers):
+- Middleware baru internal/middleware/security_headers.go + test
+  (XCTO nosniff, XFO DENY, Referrer-Policy no-referrer, XSS 0,
+  CSP strict, HSTS conditional HTTPS-only).
+- Wired main.go:153 setelah CORS.
+- V1-V6 PASS. Coverage middleware 43.1% (5 CORS + 3 SecHeaders).
+- FIXED 59→60, FIXED/CLOSED 88→89, OPEN 72→71, Total tetap 167.
+
 DELTA REGISTER:
   FIXED 58 → 59, SEDANG 83 → 85, OPEN 71 → 72, Total 165 → 167.
   (CLOSED 29 dan DEFERRED 7 tetap; TIDAK ada entry yang ditutup di sesi ini
@@ -7984,7 +7993,7 @@ DELTA REGISTER:
 
 VERIFIKASI (V1 s/d V6):
   - V1 Parser atas 167 field `ID :` di docs/TECHNICAL DEBT.txt:
-    Prioritas 8 + 42 + 85 + 32 = 167 ✓ = Status 59 + 29 + 7 + 72 = 167 ✓.
+    Prioritas 8 + 42 + 85 + 32 = 167 ✓ = Status 60 + 29 + 7 + 71 = 167 ✓.
     Status dinormalisasi per-prefix (`✅ FIXED`, `🔵 DEFERRED`, `✅ CLOSED`,
     plus varian kurung/metadata commit) karena register ini punya 70 varian
     string distinct untuk field `Status :` (dihitung ulang di 167 entry —

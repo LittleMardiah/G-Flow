@@ -147,6 +147,9 @@ func main() {
 	origins := middleware.ParseOrigins(os.Getenv("CORS_ORIGINS"))
 	r.Use(middleware.CORS(origins))
 
+	// Security headers (OWASP). Dipasang global sebelum routes.
+	r.Use(middleware.SecurityHeadersMiddleware())
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
