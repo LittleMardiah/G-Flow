@@ -250,11 +250,17 @@ func TestIntegrationWalletMe_NoWalletOfType(t *testing.T) {
 }
 
 // TestIntegrationWalletMe_InvalidType: ?type=INVALID bukan label member
-// wallet_type_enum PostgreSQL, sehingga query repository gagal di cast enum
-// (SQLSTATE 22P02) dan service meneruskan error mentah yang tidak ter-map di
-// statusForError -> 500 INTERNAL_SERVER_ERROR. Test ini mengunci perilaku
-// aktual dan menjadi bukti TD-164 (validasi ?type= di handler/service belum
-// ada — seharusnya 400 INVALID_REQUEST, bukan 500).
+// wallet_type_enum PostgreSQL. SEBELUM TD-164 nilai ini diteruskan mentah ke
+// query, cast enum gagal (SQLSTATE 22P02) dan handler membalas
+// 500 INTERNAL_SERVER_ERROR dengan pesan PostgreSQL mentah ("invalid input
+// value for enum wallet_type_enum") — membocorkan detail skema DB ke client.
+// Sesudah TD-164 handler memvalidasi `type` terhadap whitelist
+// (handler.go validWalletTypes) SEBELUM memanggil service, jadi sekarang
+// 400 INVALID_REQUEST dan query tidak pernah dieksekusi.
+//
+// Test ini sengaja ditulis ulang (bukan dihapus) supaya gap TD-164 tidak bisa
+// muncul lagi diam-diam: kalau whitelist dihapus tanpa mapping 22P02, test ini
+// kembali MERAH dengan 500.
 func TestIntegrationWalletMe_InvalidType(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -264,11 +270,37 @@ func TestIntegrationWalletMe_InvalidType(t *testing.T) {
 	token, _ := meRegisterAndLogin(t, r, "customer")
 
 	w := wDoJSON(r, http.MethodGet, "/api/v1/wallets/me?type=INVALID", nil, token)
-	require.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
 
 	var e meErrorResp
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &e))
-	require.Equal(t, "INTERNAL_SERVER_ERROR", e.Error.Code)
+	require.Equal(t, "INVALID_REQUEST", e.Error.Code)
+	// Nama enum/kolom PostgreSQL tidak boleh bocor ke client.
+	require.NotContains(t, w.Body.String(), "wallet_type_enum")
+	require.NotContains(t, w.Body.String(), "22P02")
+}
+
+// TestIntegrationWalletMe_TypeCaseInsensitive: ?type=customer (lowercase) ->
+// handler normalisasi (ToUpper) lalu lolos whitelist -> 200 CUSTOMER. Mobile
+// tidak perlu tahu label enum PostgreSQL wajib uppercase.
+func TestIntegrationWalletMe_TypeCaseInsensitive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	pool := setupPool(t)
+	r := setupMeRouter(t)
+
+	token, userID := meRegisterAndLogin(t, r, "customer")
+
+	w := wDoJSON(r, http.MethodGet, "/api/v1/wallets/me?type=customer", nil, token)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var body meResp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.True(t, body.Success)
+	require.Equal(t, wallet.WalletTypeCustomer, body.Data.WalletType)
+	require.Equal(t, walletIDOf(ctx, t, pool, userID, wallet.WalletTypeCustomer), body.Data.WalletID)
 }
 
 // TestIntegrationWalletMe_Unauthorized: tanpa header Authorization ->

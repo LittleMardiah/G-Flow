@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
@@ -28,6 +29,47 @@ type WalletService interface {
 	GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error)
 	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
 	UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, adminID uuid.UUID, newStatus string, reason string) (*UpdateWalletStatusResult, error)
+}
+
+// validWalletTypes adalah whitelist label wallet_type yang boleh diminta
+// client lewat query `?type=` pada GET /wallets/me.
+//
+// Sifat daftar ini = cerminan label PostgreSQL enum `wallet_type_enum`:
+//   - migrations/001_initial_schema.up.sql:48-49 → CUSTOMER, DRIVER,
+//     MERCHANT, SYSTEM_ESCROW, SYSTEM_PLATFORM, SYSTEM_BANK_GATEWAY
+//   - migrations/010_admin_lockouts.up.sql:50 → SYSTEM_RECEIVABLE_OVERDRAFT
+//   - migrations/019_add_platform_subsidy_wallet.up.sql:68 →
+//     SYSTEM_PLATFORM_SUBSIDY
+//
+// Label sistem tetap diterima (bukan 400) supaya penambahan label enum di
+// migration berikutnya tidak otomatis menutup endpoint: query tetap di-filter
+// `user_id = <user terautentikasi>` (repository.go:159-164) dan wallet sistem
+// punya user_id NULL, jadi hasilnya 404 WALLET_NOT_FOUND — bukan kebocoran.
+//
+// PENTING (TD-164): nilai `type` dari client SEBELUMNYA diteruskan mentah ke
+// query, sehingga label di luar daftar ini menggagalkan cast text -> enum di
+// PostgreSQL (SQLSTATE 22P02) dan berakhir sebagai 500 + pesan error DB yang
+// membocorkan nama enum ke client.
+var validWalletTypes = []string{
+	WalletTypeCustomer,
+	WalletTypeDriver,
+	WalletTypeMerchant,
+	"SYSTEM_ESCROW",
+	WalletTypeSystemPlatform,
+	WalletTypeSystemBankGateway,
+	"SYSTEM_RECEIVABLE_OVERDRAFT",
+	"SYSTEM_PLATFORM_SUBSIDY",
+}
+
+// isValidWalletType memberi tahu apakah label (sudah uppercase) ada di
+// whitelist validWalletTypes.
+func isValidWalletType(walletType string) bool {
+	for _, valid := range validWalletTypes {
+		if walletType == valid {
+			return true
+		}
+	}
+	return false
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -138,7 +180,7 @@ func (h *Handler) TopUp(c *gin.Context) {
 		IdempotencyKey: body.IdempotencyKey,
 	})
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -182,7 +224,7 @@ func (h *Handler) Transfer(c *gin.Context) {
 		Description:    body.Description,
 	})
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -206,7 +248,7 @@ func (h *Handler) GetBalance(c *gin.Context) {
 
 	balance, err := h.svc.GetBalance(c.Request.Context(), userID, walletID)
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -224,6 +266,11 @@ func (h *Handler) GetBalance(c *gin.Context) {
 // terautentikasi (JWT claim) berdasarkan user_id + wallet_type, jadi mobile
 // tidak perlu tahu wallet_id. 200 {success, data:{wallet_id, balance, status,
 // wallet_type}}; 404 (WALLET_NOT_FOUND) jika user tidak punya wallet tipe tsb.
+//
+// `type` dinormalisasi (trim + uppercase) lalu diperiksa terhadap
+// validWalletTypes SEBELUM diteruskan ke service (TD-164): label yang tidak
+// dikenal -> 400 INVALID_REQUEST, bukan diteruskan ke query (cast enum
+// PostgreSQL gagal -> 22P02 -> 500) dan bukan juga pesan error DB yang bocor.
 func (h *Handler) GetMyWallet(c *gin.Context) {
 	userID, ok := userIDFromContext(c)
 	if !ok {
@@ -231,14 +278,19 @@ func (h *Handler) GetMyWallet(c *gin.Context) {
 		return
 	}
 
-	walletType := strings.TrimSpace(c.Query("type"))
+	walletType := strings.ToUpper(strings.TrimSpace(c.Query("type")))
 	if walletType == "" {
 		walletType = WalletTypeCustomer
+	}
+	if !isValidWalletType(walletType) {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST",
+			"type must be one of: "+strings.Join(validWalletTypes, ", "))
+		return
 	}
 
 	resp, err := h.svc.GetMyWallet(c.Request.Context(), userID, walletType)
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -285,7 +337,7 @@ func (h *Handler) GetWalletHistory(c *gin.Context) {
 		page, pageSize,
 	)
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -335,7 +387,7 @@ func (h *Handler) UpdateWalletStatus(c *gin.Context) {
 		strings.TrimSpace(body.Status), strings.TrimSpace(body.Reason),
 	)
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -358,7 +410,7 @@ func (h *Handler) ProcessTopUpWebhook(c *gin.Context) {
 	}
 
 	if err := h.svc.ProcessTopUpWebhook(c.Request.Context(), body.TransactionID); err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeServiceError(c, err)
 		return
 	}
 
@@ -404,7 +456,8 @@ func statusForError(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrInvalidPagination),
 		errors.Is(err, ErrInvalidStatus),
-		errors.Is(err, ErrReasonRequired):
+		errors.Is(err, ErrReasonRequired),
+		isPgInvalidTextRepresentation(err):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
@@ -432,13 +485,57 @@ func codeForError(err error) string {
 		return "WALLET_NOT_OWNED"
 	case errors.Is(err, ErrInvalidPagination),
 		errors.Is(err, ErrInvalidStatus),
-		errors.Is(err, ErrReasonRequired):
+		errors.Is(err, ErrReasonRequired),
+		isPgInvalidTextRepresentation(err):
 		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidCachedResponse):
 		return "INTERNAL_ERROR"
 	default:
 		return "INTERNAL_SERVER_ERROR"
 	}
+}
+
+// pgInvalidTextRepresentation adalah SQLSTATE PostgreSQL untuk "invalid text
+// representation" — termasuk kegagalan cast ke tipe ENUM dengan label yang
+// tidak dikenal (mis. `wallet_type = $2` dengan $2 = "INVALID").
+const pgInvalidTextRepresentation = "22P02"
+
+// isPgInvalidTextRepresentation memberi tahu apakah err adalah
+// *pgconn.PgError dengan SQLSTATE 22P02.
+//
+// Ini jaring pengaman (catch-all) lapisan kedua untuk TD-164: whitelist di
+// handler.GetMyWallet (validWalletTypes) sudah menolak label tak dikenal
+// sebelum query, tapi label enum bisa saja ditambah migration berikutnya
+// (pola migrations/010:50 dan 019:68) atau query lain bisa mem-bind nilai
+// tak tervalidasi. Tanpa mapping ini, 22P02 jatuh ke default 500.
+func isPgInvalidTextRepresentation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgInvalidTextRepresentation
+}
+
+// writeServiceError menulis response error hasil pemanggilan service/repository
+// dengan status + error code hasil mapping, dan pesan yang sudah disanitasi
+// lewat publicErrorMessage.
+func writeServiceError(c *gin.Context, err error) {
+	writeError(c, statusForError(err), codeForError(err), publicErrorMessage(err))
+}
+
+// publicErrorMessage mengembalikan pesan error yang aman dikirim ke client.
+//
+// Error database mentah (*pgconn.PgError) tidak pernah diteruskan apa adanya:
+// pesan PostgreSQL membocorkan detail skema internal (nama enum
+// `wallet_type_enum`, nama kolom/constraint, dan sebagian query-nya) —
+// persis kebocoran yang dilaporkan TD-164. Error domain milik service
+// (ErrWalletNotFound, ErrInvalidAmount, ...) aman untuk ditampilkan apa adanya.
+func publicErrorMessage(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == pgInvalidTextRepresentation {
+			return "invalid value for one of the request parameters"
+		}
+		return "internal server error"
+	}
+	return err.Error()
 }
 
 // writeError menulis error response sesuai format API_CONTRACT:

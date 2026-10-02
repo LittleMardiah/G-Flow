@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -442,6 +445,213 @@ func TestHandler_GetMyWallet_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Equal(t, "UNAUTHORIZED", errCode(t, decodeBody(t, w)))
 	svc.AssertNotCalled(t, "GetMyWallet", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// ---- GetMyWallet validasi ?type= (TD-164) ----
+
+// TestHandler_GetMyWallet_InvalidType_Table: setiap `?type=` di luar whitelist
+// harus 400 INVALID_REQUEST. Test ini mengunci root cause TD-164: sebelum
+// whitelist, label tak dikenal diteruskan mentah ke query, cast ke
+// wallet_type_enum PostgreSQL gagal (SQLSTATE 22P02) dan handler membalas
+// 500 INTERNAL_SERVER_ERROR dengan pesan yang membocorkan nama enum DB.
+func TestHandler_GetMyWallet_InvalidType_Table(t *testing.T) {
+	invalidTypes := []string{
+		"INVALID",
+		"CUSTIMER",          // typo label CUSTOMER
+		"CUSTOMER; DROP",    // percobaan injeksi, bukan label enum
+		"1",                 // tipe data lain
+		"SYSTEM_UNKNOWN",    // menyerupai label sistem tapi tidak dikenal
+		"systemBankGateway", // camelCase: enum DB pakai UNDERSCORE, jadi
+		//   tetap ditolak meski ToUpper sudah diterapkan (normalisasi hanya
+		//   kapitalisasi + trim spasi, bukan mengubah gaya penamaan).
+	}
+
+	for _, badType := range invalidTypes {
+		t.Run(badType, func(t *testing.T) {
+			svc := new(mockWalletService)
+			h := NewHandler(svc)
+
+			c, w := newCtx(t, http.MethodGet, "/wallets/me?type="+url.QueryEscape(badType), nil, "")
+			c.Set("user_id", testHU.String())
+
+			h.GetMyWallet(c)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			m := decodeBody(t, w)
+			assert.Equal(t, "INVALID_REQUEST", errCode(t, m))
+			errObj, ok := m["error"].(map[string]interface{})
+			assert.True(t, ok)
+			msg, _ := errObj["message"].(string)
+			// Nama enum/kolom PostgreSQL tidak boleh bocor ke client (TD-164).
+			assert.NotContains(t, msg, "wallet_type_enum")
+			assert.NotContains(t, msg, "SQLSTATE")
+			// Label yang valid boleh disebut di pesan (memudunkanklien).
+			assert.Contains(t, msg, WalletTypeCustomer)
+			// Service TIDAK boleh dipanggil: label tidak boleh sampai ke query.
+			svc.AssertNotCalled(t, "GetMyWallet", mock.Anything, mock.Anything, mock.Anything)
+			svc.AssertExpectations(t)
+		})
+	}
+}
+
+// TestHandler_GetMyWallet_InvalidType_NoEnumLeak_Body: seluruh body response
+// untuk ?type=INVALID harus bebas nama enum PostgreSQL (bukan hanya field
+// message).
+func TestHandler_GetMyWallet_InvalidType_NoEnumLeak_Body(t *testing.T) {
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/me?type=INVALID", nil, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetMyWallet(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.NotContains(t, w.Body.String(), "wallet_type_enum")
+	assert.NotContains(t, w.Body.String(), "22P02")
+	svc.AssertNotCalled(t, "GetMyWallet", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestHandler_GetMyWallet_ValidTypes_Accepted: seluruh label pada
+// validWalletTypes harus lolos whitelist dan diteruskan apa adanya ke service.
+// Mengunci sinkronisasi whitelist dengan label enum di migrations
+// (001:48-49 + 010:50 + 019:68) — label sistem tetap 404 di DB karena
+// user_id NULL, bukan 400.
+func TestHandler_GetMyWallet_ValidTypes_Accepted(t *testing.T) {
+	for _, validType := range validWalletTypes {
+		t.Run(validType, func(t *testing.T) {
+			svc := new(mockWalletService)
+			h := NewHandler(svc)
+
+			svc.On("GetMyWallet", mock.Anything, testHU, validType).Return(&MyWallet{
+				WalletID:   testHW,
+				Balance:    decimal.Zero,
+				Status:     WalletStatusActive,
+				WalletType: validType,
+			}, nil).Once()
+
+			c, w := newCtx(t, http.MethodGet, "/wallets/me?type="+validType, nil, "")
+			c.Set("user_id", testHU.String())
+
+			h.GetMyWallet(c)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, true, decodeBody(t, w)["success"])
+			svc.AssertExpectations(t)
+		})
+	}
+}
+
+// TestHandler_GetMyWallet_TypeCaseInsensitive: label lowercase / campuran huruf
+// dengan spasi diAround-nya dinormalisasi (ToUpper + TrimSpace) sebelum
+// whitelist — mobile tidak perlu tahu enum PostgreSQL bersifat UPPERCASE.
+func TestHandler_GetMyWallet_TypeCaseInsensitive(t *testing.T) {
+	cases := map[string]string{
+		"customer":                    WalletTypeCustomer,
+		"Customer":                    WalletTypeCustomer,
+		" driver ":                    WalletTypeDriver,
+		"\tmerchant\t":                WalletTypeMerchant,
+		"system_escrow":               "SYSTEM_ESCROW",
+		"SYSTEM_PLATFORM":             WalletTypeSystemPlatform,
+		"system_receivable_overdraft": "SYSTEM_RECEIVABLE_OVERDRAFT",
+	}
+
+	for raw, want := range cases {
+		t.Run(raw, func(t *testing.T) {
+			svc := new(mockWalletService)
+			h := NewHandler(svc)
+
+			svc.On("GetMyWallet", mock.Anything, testHU, want).Return(&MyWallet{
+				WalletID:   testHW,
+				Balance:    decimal.Zero,
+				Status:     WalletStatusActive,
+				WalletType: want,
+			}, nil).Once()
+
+			c, w := newCtx(t, http.MethodGet, "/wallets/me?type="+url.QueryEscape(raw), nil, "")
+			c.Set("user_id", testHU.String())
+
+			h.GetMyWallet(c)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			svc.AssertExpectations(t)
+		})
+	}
+}
+
+// TestHandler_GetMyWallet_PgInvalidEnum_ErrorMapped: jaring pengaman lapisan
+// kedua TD-164. Bila service mengembalikan *pgconn.PgError 22P02 (mis. label
+// enum baru hasil migration yang belum masuk whitelist), handler harus balas
+// 400 INVALID_REQUEST dengan pesan generik — bukan 500 dan bukan pesan error
+// PostgreSQL mentah.
+func TestHandler_GetMyWallet_PgInvalidEnum_ErrorMapped(t *testing.T) {
+	pgErr := &pgconn.PgError{
+		Code:    "22P02",
+		Message: `invalid input value for enum wallet_type_enum: "BRAND_NEW"`,
+	}
+
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetMyWallet", mock.Anything, testHU, WalletTypeCustomer).Return(nil, pgErr).Once()
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/me?type=CUSTOMER", nil, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetMyWallet(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "INVALID_REQUEST", errCode(t, decodeBody(t, w)))
+	assert.NotContains(t, w.Body.String(), "wallet_type_enum")
+	assert.NotContains(t, w.Body.String(), "BRAND_NEW")
+	svc.AssertExpectations(t)
+}
+
+// TestHandler_PgErrorMessage_NoSchemaLeak: pesan PostgreSQL mentah tidak boleh
+// keluar untuk SQLSTATE lain pun (mis. unique violation 23505 pada endpoint
+// lain) — statusnya tetap 500 INTERNAL_SERVER_ERROR tapi generik, bukan debug
+// info DB.
+func TestHandler_PgErrorMessage_NoSchemaLeak(t *testing.T) {
+	pgErr := &pgconn.PgError{
+		Code:    "23505",
+		Message: `duplicate key value violates unique constraint "wallets_pkey"`,
+	}
+
+	svc := new(mockWalletService)
+	h := NewHandler(svc)
+
+	svc.On("GetWalletHistory", mock.Anything, testHU, testHW, "", 1, 20).Return(nil, pgErr).Once()
+
+	c, w := newCtx(t, http.MethodGet, "/wallets/"+testHW.String()+"/history",
+		map[string]string{"wallet_id": testHW.String()}, "")
+	c.Set("user_id", testHU.String())
+
+	h.GetWalletHistory(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "INTERNAL_SERVER_ERROR", errCode(t, decodeBody(t, w)))
+	assert.NotContains(t, w.Body.String(), "wallets_pkey")
+	svc.AssertExpectations(t)
+}
+
+// TestStatusForError_PgInvalidTextRepresentation: unit test langsung atas
+// mapping 22P02 -> 400 (bukan hanya lewat endpoint).
+func TestStatusForError_PgInvalidTextRepresentation(t *testing.T) {
+	err := fmt.Errorf("query wallets: %w", &pgconn.PgError{Code: "22P02", Message: "invalid input value for enum wallet_type_enum"})
+
+	assert.Equal(t, http.StatusBadRequest, statusForError(err))
+	assert.Equal(t, "INVALID_REQUEST", codeForError(err))
+	assert.NotContains(t, publicErrorMessage(err), "wallet_type_enum")
+}
+
+// TestStatusForError_PgErrorLain_Tetap500: mapping 22P02 TIDAK boleh melebar
+// ke SQLSTATE lain — error database yang genuinely internal tetap 500.
+func TestStatusForError_PgErrorLain_Tetap500(t *testing.T) {
+	for _, code := range []string{"23505", "42P01", "55P03", "08006"} {
+		err := &pgconn.PgError{Code: code, Message: "db detail"}
+		assert.Equal(t, http.StatusInternalServerError, statusForError(err), "SQLSTATE %s", code)
+		assert.Equal(t, "INTERNAL_SERVER_ERROR", codeForError(err), "SQLSTATE %s", code)
+	}
 }
 
 // ---- Webhook ----

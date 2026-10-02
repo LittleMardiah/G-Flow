@@ -3238,18 +3238,55 @@ Bukti      : (a) internal/wallet/handler.go:234-237 — handler hanya
              eksplisit dan mengembalikan 400 INVALID_REQUEST — jadi
              inkonsistensi antar endpoint wallet ada di kode yang sama.
 Solusi     : Whitelist label di handler.GetMyWallet (sebelimiter Trust
-             boundary, konsisten dengan GetWalletHistory yang validasi di
-             handler): terima hanya CUSTOMER/DRIVER/MERCHANT, selain itu
-             `writeError(c, 400, "INVALID_REQUEST", ...)`. Alternatif yang
-             lebih tahan salah ketik: validasi di Service (layer yang
-             dipakai juga oleh consumer non-HTTP) DAN map `*pgconn.PgError`
-             22P02 di `statusForError` jadi 400 sebagai jaring
-             pengaman, supaya enum yang ditambah migration 020+ tidak
-             otomatis jadi 500. Yang kedua disebut eksplisit karena
-             migrations/010:50 dan 019:68 sama-sama menambah label enum —
-             pola ini akan berulang.
+              boundary, konsisten dengan GetWalletHistory yang validasi di
+              handler): terima hanya CUSTOMER/DRIVER/MERCHANT, selain itu
+              `writeError(c, 400, "INVALID_REQUEST", ...)`. Alternatif yang
+              lebih tahan salah ketik: validasi di Service (layer yang
+              dipakai juga oleh consumer non-HTTP) DAN map `*pgconn.PgError`
+              22P02 di `statusForError` jadi 400 sebagai jaring
+              pengaman, supaya enum yang ditambah migration 020+ tidak
+              otomatis jadi 500. Yang kedua disebut eksplisit karena
+              migrations/010:50 dan 019:68 sama-sama menambah label enum —
+              pola ini akan berulang.
+              HASIL SESI TD-164 (2026-10-01): kedua opsi dipakai. (1)
+              Whitelist `validWalletTypes` (8 label = cerminan utuh
+              wallet_type_enum di migrations 001:48-49 + 010:50 + 019:68)
+              di handler.GetMyWallet, plus normalisasi
+              `strings.ToUpper(strings.TrimSpace(...))`; label di luar
+              whitelist -> 400 INVALID_REQUEST dengan pesan
+              "type must be one of: ..." (nama enum PostgreSQL tidak
+              disebut). (2) Mapping `*pgconn.PgError` SQLSTATE 22P02 ->
+              400 INVALID_REQUEST di statusForError/codeForError
+              (handler.go:501-514), plus `publicErrorMessage`
+              (handler.go:530-539) yang MENYEMBUNYIKAN pesan PostgreSQL
+              mentah untuk semua PgError — tanpa ini mapping 22P02 hanya
+              mengubah 500-leak jadi 400-leak. Catatan: label sistem
+              (SYSTEM_*) sengaja tetap DITERIMA whitelist (hasilnya 404
+              di DB karena user_id NULL), supaya label enum yang ditambah
+              migration berikutnya tidak langsung menutup endpoint; hanya
+              cast enum yang tak dikenal yang ditolak. Repository,
+              migration, dan mobile TIDAK disentuh.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-01, sesi TD-164)
+Note       : Bukti fix — `go test ./internal/wallet/... -v`: 131 PASS /
+             0 FAIL (HEAD 123 PASS / 0 FAIL), coverage 86.0% → 86.3%
+             (baseline diukur dari `git archive HEAD` ke direktori
+             sementara, lalu dihapus). Test baru:
+             TestHandler_GetMyWallet_InvalidType_Table (6 subtest: 400 +
+             body bebas "wallet_type_enum" + service TIDAK dipanggil),
+             _InvalidType_NoEnumLeak_Body, _ValidTypes_Accepted (8 label),
+             _TypeCaseInsensitive (7 subtest), _PgInvalidEnum_ErrorMapped,
+             TestHandler_PgErrorMessage_NoSchemaLeak,
+             TestStatusForError_PgInvalidTextRepresentation,
+             TestStatusForError_PgErrorLain_Tetap500 (22P02 TIDAK melebar ke
+             SQLSTATE lain: 23505/42P01/55P03/08006 tetap 500).
+             Integration test yang tadinya MENGUNCI 500
+             (TestIntegrationWalletMe_InvalidType,
+             internal/wallet/me_integration_test.go:258) ditulis ulang jadi
+             400 INVALID_REQUEST + anti-leak assertion, plus test baru
+             TestIntegrationWalletMe_TypeCaseInsensitive (build tag
+             integration; tidak dijalankan di sesi ini karena butuh
+             PostgreSQL+Redis lokal).
 Referensi  : TD-121 (sesi yang tulis integration test-nya), TD-047/048
              (pola identik: nilai enum tak tervalidasi diteruskan ke
              query, di sana dampaknya "filter return kosong" — di sini
@@ -3887,12 +3924,155 @@ BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
    varian ke-69: bukti bahwa "mempercantik format tanpa kontrak enum"
    menambah varian, bukan mengurangi.
 
+ID         : TD-172
+Kategori   : HYGIENE
+Judul      : validWalletTypes (internal/wallet/handler.go:53) =
+             duplikasi enum wallet_type_enum DB. Setiap migration yang
+             nambah enum WAJIB update whitelist manual; sudah terjadi 2x
+             (010:50 SYSTEM_RECEIVABLE_OVERDRAFT, 019:68 SYSTEM_PLATFORM_
+             SUBSIDY). Risiko drift ulang seperti TD-163.
+Dampak     : Enum baru → request valid ditolak 400 sampai whitelist
+             di-update manual; dua sumber kebenaran.
+Solusi     : 1) Test bandingkan validWalletTypes vs `\dT wallet_type_enum`
+             → fail kalau drift. 2) Shared package const/enum labels
+             di internal/wallet. 3) Query pg_enum runtime (cache).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-164 (temuan OpenCode)
+
+BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
+1. internal/wallet/handler.go:53-62 — `validWalletTypes` memuat 8 label
+   yang persis duplikat dari enum DB, dan duplikasi itu sendiri tidak
+   dirapikan di satu tempat: 5 label memakai konstanta dari
+   internal/wallet/service.go:32-38 (WalletTypeCustomer, WalletTypeDriver,
+   WalletTypeMerchant, WalletTypeSystemPlatform,
+   WalletTypeSystemBankGateway), sedangkan 3 label lain masih hardcode
+   string mentah di whitelist — `SYSTEM_ESCROW` (:57),
+   `SYSTEM_RECEIVABLE_OVERDRAFT` (:60), `SYSTEM_PLATFORM_SUBSIDY` (:61).
+   service.go tidak punya konstanta untuk 3 label itu, jadi item Solusi
+   (2) "satu sumber kebenaran di Go" belum ada — bahkan di dalam satu
+   paket.
+2. Ke-8 label itu sendiri cocok dengan DB saat ini (whitelist tidak salah
+   hari ini); yang salah adalah sifatnya yang wajib rawat manual. Sumber
+   enum: migrations/001_initial_schema.up.sql:48-49 (6 label — CUSTOMER,
+   DRIVER, MERCHANT, SYSTEM_ESCROW, SYSTEM_PLATFORM, SYSTEM_BANK_GATEWAY),
+   migrations/010_admin_lockouts.up.sql:50 (SYSTEM_RECEIVABLE_OVERDRAFT),
+   migrations/019_add_platform_subsidy_wallet.up.sql:68
+   (SYSTEM_PLATFORM_SUBSIDY). Dua kali enum bertambah dan whitelist ikut
+   disesuaikan — tapi tidak ada mekanisme yang MEWAJIBKAN penyesuaian itu.
+3. Tidak ada automated check yang menangkap drift. `grep -rn
+   "validWalletTypes\|wallet_type_enum" internal/wallet/*_test.go` → semua
+   hit adalah test perilaku dengan mock (handler_test.go:455 hanya menyebut
+   nama enum di dalam pesan PgError buatan; :486/:510/:605/:644 hanya
+   `assert.NotContains` nama enum dari body response). Yang paling mendekati
+   check sinkronisasi adalah handler_test.go:521 (`for _, validType := range
+   validWalletTypes`) — tapi itu membandingkan whitelist DENGAN DIRINYA
+   SENDIRI, jadi tautologis: kalau migration 020 menambah label ke-9 dan
+   whitelist lupa, test tersebut tetap hijau. Verifikasi sinkronisasi yang
+   ada sekarang hanya manual, di komentar
+   migrations/019_add_platform_subsidy_wallet.up.sql:62 ("\dT
+   wallet_type_enum — harus ada SYSTEM_PLATFORM_SUBSIDY").
+4. Preseden drift yang sama sudah TERBUKTI di repo ini: TD-163 — label enum
+   yang sama pernah melenceng di dokumen (docs/schema_clean.sql:13 dan
+   docs/DATABASE SCHEMA.txt:33 masih tulis 5 label, DB aktual 8). Pola
+   "satu facts di DB + satu salinan terpisah di tempat lain" itulah yang
+   berulang, jadi item Solusi (1) — test yang membandingkan whitelist
+   dengan `\dT wallet_type_enum` — adalah pengaman paling murah: biayanya
+   satu query di test ber-tag `integration`, sementara kalau hilang
+   biayanya 400 palsu untuk client yang sah.
+
+ID         : TD-173
+Kategori   : KODE
+Judul      : Pola handler lainnya (ride/handler.go:402, food/handler.go:848,
+             send/handler.go:95/97/228/312) pakai `strings.ToUpper(query)`
+             MENTAH tanpa whitelist — seperti /wallets/me PRE-TD-164.
+             Enum cast gagal → 500 (bukan 400).
+Dampak     : Yang benar-benar membalas 500 hanya ride/handler.go:402 (lihat
+             koreksi prompt di blok BUKTI): filter `status = $2` masuk ke
+             kolom ENUM `ride_orders.status`, cast gagal (SQLSTATE 22P02),
+             `statusForError` di ride tidak punya case PgError, dan pesan
+             PostgreSQL mentah diteruskan lewat `err.Error()` → 500 +
+             kebocoran nama enum. food/handler.go:848 tidak 500 karena
+             repository membandingkan lewat cast TEKS (`status::text = $2`),
+             dan 6 call site body di food/send sudah divalidasi service lalu
+             dibalas 4xx. Residu faktualnya: 1 endpoint 500, sisanya kosong
+             atau 4xx. Bukan blocker karena test suite hijau, tapi
+             konsistensi + defense-in-depth.
+Solusi     : Mirror TD-164: whitelist per enum atau map PgError 22P02
+             di statusForError masing-masing handler.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-164 (temuan OpenCode — R8 out of scope)
+
+BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
+1. Pola `strings.ToUpper(...)` tanpa whitelist terverifikasi di 8 call site,
+   bukan 6 seperti klaim prompt — dua tambahan yang tidak disebut prompt
+   (kelas bugnya sama): internal/ride/handler.go:402
+   `strings.ToUpper(c.Query("status"))`, internal/food/handler.go:679
+   `strings.ToUpper(body.PaymentMethod)`, internal/food/handler.go:733
+   `strings.ToUpper(body.Status)`, internal/food/handler.go:848
+   `strings.ToUpper(c.Query("status"))`, internal/send/handler.go:95
+   `strings.ToUpper(body.PackageType)`, internal/send/handler.go:97
+   `strings.ToUpper(body.PaymentMethod)`, internal/send/handler.go:228
+   `strings.ToUpper(body.Status)`, internal/send/handler.go:312
+   `strings.ToUpper(body.Status)`. Semua path yang disebut prompt ada
+   (ride:402, food:848, send:95/97/228/312); tidak ada path yang hilang.
+2. KLASIFIKASI PER PATH (ini arti kalimat "enum cast gagal → 500"):
+   (a) 500 NYATA — internal/ride/handler.go:402. Nilainya masuk
+       `GetRidesHistory` (internal/ride/service.go:569-577) →
+       `ListOrdersByCustomer` (internal/ride/repository.go:424-431) dan
+       `CountOrdersByCustomer` (:452-458), yang keduanya menambah
+       `AND status = $2` ke kolom `ride_orders.status` bertipe
+       `order_status_enum` (migrations/004_ride_orders.up.sql:55 dan :102).
+       $2 di-bind sebagai text sehingga PostgreSQL melakukan cast text →
+       enum, dan label tak dikenal menghasilkan SQLSTATE 22P02.
+       `statusForError` (internal/ride/handler.go:468) hanya switch
+       `errors.Is` atas sentinel domain dan tidak punya case
+       `*pgconn.PgError` (`grep -rn "PgError\|pgconn"
+       internal/ride/handler.go` → 0 hit), sementara call site
+       internal/ride/handler.go:406 menulis `writeError(c,
+       statusForError(err), codeForError(err), err.Error())` → 500 default
+       plus pesan PostgreSQL mentah ke client. Pola ini identik dengan yang
+       TD-164 perbaiki di internal/wallet.
+   (b) TIDAK 500 — internal/food/handler.go:848. Repository membandingkan
+       sebagai TEKS, bukan enum: internal/food/repository.go:938 `WHERE
+       merchant_id = $1 AND ($2 = '' OR status::text = $2 OR
+       merchant_status::text = $2)`. Cast ke text tidak pernah gagal, jadi
+       label tak dikenal menghasilkan daftar kosong, bukan 500.
+   (c) SUDAH 4xx — 6 call site body di food/send, karena service memvalidasi
+       SEBELUM query: internal/food/service.go:1105 dan :1376 →
+       `ErrInvalidPaymentMethod` (dipasangkan ke food/handler.go:679),
+       internal/food/service.go:1436-1437 `validFoodStatusTarget` →
+       `ErrInvalidStatus` (food/handler.go:733),
+       internal/send/service.go:824-828 `validateSendOrderInput` →
+       `ErrInvalidPaymentMethod` + `validPackageType` →
+       `ErrInvalidPackageType` (send/handler.go:95 dan :97),
+       internal/send/service.go:954-955 `validSendStatusTarget` →
+       `ErrInvalidStatus` (send/handler.go:228),
+       internal/send/service.go:1301-1303 `normalizeStopStatus` →
+       `ErrInvalidStopStatus` (send/handler.go:312). Semua sentinel itu sudah
+       punya mapping 4xx di `statusForError` masing-masing modul
+       (internal/ride/handler.go:468, internal/send/handler.go:345).
+3. KOREKSI PROMPT (dicatat sebagai [OVERRIDE-1] di changelog sesi ini):
+   prompt menulis "Query invalid enum di endpoint ride/food/send → 500 +
+   leak nama enum DB". Bukti kode mempersempit klaim itu ke SATU endpoint
+   (ride/handler.go:402): food/handler.go:848 tidak pernah cast ke enum, dan
+   6 call site body sudah dijaga sentinel 4xx di service. Klaim "tidak ada
+   whitelist" tetap BENAR untuk semua 8 call site, dan itulah alasan entry
+   ini tetap worthwhile (konsistensi + defense-in-depth) — hanya besarnya
+   dampak yang dikoreksi, bukan akar masalahnya.
+4. [PERLU VERIFIKASI] reproduksi 500 end-to-end di (a) tidak dijalankan pada
+   sesi ini: butuh PostgreSQL dev (localhost:15432) dan request HTTP nyata.
+   Klaima diturunkan dari bukti kode + tipe kolom di migration, bukan dari
+   respons yang benar-benar diamati. Test suite juga tidak dijalankan karena
+   sesi ini tidak mengubah kode apa pun (R8 — entry dokumentasi saja).
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 165 item (TD-051 di-reserve/skip)
-                                       (58 FIXED + 29 CLOSED + 7 DEFERRED + 71 OPEN = 165)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 167 item (TD-051 di-reserve/skip)
+                                       (59 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 167)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -3948,7 +4128,26 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 165 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 83 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171)
+- SEDANG  : 85 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173)
+           [85 pada 2026-10-02 (sesi TD-172 + TD-173 entry baru): bucket ini
+           berbasis `Prioritas :`, jadi TEPAT DUA perubahan yang menggerakkan:
+           TD-172 (HYGIENE — `validWalletTypes` internal/wallet/handler.go:53
+           = duplikasi enum wallet_type_enum DB) dan TD-173 (KODE — pola
+           `strings.ToUpper(query)` tanpa whitelist di ride/food/send handler,
+           kelas bug yang sama dengan yang TD-164 perbaiki di /wallets/me).
+           Keduanya entry BARU dengan `Prioritas : SEDANG`, `Status : OPEN`.
+           Delta register SESI INI: bucket Status OPEN 70 → 72 (+2, dua entry
+           baru; TIDAK ada entry yang ditutup), TOTAL 165 → 167. FIXED 59,
+           CLOSED 29, DEFERRED 7 TETAP. KRITIS 8, TINGGI 42, RENDAH 32 juga
+           tetap → 8 + 42 + 85 + 32 = 167 = TOTAL. Parser atas 167 field
+           `ID :` SESUDAH edit: Prioritas 8 + 42 + 85 + 32 = 167 ✓ = Status
+           59 + 29 + 7 + 72 = 167 ✓. Cross-check kedua: list ID di baris
+           bucket SEDANG di atas diekspansi (range `s/d`) = 85 unique.
+           Catatan: baris TOTAL §2 sebelumnya menulis 58 FIXED + 29 CLOSED +
+           7 DEFERRED + 71 OPEN = 165 — itu snapshot PRE-TD-164 (58/29/7/71)
+           yang tertinggal; sesi TD-164 sudah menaikkan FIXED ke 59 dan
+           menurunkan OPEN ke 70, dan hanya §3 yang tersinkron. Tidak ada
+           kode yang diubah — register dokumentasi saja. Tidak commit (R10).]
            [83 pada 2026-10-01 (sesi TD-171 entry baru): bucket ini berbasis
            `Prioritas :`, jadi TEPAT SATU perubahan yang menggerakkan:
            TD-171 (entry BARU, `Prioritas : SEDANG`, `Status : OPEN`).
@@ -4171,8 +4370,21 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 165 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 54 item, 29 item CLOSED (FIXED/CLOSED 83), 7 item DEFERRED,
-        74 item OPEN.  [54 + 29 + 7 + 74 = 164 = TOTAL]
+STATUS: ✅ FIXED 59 item, 29 item CLOSED (FIXED/CLOSED 88), 7 item DEFERRED,
+        72 item OPEN.  [59 + 29 + 7 + 72 = 167 = TOTAL]
+        [59/88/7/72 pada 2026-10-02 (sesi TD-172 + TD-173 entry baru): blok
+        STATUS §2 ini tertinggal 2 snapshot — sequential dari blok
+        [Perubahan 2026-09-30] di bawah (54/83/7/74 = 164), padahal sesi
+        TD-049, TD-107, TD-133, dan TD-164 semuanya sudah menutup entry OPEN
+        (FIXED 54 → 59, OPEN 74 → 70, TOTAL 164 → 165) dan §3 sudah
+        mengikuti; baris TOTAL §2 di atas pun tertinggal di 58/29/7/71.
+        Sesi ini menyinkronkan KEDUA blok §2 ke hasil parser, lalu menambah
+        dua entry baru TD-172 + TD-173 (keduanya `Prioritas : SEDANG`,
+        `Status : OPEN`): OPEN 70 → 72, TOTAL 165 → 167. FIXED 59, CLOSED 29,
+        DEFERRED 7 tidak bergerak di sesi ini — tidak ada entry yang ditutup.
+        Konsisten: 59 + 29 + 7 + 72 = 167 = TOTAL dan 8 + 42 + 85 + 32 = 167
+        = TOTAL. Parser atas 167 field `ID :` mengonfirmasi kedua sum = 167
+        (V1 sesi ini). Lihat [OVERRIDE-3] di changelog sesi ini.]
         [54/83/7/74 pada 2026-09-30 (sesi TD-131 FIXED + TD-170 entry baru):
         SATU entry ditutup, SATU entry baru ditambahkan. (a) TD-131 (MOBILE
         — `cancellation_fee` response PATCH /rides/:id/status tidak
@@ -4329,19 +4541,70 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-01):
-   - Total hutang teridentifikasi      : 165 item (TD-051 di-reserve/skip; 165 item aktif terdaftar).
-   - ✅ FIXED                           : 58 item
+3. RINGKASAN STATUS TERKINI (2026-10-02):
+   - Total hutang teridentifikasi      : 167 item (TD-051 di-reserve/skip; 167 item aktif terdaftar).
+   - ✅ FIXED                           : 59 item
    - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
                                           2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 87 item
+   - FIXED/CLOSED                       : 88 item
    - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 71 item (bukan hanya TD-058 s/d TD-171 — masih ada
+   - ❌ OPEN                              : 72 item (bukan hanya TD-058 s/d TD-173 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [58 + 29 + 7 + 71 = 165 = TOTAL]
+     [59 + 29 + 7 + 72 = 167 = TOTAL]
+     [Perubahan 2026-10-02 (sesi TD-172 + TD-173 entry BARU) — TIDAK ada
+     entry ditutup, TIDAK ada kode disentuh; TOTAL 165 → 167.
+     (a) TD-172 (HYGIENE — `validWalletTypes` internal/wallet/handler.go:53
+         = duplikasi enum wallet_type_enum DB; whitelist 8 label wajib
+         di-update manual tiap migration nambah enum, sudah terjadi 2x di
+         migration 010 dan 019, tanpa automated check) DITAMBAHKAN sebagai
+         entry BARU dengan `Prioritas : SEDANG`, `Status : OPEN` — hasil
+         TEMUAN DI LUAR SCOPE sesi TD-164 (R8, dicatat tidak diperbaiki).
+     (b) TD-173 (KODE — pola `strings.ToUpper(query)` mentah tanpa whitelist
+         di ride/handler.go:402, food/handler.go:848, send/handler.go:95/97/
+         228/312; kelas bug yang sama dengan TD-164 tapi di modul lain)
+         DITAMBAHKAN sebagai entry BARU dengan `Prioritas : SEDANG`,
+         `Status : OPEN`.
+     (c) Delta: OPEN 70 → 72 (+2 entry baru), TOTAL 165 → 167, FIXED 59,
+         CLOSED 29, DEFERRED 7 TETAP. Bucket Prioritas ikut bergerak KHU-
+         SUS entry baru: SEDANG 83 → 85 (+2); KRITIS 8, TINGGI 42, RENDAH 32
+         tetap → 8 + 42 + 85 + 32 = 167 = TOTAL.
+     (d) KONSISTEN: 59 + 29 + 7 + 72 = 167 = TOTAL dan 8 + 42 + 85 + 32 = 167
+         = TOTAL. Parser dijalankan SESUDAH edit di 167 field `ID :` dan kedua
+         sum = 167 (V1 sesi ini). Blok §2 (baris TOTAL + blok STATUS) juga
+         disinkronkan di sesi ini karena keduanya tertinggal snapshot
+         2026-10-01 — lihat [OVERRIDE-3] di changelog sesi ini. Tidak ada kode
+         yang diubah — register dokumentasi saja. Tidak commit (R10).]
+     [Perubahan 2026-10-01 (sesi TD-164 FIXED) — SATU entry ditutup, TIDAK
+     ada entry baru; TOTAL TETAP 165.
+     (a) TD-164 (BACKEND / FITUR — `GET /wallets/me?type=<label tak dikenal>`
+         diteruskan mentah ke kolom ENUM, cast PostgreSQL gagal
+         (SQLSTATE 22P02) dan handler membalas 500 INTERNAL_SERVER_ERROR
+         dengan pesan yang membocorkan nama enum `wallet_type_enum`)
+         FIXED di SESI INI dengan OPSI A + B (dual, sesuai prompt):
+         (1) whitelist `validWalletTypes` 8 label di handler.GetMyWallet
+         + normalisasi ToUpper/TrimSpace → 400 INVALID_REQUEST sebelum
+         query dieksekusi; (2) mapping `*pgconn.PgError` 22P02 → 400
+         INVALID_REQUEST di statusForError/codeForError sebagai catch-all,
+         DITAMBAHI `publicErrorMessage` yang menyembunyikan pesan
+         PostgreSQL mentah untuk semua PgError (tanpa itu mapping 22P02
+         hanya mengubah kebocoran 500 menjadi kebocoran 400).
+         `Prioritas :`-nya tetap SEDANG → FIXED 58 → 59, FIXED/CLOSED
+         87 → 88, OPEN 71 → 70, TOTAL 165 → 165.
+     (b) Bucket Prioritas TIDAK BERGERAK: KRITIS 8, TINGGI 42, SEDANG 83,
+         RENDAH 32 → 8 + 42 + 83 + 32 = 165 = TOTAL (bucket Prioritas
+         mengikuti `Prioritas :`, bukan `Status :` — preseden TD-030,
+         TD-031, TD-047, TD-048, TD-106, TD-107, TD-113, TD-114, TD-121,
+         TD-126, TD-127, TD-131, TD-132, TD-140, TD-144, TD-147, TD-158,
+         TD-160, TD-166, TD-168).
+     (c) Konsisten: 59 + 29 + 7 + 70 = 165 = TOTAL dan 8 + 42 + 83 + 32 =
+         165 = TOTAL. Parser dijalankan SEBELUM (58/29/7/71 = 165; Prioritas
+         8/42/83/32 = 165) dan SESUDAH (59/29/7/70 = 165; Prioritas
+         8/42/83/32 = 165) edit status TD-164 (R1/R2). Coverage
+         internal/wallet 86.0% → 86.3% (123 → 131 test PASS, 0 FAIL).
+         Tidak commit (R10).]
      [Perubahan 2026-10-01 (sesi TD-049 FIXED) — SATU entry ditutup, TIDAK
      ada entry baru; TOTAL TETAP 165.
      (a) TD-049 (ARSITEKTUR — `Repository.UpdateWalletBalance`
@@ -7456,8 +7719,348 @@ KRITIK / SARAN UNTUK REVIEWER:
     commit setelah review.
 
 ===========================================================================
+CHANGELOG — 2026-10-01 (sesi TD-164, validasi ?type= GET /wallets/me)
+===========================================================================
+
+ROOT CAUSE (BUKTI, bukan asumsi):
+  `GET /api/v1/wallets/me?type=INVALID` → 500 INTERNAL_SERVER_ERROR dengan
+  pesan `invalid input value for enum wallet_type_enum: "INVALID"`.
+  Jalur penyebabnya, file:line pada HEAD:
+  (a) internal/wallet/handler.go:234-237 (HEAD) — `GetMyWallet` hanya
+      `strings.TrimSpace(c.Query("type"))` lalu default CUSTOMER bila
+      kosong. Tidak ada whitelist; label apa pun diteruskan ke service.
+  (b) internal/wallet/service.go:514-525 — `GetMyWallet` meneruskan
+      `walletType` apa adanya ke `repo.GetByUserIDAndType`.
+  (c) internal/wallet/repository.go:159-164 — query
+      `WHERE user_id = $1 AND wallet_type = $2`, $2 di-bind sebagai text
+      sehingga PostgreSQL harus cast text → `wallet_type_enum`; cast label
+      tak dikenal gagal dengan SQLSTATE 22P02 (dibuktikan di dev DB pada
+      sesi TD-121, lihat field Bukti TD-164).
+  (d) internal/wallet/handler.go:390-412 (`statusForError`) tidak punya
+      case untuk `*pgconn.PgError`, dan SEMUA error ditulis dengan
+      `writeError(..., err.Error())` (7 call site) → 500 default +
+      pesan PostgreSQL mentah bocor ke client (nama enum/kolom DB).
+  Efeknya persis 3 konsekuensi di field Dampak TD-164: mobile tidak bisa
+  membedakan salah input dari server rusak, alarm 5xx ter-pollute traffic
+  milik client, dan detail skema DB bocor.
+
+CEK YANG MENGUBAHKAN RENCANA (fakta prompt yang dikoreksi):
+  1. Prompt menulis "Migration enum values: wallet_type_enum (7 values per
+     TD-132)". Kenyataan (bukti): enum punya 8 label —
+     migrations/001_initial_schema.up.sql:48-49 (6 label: CUSTOMER, DRIVER,
+     MERCHANT, SYSTEM_ESCROW, SYSTEM_PLATFORM, SYSTEM_BANK_GATEWAY),
+     migrations/010_admin_lockouts.up.sql:50 (SYSTEM_RECEIVABLE_OVERDRAFT),
+     migrations/019_add_platform_subsidy_wallet.up.sql:68
+     (SYSTEM_PLATFORM_SUBSIDY). Whitelist ditulis 8 label mengikuti kode
+     (R2), bukan angka 7. Daftar label di prompt sendiri juga 8 — jadi
+     angka "7" adalah salah ketik, bukan daftar yang dipangkas.
+  2. Prompt menyebut query repo memakai
+     `WHERE wallet_type = $2::wallet_type_enum` (cast eksplisit). Kenyataan
+     repository.go:163 = `wallet_type = $2` tanpa cast eksplisit; cast tetap
+     terjadi karena kolom bertipe ENUM, jadi root cause tidak berubah —
+     hanya deskripsi query-nya yang berbeda.
+  3. Field `Solusi` TD-164 sendiri mengusulkan whitelist hanya
+     CUSTOMER/DRIVER/MERCHANT. Saya deviate: whitelist memuat 8 label
+     (alasan + konsekuensi di blok "KENAPA WHITELIST MEMUAT 8 LABEL").
+
+PERUBAHAN KODE (3 file, semuanya di dalam SCOPE `internal/wallet`):
+  - internal/wallet/handler.go:
+    (1) `validWalletTypes` (8 label, baris 34-60) + `isValidWalletType`
+        (baris 66-75) — whitelist di handler, dengan rujukan file migration
+        per label.
+    (2) `GetMyWallet` (baris 274-297): `strings.ToUpper(strings.TrimSpace(
+        c.Query("type")))` lalu cek whitelist; label tak dikenal →
+        `writeError(c, 400, "INVALID_REQUEST", "type must be one of: ...")`
+        dan service TIDAK dipanggil sama sekali (query tidak dieksekusi).
+    (3) `pgInvalidTextRepresentation = "22P02"` (baris 498-501) +
+        `isPgInvalidTextRepresentation` (503-514) yang dipakai di
+        `statusForError` (→ 400) dan `codeForError` (→ INVALID_REQUEST).
+    (4) `publicErrorMessage` (530-539) + `writeServiceError` (519-521):
+        pesan `*pgconn.PgError` diganti generik; 7 call site
+        `writeError(c, statusForError(err), codeForError(err), err.Error())`
+        diganti `writeServiceError(c, err)`. Error domain service
+        (ErrWalletNotFound, dst) tetap menampilkan pesan aslinya.
+  - internal/wallet/handler_test.go — 8 test baru (termasuk subtest):
+    `_InvalidType_Table` (6 label tak valid → 400 + body bebas
+    "wallet_type_enum"/"22P02" + `svc.AssertNotCalled`),
+    `_InvalidType_NoEnumLeak_Body`, `_ValidTypes_Accepted` (8 label),
+    `_TypeCaseInsensitive` (7 subtest lowercase/spasi/tab),
+    `_PgInvalidEnum_ErrorMapped` (service balas PgError 22P02 → 400 tanpa
+    bocor), `TestHandler_PgErrorMessage_NoSchemaLeak` (SQLSTATE lain tetap
+    500 tapi generik), `TestStatusForError_PgInvalidTextRepresentation`,
+    `TestStatusForError_PgErrorLain_Tetap500` (22P02 tidak melebar ke
+    23505/42P01/55P03/08006).
+  - internal/wallet/me_integration_test.go —
+    `TestIntegrationWalletMe_InvalidType` yang tadinya SENGAJA MENGUNCI 500
+    sebagai bukti gap ditulis ulang jadi 400 INVALID_REQUEST +
+    `require.NotContains(..., "wallet_type_enum")` dan
+    `NotContains(..., "22P02")`; plus test baru
+    `TestIntegrationWalletMe_TypeCaseInsensitive` (?type=customer → 200).
+    Keduanya build tag `integration`, jadi di sesi ini hanya
+    `go vet -tags integration` yang bisa dijalankan (butuh PostgreSQL:15432
+    + Redis:6380).
+  - TIDAK disentuh: repository.go, service.go, migrations, mobile (3 app
+    Flutter), dan modul lain.
+
+KENAPA WHITELIST MEMUAT 8 LABEL (deviasi dari teks TD-164, disengaja):
+  Label sistem (SYSTEM_*) adalah wallet dengan `user_id NULL`, dan query
+  selalu `WHERE user_id = $1 AND wallet_type = $2` dengan $1 = user
+  terautentikasi — jadi meminta `?type=SYSTEM_ESCROW` maksimal menghasilkan
+  404 WALLET_NOT_FOUND, tidak ada kebocoran lintas pemilik. Kalau whitelist
+  hanya 3 label user, setiap label enum yang ditambahkan migration
+  berikutnya (pola yang sudah terjadi DUA KALI: 010:50 dan 019:68) akan
+  otomatis membalas 400 ke client yang sah — termasuk test integrasi/
+  mobile yang belum tahu label baru. Mapping 22P02 tetap diperlukan sebagai
+  jaring pengaman kalau ada consumer non-HTTP yang memanggil
+  `Service.GetMyWallet` langsung (validasi ada di handler, bukan service —
+  konsekuensi ini harus dicatat: jalur non-HTTP tidak dilindungi whitelist).
+
+PARSER — SEBELUM vs SESUDAH (R1: dijalankan SEBELUM menulis angka):
+  Pipeline: awk atas field `^ID[ \t]*: *TD-` (entry sah), lalu `Status :`
+  dan `Prioritas :` diambil dari blok yang sama; klasifikasi Status
+  dinormalisasi (buang emoji/spasi/kurung) lalu dicocokkan dengan prefix
+  FIXED | CLOSED | DEFERRED | OPEN. Pendekatan ini mengakomodasi prefix 🔵
+  yang dipakai 7 entry tapi tidak disebut di changelog TD-049.
+  SEBELUM : 165 entry. FIXED 58, CLOSED 29, DEFERRED 7, OPEN 71
+            (sum 165 ✓, FIXED/CLOSED 87). Prioritas 8 + 42 + 83 + 32
+            (sum 165 ✓). TD-164: Status OPEN, Prioritas SEDANG.
+  SESUDAH : 165 entry. FIXED 59, CLOSED 29, DEFERRED 7, OPEN 70
+            (sum 165 ✓, FIXED/CLOSED 88). Prioritas TIDAK BERGERAK:
+            8 + 42 + 83 + 32 (sum 165 ✓). TD-164: Status FIXED,
+            Prioritas SEDANG.
+  DELTA   : FIXED 58 → 59 (+1) ✓ | FIXED/CLOSED 87 → 88 (+1) ✓ |
+            OPEN 71 → 70 (-1) ✓ | SEDANG 83 → 83 (0) ✓ |
+            TOTAL 165 → 165 (0) ✓
+  Cocok dengan ekspektasi prompt Reviewer (FIXED 58→59, FIXED/CLOSED
+  87→88, SEDANG 83 tetap, OPEN 71→70, Total 165) tanpa tebakan.
+
+VERIFIKASI (V1 s/d V6):
+  - V1 `go build ./...` PASS (exit 0).
+  - V2 `go vet ./...` PASS (exit 0); `go vet -tags integration
+    ./internal/wallet/` PASS juga (file integration test dikompilasi).
+  - V3 `go test ./internal/wallet/... -v` → 131 PASS / 0 FAIL (HEAD: 123
+    PASS / 0 FAIL). Test GetMyWallet yang sudah ada (Success, DefaultType,
+    NotFound, Unauthorized) tetap PASS — tidak ada perilakunya berubah.
+  - V4 `go test ./internal/wallet/... -cover` = 86.3% of statements.
+    Baseline HEAD = 86.0%, diukur dengan `git archive HEAD` → direktori
+    sementara di dalam workspace lalu dihapus (bukan angka yang disalin dari catatan
+    lama, karena angka 86.5% di changelog TD-112 berasal dari state yang
+    berbeda). Jadi 86.0% → 86.3% (+0.3pp). `go tool cover -func` untuk
+    handler.go: isValidWalletType 100%, GetMyWallet 100%, statusForError
+    100%, codeForError 100%, isPgInvalidTextRepresentation 100%,
+    writeServiceError 100%, publicErrorMessage 100% — tidak ada statement
+    baru yang uncovered.
+  - V5 `grep -n "validWalletTypes\|22P02" internal/wallet/handler.go` →
+    9 hit langsung (baris 34, 51, 53, 271, 273, 285, 287, 498, 501)
+    ditambah pemakaian di statusForError/codeForError/
+    isPgInvalidTextRepresentation/publicErrorMessage.
+  - V6 `git status --short` = hanya `M internal/wallet/handler.go`,
+    `M internal/wallet/handler_test.go`,
+    `M internal/wallet/me_integration_test.go`,
+    `M docs/TECHNICAL DEBT.txt`. Tidak commit (R10).
+  - `gofmt -l internal/wallet/handler.go internal/wallet/handler_test.go
+    internal/wallet/me_integration_test.go` → kosong. Dua file pre-existing
+    yang tidak terformat (`internal/wallet/http_integration_test.go`,
+    `internal/wallet/service.go`) dicek terhadap HEAD — bukan efek sesi ini
+    dan tidak disentuh (R8).
+
+TEMUAN DI LUAR SCOPE (R8 — dicatat, TIDAK diperbaiki):
+  - `Service.GetMyWallet` (service.go:514) TIDAK memvalidasi walletType.
+    Jalur HTTP kini terlindungi whitelist, tapi consumer non-HTTP (worker,
+    admin, skrip, atau handler modul lain yang memanggil service langsung)
+    masih bisa memicu 22P02; lewat handler wallet hasilnya 400, kalau
+    dipanggil tanpa handler errornya tetap mentah. Kandidat TD baru:
+    sentinel `ErrInvalidWalletType` + validasi di service supaya trust
+    boundary tidak bergantung pada siapa yang memanggil.
+  - Modul lain punya pola serupa yang belum diawasi:
+    `internal/ride/handler.go:402`, `internal/food/handler.go:848`,
+    `internal/send/handler.go:95/97/228/312` meneruskan
+    `strings.ToUpper(query/body)` mentah ke query tanpa whitelist
+    status/payment_method/package_type. Dampaknya lebih ringan (filter
+    kosong, atau 500 kalau kolomnya ENUM), tapi kelas bugnya sama.
+  - `GetWalletHistory` (handler.go:303) meneruskan `reference_type` mentah
+    ke query. Kalau kolom itu bertipe ENUM di DB lain dari dev DB, pola
+    22P02 yang sama bisa muncul. Tidak diubah (R8).
+
+KRITIK / SARAN UNTUK REVIEWER:
+  - [OVERRIDE-1] Prompt menulis "wallet_type_enum (7 values per TD-132)";
+    kenyataannya 8 label (001:48-49 = 6, 010:50 + 019:68 = 2). Ditulis 8
+    sesuai bukti migration (R2); daftar label di prompt sendiri juga 8,
+    jadi hanya angka "7" yang salah.
+  - [OVERRIDE-2] Prompt menyebut query repo
+    `wallet_type = $2::wallet_type_enum`; kode (repository.go:163) tidak
+    punya cast eksplisit. Root cause dan fix tidak berubah.
+  - [KRITIK-1] Prompt meminta message "type must be one of ..." tanpa
+    melarang menyebut label. Saya menyebut label yang valid karena label
+    itu sudah publik (dikembalikan sebagai `wallet_type` di response dan
+    ada di migration yang ter-commit). Kalau tim ingin pesan lebih
+    minimal, tinggal ubah ke "type must be one of the supported wallet
+    types" — tidak ada logika yang bergantung pada isi pesan.
+  - [KRITIK-2] Prompt menulis "Opsi B: map PgError 22P02 di statusForError
+    → 400 INVALID_REQUEST generic", tapi tidak menyebut bahwa mapping
+    status saja tidak menutup kebocoran: selama pesan tetap `err.Error()`,
+    nama enum tetap bocor (kali ini di status 400, bukan 500). Karena itu
+    saya tambah `publicErrorMessage`. Tanpa itu, goals prompt ("TIDAK
+    expose enum DB name") hanya tercapai untuk jalur whitelist, bukan
+    untuk catch-all.
+  - [SARAN] Whitelist ini adalah salinan dari enum DB — dua sumber
+    kebenaran yang bisa drift lagi (persis seperti TD-163 yang mencatat
+    drift label enum di dokumentasi). Kalau label enum bertambah lagi,
+    pertimbangkan test yang membandingkan `validWalletTypes` dengan
+    `\dT wallet_type_enum` di dev DB, atau pindahkan definisi label ke satu
+    package bersama yang dipakai semua modul.
+  - [RISIKO] `writeError(..., err.Error())` → `writeServiceError` di 7 call
+    site mengubah pesan PgError non-22P02 dari pesan PostgreSQL mentah
+    menjadi "internal server error". Ini memperbaiki kebocoran info, tapi
+    kalau ada consumer yang meng-parse `message` (bukan `error.code`),
+    perilakunya berubah. Cek: tidak ada parsing pesan di apps/*, dan
+    API CONTRACT menetapkan `code` sebagai kontrak — `message` bukan field
+    kontraktual.
 
 ===========================================================================
+
+===========================================================================
+CHANGELOG — 2026-10-02 (sesi TD-172 + TD-173, register gaps)
+==========================================================================
+
+ISI SESI INI:
+  Register saja — pencatatan 2 entry baru hasil TEMUAN DI LUAR SCOPE sesi
+  TD-164 (R8: dicatat, tidak diperbaiki), lalu penyinkronan blok §2 + §3
+  yang tertinggal. TIDAK ada file kode yang disentuh, tidak ada test, tidak
+  ada coverage. Verifikasi sesi ini murni aritmetika register (V1 parser,
+  V2/V3/V4 grep, V5 karakter, V6 git status).
+
+ENTRY BARU — TD-172 (HYGIENE / SEDANG / OPEN):
+  `validWalletTypes` (internal/wallet/handler.go:53-62) memuat 8 label yang
+  persis menduplikasi enum `wallet_type_enum` di DB. Dua kali enum bertambah
+  dan whitelist ikut disesuaikan manual — migration 010:50
+  (SYSTEM_RECEIVABLE_OVERDRAFT) dan 019:68 (SYSTEM_PLATFORM_SUBSIDY) — tapi
+  tidak ada mekanisme yang MEWAJIBKAN penyesuaian itu. Test paling dekat
+  dengan cek sinkronisasi (handler_test.go:521) membandingkan whitelist
+  DENGAN DIRINYA SENDIRI, jadi tautologis: kalau migration 020 menambah
+  label ke-9 dan whitelist lupa, test tetap hijau. Risiko drift ulang —
+  preseden identik sudah TERBUKTI di repo ini sebagai TD-163 (label enum
+  melenceng di docs/schema_clean.sql:13 dan docs/DATABASE SCHEMA.txt:33).
+
+ENTRY BARU — TD-173 (KODE / SEDANG / OPEN):
+  Pola handler di modul lain memakai `strings.ToUpper(...)` MENTAH tanpa
+  whitelist — kelas bug yang sama dengan TD-164 tapi di paket berbeda.
+  Verifikasi pola di 8 call site (bukan 6 seperti klaim awal prompt), dan
+  dampaknya TIDAK seragam di 8 itu:
+  (a) 500 NYATA — 1 endpoint: internal/ride/handler.go:402. Nilainya masuk
+      `GetRidesHistory` (internal/ride/service.go:569-577) →
+      `ListOrdersByCustomer` (internal/ride/repository.go:424-431) dan
+      `CountOrdersByCustomer` (:452-458), yang keduanya menambah
+      `AND status = $2` ke kolom ENUM `ride_orders.status`. $2 di-bind text
+      → cast PostgreSQL gagal (SQLSTATE 22P02); `statusForError`
+      (internal/ride/handler.go:468) tidak punya case `*pgconn.PgError`, dan
+      call site :406 menulis `err.Error()` apa adanya → 500 + kebocoran nama
+      enum. INI satu-satunya yang bocor.
+  (b) SUDAH 4xx — 6 call site body di food/send, karena service memvalidasi
+      SEBELUM query lewat sentinel (food/service.go:1105, :1376, :1436-1437;
+      send/service.go:824-828, :954-955, :1301-1303) yang semuanya sudah punya
+      mapping 4xx di `statusForError` masing-masing modul. Tidak ada leak
+      pesan PostgreSQL di jalur ini — residunya hanya filter kosong diam-diam.
+  (c) AMAN karena cast TEKS — 1 call site: internal/food/handler.go:848.
+      Repository membandingkan lewat `status::text = $2` /
+      `merchant_status::text = $2` (internal/food/repository.go:938), yang
+      tidak pernah menyentuh kolom ENUM, jadi label tak dikenal menghasilkan
+      daftar kosong, bukan 500.
+  Ringkas: 1 endpoint 500 + leak, 6 call site 4xx-aman, 1 call site aman
+  karena cast ::text = 8 call site. Klaim "tidak ada whitelist" tetap BENAR
+  di semua 8 — itu yang bikin entry ini tetap worthwhile (konsistensi +
+  defense-in-depth); hanya besarnya dampak yang dikoreksi, bukan akar
+  masalahnya.
+  [PERLU VERIFIKASI] Reproduksi 500 end-to-end di (a) TIDAK dijalankan saat
+  entry itu dicatat: butuh PostgreSQL dev (localhost:15432) + request HTTP
+  nyata, jadi klaim (a) diturunkan dari bukti kode + tipe kolom di
+  migrations/004_ride_orders.up.sql:55/:102, bukan dari respons yang benar-
+  benar diamati. Statusnya tetap OPEN, jadi tidak ada konsekuensi ke register.
+
+DELTA REGISTER:
+  FIXED 58 → 59, SEDANG 83 → 85, OPEN 71 → 72, Total 165 → 167.
+  (CLOSED 29 dan DEFERRED 7 tetap; TIDAK ada entry yang ditutup di sesi ini
+  — kedua delta hanya berasal dari 2 entry baru.)
+
+VERIFIKASI (V1 s/d V6):
+  - V1 Parser atas 167 field `ID :` di docs/TECHNICAL DEBT.txt:
+    Prioritas 8 + 42 + 85 + 32 = 167 ✓ = Status 59 + 29 + 7 + 72 = 167 ✓.
+    Status dinormalisasi per-prefix (`✅ FIXED`, `🔵 DEFERRED`, `✅ CLOSED`,
+    plus varian kurung/metadata commit) karena register ini punya 70 varian
+    string distinct untuk field `Status :` (dihitung ulang di 167 entry —
+    68 pada 164 entry waktu TD-171 dicatat) — memang itu isi TD-171.
+    Cross-check kedua: list ID di baris bucket SEDANG §2 diekspansi
+    (range `s/d`) = 85 unique ✓.
+  - V2 `grep -A1 "TOTAL HUTANG" docs/TECHNICAL DEBT.txt` → hit PERTAMA (header
+    §2, baris 4074) = `167 item` dan
+    `(59 FIXED + 29 CLOSED + 7 DEFERRED + 72 OPEN = 167)`.
+    Ditambah cross-check `grep -A1 "^STATUS:"` (baris 4373) =
+    `FIXED 59 / 29 CLOSED (FIXED/CLOSED 88) / 7 DEFERRED / 72 OPEN` +
+    `[59 + 29 + 7 + 72 = 167 = TOTAL]`. (Hit `TOTAL HUTANG` berikutnya di
+    output grep adalah catatan changelog sesi lama, bukan angka header.)
+  - V3 `grep -c "TD-058 s/d TD-173"` → 2: satu di §3 (baris OPEN) dan satu
+    di changelog ini sendiri. Sesuai V3 (≥1).
+  - V4 `grep -c "TD-172\|TD-173"` → 22 hit (entry register + list bucket
+    SEDANG §2 + bracket §2 SEDANG + bracket §2 STATUS + blok §3 + changelog
+    ini). Sesuai V4 (≥3). Angka ini self-referential: changelog ini sendiri
+    ikut terhitung, jadi nilai di atas diukur SESUDAH penulisan baris ini.
+  - V5 Pemeriksaan karakter non-ASCII pada rentang 3900-4100 (ekor blok
+    TD-171, entry TD-172 + TD-173, header §2) → bersih. Hasil scan
+    per-karakter: U+2014 EM DASH x26, U+2192 RIGHTWARDS ARROW x25,
+    U+2705 WHITE HEAVY CHECK MARK x3, U+00A7 SECTION SIGN x3,
+    U+2713 CHECK MARK x2, U+1F535 LARGE BLUE CIRCLE x1, U+2260 NOT EQUAL TO
+    x1 — semua itu karakter yang memang dipakai register ini, tidak ada
+    CJK/mojibake/zero-width. Scan seluruh file untuk rentang CJK
+    (U+2E80–U+9FFF, U+AC00–U+D7AF, U+F900–U+FAFF, U+FF00–U+FFEF) +
+    zero-width (U+200B/200C/200D) + U+FEFF/U+FFFD → 0 hit. (U+00A7 dan
+    U+2260 sempat flagged sebagai "suspect" oleh allowlist pertama, dicek
+    manual: keduanya baris pre-existing — rujukan `§11.2` dan `≠` — bukan
+    karakter yang disisipkan sesi ini; `git diff` = 0 hit untuk keduanya.)
+  - V6 `git status --short` → 4 file termodifikasi:
+      M docs/TECHNICAL DEBT.txt        (file SATU-SATUNYA yang disentuh sesi ini)
+      M internal/wallet/handler.go
+      M internal/wallet/handler_test.go
+      M internal/wallet/me_integration_test.go
+    Tiga file Go itu BUKAN hasil sesi ini — itu sisa tidak-ter-commit dari
+    sesi TD-164 (R10), dibuktikan `stat` mtime `internal/wallet/handler.go`
+    = 2026-10-01 19:10:01 vs `docs/TECHNICAL DEBT.txt` = 2026-10-02 07:12:45,
+    dan `git diff --stat -- internal/` = 356 insertion yang sama dengan yang
+    tercatat di changelog sesi TD-164. Sesi ini tidak menyentuh file Go.
+    Tidak commit (R10).
+
+KRITIK / SARAN UNTUK REVIEWER:
+  - [OVERRIDE-3] Prompt FIX 1 menulis blok `STATUS:` §2 "sebesar FIXED 58 /
+    71 OPEN [58+29+7+71=165]". Kenyataan file: blok itu menulis FIXED 54 /
+    29 CLOSED (83) / 7 DEFERRED / 74 OPEN = 164 — tertinggal 2 snapshot
+    (blok [Perubahan 2026-09-30]), bukan 1. Fix yang dipakai: disinkronkan
+    ke hasil parser, yaitu 59 / 29 (88) / 7 / 72 = 167. Konsekuensi: angka
+    FIXED/CLOSED parenthetical ikut 83 → 88 (bukan hanya FIXED dan OPEN
+    seperti tulis prompt), karena 59 + 29 = 88.
+  - Prompt FIX 2 menulis §3 berisi "58 FIXED / 71 OPEN". Kenyataan file: §3
+    sudah menulis FIXED 59 / CLOSED 29 / FIXED/CLOSED 88 / DEFERRED 7 /
+    OPEN 70 = 165 — angka itu BENAR untuk state sebelum TD-172/TD-173
+    ditambahkan. Jadi FIXED 59 tidak perlu diedit; yang bergerak hanya
+    OPEN 70 → 72 dan TOTAL 165 → 167. Fix yang dipakai: edit hanya yang
+    perlu bergerak.
+  - [KRITIK-3] Register ini sekarang punya DUA sumber angka yang bisa
+    menyimpang: §2 baris TOTAL + blok STATUS §2, dan §3. Kali ini keduanya
+    menyimpah karena sesi-sesi sebelumnya hanya menyinkronkan §3 (lihat
+    catatan 2026-09-29 sesi TD-168 di blok STATUS §2: "hanya memperbarui
+    blok §3 + baris TOTAL §2 dan tidak menyentuh blok STATUS §2"). Saran:
+    satu blok angka tunggal di §2 sebagai sumber, dan §3 cukup
+    cross-reference — atau sebaliknya. Root cause-nya proses, bukan data.
+  - [SARAN] TD-172 item Solusi (1) (test bandingkan `validWalletTypes` vs
+    `\dT wallet_type_enum`) butuh dev DB, jadi harus ber-tag `integration`
+    seperti `TestAuthRBAC_Allowed` (preseden TD-167 — entry dengan
+    `Prioritas : TINGGI` justru karena pipeline tidak menjalankan tag itu).
+    Kalau tidak di-tag, check-nya hijau tanpa pernah jalan.
+  - [RISIKO] TD-173(item (b)) 6 call site "aman" hanya aman selama sentinel
+    4xx di service paket masing-masing tetap ada. Kalau ada refactor yang
+    simplifying error mapping di salah satu paket, call site yang hari ini
+    4xx-aman bisa naik jadi 500 + leak tanpa ada test yang menjaga hal itu
+    khusus.
+
+==========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
 =====
