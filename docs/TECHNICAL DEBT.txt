@@ -4150,7 +4150,12 @@ Solusi     : Admin UpdateUserStatus (internal/admin/handler.go) panggil
              BlacklistService atau query sessions user_id → revoke semua
              jti aktif.
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-07, sesi TD-174)
+Note       :
+             * Solusi original "query sessions user_id" TIDAK AKURAT (tidak ada tabel sessions, JWT stateless). Di-log sebagai [OVERRIDE-2] di changelog.
+             * Implementasi actual: user-level revocation via key `user_revoke_before:{userID}` = Unix timestamp cutoff; token dengan `iat < cutoff` invalid.
+             * Wiring: BlacklistService.RevokeUserBefore + IsUserRevoked; middleware cek post-IsBlacklisted; admin.UpdateUserStatus panggil setelah commit (best-effort).
+             * Bukti commit: sesi TD-174 (belum commit saat entry ini ditulis, R10).
 Referensi  : TD-061 (split triage-v3), audit triage-v3 2026-10-04
 
 ================================================================================
@@ -4158,7 +4163,7 @@ Referensi  : TD-061 (split triage-v3), audit triage-v3 2026-10-04
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 168 item (TD-051 di-reserve/skip)
-                                       (60 FIXED + 44 CLOSED + 8 DEFERRED + 56 OPEN = 168)
+                                       (61 FIXED + 44 CLOSED + 8 DEFERRED + 55 OPEN = 168)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4460,8 +4465,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 168 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 60 item, 44 item CLOSED (FIXED/CLOSED 104), 8 item DEFERRED,
-        56 item OPEN.  [60 + 44 + 8 + 56 = 168 = TOTAL]
+STATUS: ✅ FIXED 61 item, 44 item CLOSED (FIXED/CLOSED 105), 8 item DEFERRED,
+        55 item OPEN.  [61 + 44 + 8 + 55 = 168 = TOTAL]
         [59/88/7/72 pada 2026-10-02 (sesi TD-172 + TD-173 entry baru): blok
         STATUS §2 ini tertinggal 2 snapshot — sequential dari blok
         [Perubahan 2026-09-30] di bawah (54/83/7/74 = 164), padahal sesi
@@ -4631,19 +4636,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-04):
+3. RINGKASAN STATUS TERKINI (2026-10-07, sesi TD-174):
    - Total hutang teridentifikasi      : 168 item (TD-051 di-reserve/skip; 168 item aktif terdaftar).
-   - ✅ FIXED                           : 60 item
+   - ✅ FIXED                           : 61 item
    - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
-   - FIXED/CLOSED                       : 104 item
+   - FIXED/CLOSED                       : 105 item
    - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 56 item (bukan hanya TD-058 s/d TD-173 — masih ada
+   - ❌ OPEN                              : 55 item (bukan hanya TD-058 s/d TD-173 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [60 + 44 + 8 + 56 = 168 = TOTAL]
+     [61 + 44 + 8 + 55 = 168 = TOTAL]
+     [Perubahan 2026-10-07 sesi TD-174 — FIXED TD-174 (security user-level token revocation via Redis key user_revoke_before:{userID}; middleware cek IsUserRevoked setelah IsBlacklisted; admin UpdateUserStatus panggil RevokeUserBefore SETELAH commit untuk SUSPENDED/FROZEN/DELETED; main.go wire blacklistService). STATUS: FIXED 60→61, CLOSED 44 tetap, OPEN 56→55, TOTAL tetap 168. Bukti: auth 11/11, middleware 6/6, admin 3+2/5 PASS. [OVERRIDE-2] Solusi original "query sessions user_id" TIDAK AKURAT (JWT stateless, tidak ada tabel sessions) → diperbaiki ke user-level revocation berbasis iat.]
+
      [Perubahan 2026-10-04 (sesi triage-v3) — STEP A: 15 DROP → CLOSED
      (TD-032, TD-033, TD-034, TD-035, TD-036, TD-037, TD-042, TD-055, TD-057,
      TD-081, TD-086, TD-102, TD-111, TD-118, TD-156); TD-061 → DEFERRED;
@@ -8184,6 +8191,17 @@ CHANGELOG — 2026-10-04 (sesi triage-v3):
 - Parser: 167 → 168 entries; FIXED 60, CLOSED 44, DEFERRED 8, OPEN 56.
 ===========================================================================
 ==========================================================================
+===========================================================================
+CHANGELOG — 2026-10-07 (sesi TD-174, security user-level token revocation):
+- BlacklistService: RevokeUserBefore + IsUserRevoked (user-level revocation via Redis key user_revoke_before:{userID}; iat < cutoff = invalid).
+- Middleware: AuthMiddleware + OptionalAuthMiddleware cek IsUserRevoked setelah IsBlacklisted.
+- Admin: UpdateUserStatus panggil RevokeUserBefore SETELAH tx.Commit (best-effort) untuk status SUSPENDED/FROZEN/DELETED.
+- main.go: wire blacklistService ke admin.NewService.
+- Test: auth 11/11 (foundation), middleware 6/6, admin 3+2/5 (suspend/freeze/ban + activate + redisdown).
+- [OVERRIDE-2] TD-174 Solusi original "query sessions user_id" TIDAK AKURAT: schema tidak punya tabel sessions, JWT stateless. Diperbaiki ke user-level revocation berbasis iat.
+- FIXED 60→61, OPEN 56→55, Total tetap 168.
+- [OVERRIDE-3] STEP C bug: parser .upper() salah klasifikasi 6 CLOSED jadi FIXED (kata 'fixed' di note). Direvert di STEP C-FIX. Angka register akhir = FIXED 61, CLOSED 44, DEFERRED 8, OPEN 55, TOTAL 168.
+===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
 =====

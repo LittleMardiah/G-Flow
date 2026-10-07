@@ -3,11 +3,11 @@
 // ReverseTransaction membalikkan transaksi yang sudah settled secara
 // proporsional:
 //
-//	1. Refund customer penuh (CREDIT kembali ke escrow/wallet asal DEBIT).
-//	2. Clawback proporsional dari Merchant, Driver, Platform (DEBIT).
-//	3. Jika saldo partai < bagiannya → shortfall dicatat sebagai
-//	   SYSTEM_RECEIVABLE_OVERDRAFT (piutang platform atas partai tersebut).
-//	4. Auto-sweep journal memindahkan dana yang tersedia ke receivable.
+//  1. Refund customer penuh (CREDIT kembali ke escrow/wallet asal DEBIT).
+//  2. Clawback proporsional dari Merchant, Driver, Platform (DEBIT).
+//  3. Jika saldo partai < bagiannya → shortfall dicatat sebagai
+//     SYSTEM_RECEIVABLE_OVERDRAFT (piutang platform atas partai tersebut).
+//  4. Auto-sweep journal memindahkan dana yang tersedia ke receivable.
 //
 // Algoritma menjaga invariant double-entry: SUM(DEBIT) == SUM(CREDIT) per
 // reference_id (reference_type = "REVERSAL").
@@ -38,6 +38,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/g-flow/g-flow/internal/auth"
 )
 
 // Reference type / description constants untuk journal reversal.
@@ -131,11 +133,14 @@ type Service struct {
 	// oleh NewHandler lewat setLockoutGuard (Handler mengimplementasikan
 	// LockoutGuard dengan infra Redis + PostgreSQL di lockout.go).
 	lockout LockoutGuard
+	// blacklist menangani user-level token revocation (TD-174). Nil = revoke
+	// nonaktif (dipakai oleh test yang tidak menguji revoke).
+	blacklist *auth.BlacklistService
 }
 
 // NewService membuat Service reversal baru.
-func NewService(repo *Repository, db DB, logger *slog.Logger) *Service {
-	return &Service{repo: repo, db: db, logger: logger}
+func NewService(repo *Repository, db DB, logger *slog.Logger, blacklist *auth.BlacklistService) *Service {
+	return &Service{repo: repo, db: db, logger: logger, blacklist: blacklist}
 }
 
 // setLockoutGuard menyuntikkan implementasi lockout ke Service. Dipanggil
@@ -169,15 +174,15 @@ var dummyPasswordHash = func() string {
 // identitas user bila valid. Urutan pemeriksaan (bcrypt DULU — mencegah
 // account-type oracle / enumerasi email):
 //
-//	1. Format email (minimal "@" dan ".").
-//	2. Lockout check (TD-114, OWASP A07) — baru bisa dilakukan setelah email
-//	   ter-resolve menjadi user id, tapi tetap SEBELUM bcrypt compare.
-//	3. bcrypt match password (ErrInvalidCredentials). Email yang tidak
-//	   terdaftar tetap melewati bcrypt compare dengan dummy hash supaya durasi
-//	   respon seragam; password yang salah menambah counter percobaan.
-//	4. user_type == "admin" (akun lain -> ErrNotAdmin).
-//	5. status == "ACTIVE" (ErrAccountInactive).
-//	6. Login sukses -> reset counter percobaan (Redis + PostgreSQL).
+//  1. Format email (minimal "@" dan ".").
+//  2. Lockout check (TD-114, OWASP A07) — baru bisa dilakukan setelah email
+//     ter-resolve menjadi user id, tapi tetap SEBELUM bcrypt compare.
+//  3. bcrypt match password (ErrInvalidCredentials). Email yang tidak
+//     terdaftar tetap melewati bcrypt compare dengan dummy hash supaya durasi
+//     respon seragam; password yang salah menambah counter percobaan.
+//  4. user_type == "admin" (akun lain -> ErrNotAdmin).
+//  5. status == "ACTIVE" (ErrAccountInactive).
+//  6. Login sukses -> reset counter percobaan (Redis + PostgreSQL).
 func (s *Service) Login(ctx context.Context, email, password string) (*LoginResult, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if !validEmail(email) {
@@ -884,6 +889,20 @@ func (s *Service) UpdateUserStatus(ctx context.Context, req UserStatusRequest) (
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+
+	// TD-174: revoke semua token user saat status non-aktif.
+	// Best-effort: kalau Redis error, status sudah ter-commit; token revoke
+	// cuma nice-to-have, JANGAN rollback.
+	switch newStatus {
+	case "SUSPENDED", "FROZEN", "DELETED":
+		if s.blacklist != nil {
+			uid := req.UserID.String()
+			if err := s.blacklist.RevokeUserBefore(ctx, uid, time.Now().Unix()); err != nil {
+				s.logger.Warn("failed to revoke user tokens after status change",
+					"user_id", req.UserID, "new_status", newStatus, "error", err)
+			}
+		}
 	}
 
 	return &UserStatusResult{UserID: req.UserID, Status: newStatus, UpdatedAt: updatedAt}, nil

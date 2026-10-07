@@ -37,6 +37,15 @@ func AuthMiddleware(jwtService *auth.JWTService, blacklist *auth.BlacklistServic
 			return
 		}
 
+		if revoked, _ := blacklist.IsUserRevoked(c.Request.Context(), claims.Sub, claims.Iat); revoked {
+			// user-level revocation (TD-174): semua token user sebelum cutoff invalid.
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   gin.H{"code": "UNAUTHORIZED", "message": "Token telah direvoke"},
+			})
+			return
+		}
+
 		c.Set("user_id", claims.Sub)
 		c.Set("user_type", claims.UserType)
 		c.Set("claims", claims)
@@ -71,6 +80,13 @@ func OptionalAuthMiddleware(jwtService *auth.JWTService, blacklist *auth.Blackli
 		}
 
 		if blacklisted, _ := blacklist.IsBlacklisted(c.Request.Context(), claims.Jti); blacklisted {
+			c.Next()
+			return
+		}
+
+		if revoked, _ := blacklist.IsUserRevoked(c.Request.Context(), claims.Sub, claims.Iat); revoked {
+			// user-level revocation (TD-174): perlakukan sebagai anonim
+			// (konsisten dengan behavior blacklist existing — user_id tidak diset).
 			c.Next()
 			return
 		}

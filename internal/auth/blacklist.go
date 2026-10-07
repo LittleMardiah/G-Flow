@@ -2,13 +2,16 @@ package auth
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 // BlacklistService menyimpan jti token yang di-blacklist di Redis (logout /
-// suspend) dengan TTL sampai token expired.
+// suspend) dengan TTL sampai token expired. Selain itu juga menyediakan
+// user-level revocation untuk memaksa semua token user menjadi invalid sejak
+// waktu tertentu (berdasarkan iat token).
 type BlacklistService struct {
 	db *redis.Client
 }
@@ -49,4 +52,47 @@ func (s *BlacklistService) IsBlacklisted(ctx context.Context, jti string) (bool,
 		return false, err
 	}
 	return val > 0, nil
+}
+
+// RevokeUserBefore menetapkan waktu cutoff (untilUnix, unix timestamp) untuk
+// user tertentu. Semua token dengan iat < untilUnix akan dianggap invalid
+// (user-level revocation). TTL diset sama dengan RefreshTokenTTL karena refresh
+// token umumnya bertahan paling lama; pendekatan ini menjaga key tetap ada
+// selama perlu untuk mengevaluasi token aktif. Return error Redis jika gagal.
+func (s *BlacklistService) RevokeUserBefore(ctx context.Context, userID string, untilUnix int64) error {
+	if s.db == nil {
+		return nil
+	}
+
+	key := "user_revoke_before:" + userID
+	ttl := RefreshTokenTTL
+	if err := s.db.Set(ctx, key, strconv.FormatInt(untilUnix, 10), ttl).Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IsUserRevoked mengecek apakah user telah direvoke. Token dianggap revoked
+// jika iat token < stored cutoff (token dikeluarkan sebelum waktu revoke).
+// Jika key tidak ada, dianggap tidak direvoke. Jika Redis error, return error.
+// Jika db nil (graceful), return false, nil.
+func (s *BlacklistService) IsUserRevoked(ctx context.Context, userID string, iat int64) (bool, error) {
+	if s.db == nil {
+		return false, nil
+	}
+
+	key := "user_revoke_before:" + userID
+	val, err := s.db.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	stored, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return false, err
+	}
+	return iat < stored, nil
 }

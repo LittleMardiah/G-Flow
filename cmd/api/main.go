@@ -129,7 +129,7 @@ func main() {
 	// TD-023 (FIXED STEP 1B): secret 2FA dibaca dari env ADMIN_2FA_SECRET;
 	// fail-fast (panic) saat ENV=production dan secret kosong.
 	adminRepository := admin.NewRepository(pool)
-	adminService := admin.NewService(adminRepository, pool, slog.Default())
+	adminService := admin.NewService(adminRepository, pool, slog.Default(), blacklistService)
 	adminTwoFA := admin.NewStaticTwoFactorValidator(os.Getenv("ADMIN_2FA_SECRET"))
 	adminHandler := admin.NewHandler(adminService, pool, rdb, slog.Default(), adminTwoFA, jwtService)
 

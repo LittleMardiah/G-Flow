@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/g-flow/g-flow/internal/auth"
 )
 
 var (
@@ -38,6 +41,7 @@ func newSvc(t *testing.T, mDB pgxmock.PgxPoolIface) *Service {
 		NewRepository(mDB),
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 	)
 }
 
@@ -203,6 +207,7 @@ func newTestHandler(t *testing.T, mDB pgxmock.PgxPoolIface, mr *miniredis.Minire
 		NewRepository(mDB),
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 	)
 	return NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 }
@@ -805,7 +810,7 @@ func TestRecordFailedAttempt_Fallback(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
-	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	attempts, err := h.recordFailedAttempt(context.Background(), testAdminID)
 	require.NoError(t, err)
@@ -829,7 +834,7 @@ func TestRecordFailedAttempt_LocksViaRedis(t *testing.T) {
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	attempts, err := h.recordFailedAttempt(context.Background(), testAdminID)
 	require.NoError(t, err)
@@ -855,7 +860,7 @@ func TestCheckLockout_RedisErrorFallback(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(true))
 
-	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	locked, err := h.checkLockout(context.Background(), testAdminID)
 	require.NoError(t, err)
@@ -904,4 +909,179 @@ func TestGetTransactionHandler_Errors(t *testing.T) {
 	router3.ServeHTTP(w3, httptest.NewRequest(http.MethodGet, "/admin/transactions/"+testTxnID.String(), nil))
 	assert.Equal(t, http.StatusInternalServerError, w3.Code)
 	assert.NoError(t, mDB3.ExpectationsWereMet())
+}
+
+// newSvcWithBlacklist membangun Service dengan BlacklistService Redis nyata
+// (TD-174) untuk menguji revoke token saat status user non-aktif.
+func newSvcWithBlacklist(t *testing.T, mDB pgxmock.PgxPoolIface, rdb *redis.Client) *Service {
+	t.Helper()
+	return NewService(
+		NewRepository(mDB),
+		mDB,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		auth.NewBlacklistService(rdb),
+	)
+}
+
+// expectUpdateUserStatusSetup menyiapkan ekspektasi pgxmock untuk satu
+// UpdateUserStatus sukses (begin + update status + audit log + commit).
+func expectUpdateUserStatusSetup(mDB pgxmock.PgxPoolIface) {
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE users SET status").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(time.Now()))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+}
+
+// TestUpdateUserStatus_Suspend_RevokeCalled: suspend -> status SUSPENDED
+// ter-commit DAN RevokeUserBefore dipanggil (key user_revoke_before:<uid>
+// ada di Redis dengan timestamp ~sekarang).
+func TestUpdateUserStatus_Suspend_RevokeCalled(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	expectUpdateUserStatusSetup(mDB)
+
+	svc := newSvcWithBlacklist(t, mDB, rdb)
+	before := time.Now().Unix()
+	res, err := svc.UpdateUserStatus(context.Background(), UserStatusRequest{
+		UserID:  testUserID,
+		AdminID: testAdminID,
+		Action:  "suspend",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "SUSPENDED", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	key := "user_revoke_before:" + testUserID.String()
+	require.True(t, mr.Exists(key), "key revoke harus dibuat di Redis")
+	raw, err := mr.Get(key)
+	require.NoError(t, err)
+	until, err := strconv.ParseInt(raw, 10, 64)
+	require.NoError(t, err)
+	after := time.Now().Unix()
+	assert.GreaterOrEqual(t, until, before)
+	assert.LessOrEqual(t, until, after)
+}
+
+// TestUpdateUserStatus_Activate_RevokeNotCalled: unfreeze (-> ACTIVE) TIDAK
+// memicu RevokeUserBefore — user aktif boleh pakai token lama.
+func TestUpdateUserStatus_Activate_RevokeNotCalled(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	expectUpdateUserStatusSetup(mDB)
+
+	svc := newSvcWithBlacklist(t, mDB, rdb)
+	res, err := svc.UpdateUserStatus(context.Background(), UserStatusRequest{
+		UserID:  testUserID,
+		AdminID: testAdminID,
+		Action:  "unfreeze",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+	assert.False(t, mr.Exists("user_revoke_before:"+testUserID.String()),
+		"revoke tidak boleh dipanggil untuk status aktif")
+}
+
+// TestUpdateUserStatus_RevokeRedisDown_StatusCommitted: Redis mati ->
+// RevokeUserBefore error -> status TETAP ter-commit (best-effort, tanpa
+// rollback) dan UpdateUserStatus tetap sukses.
+func TestUpdateUserStatus_RevokeRedisDown_StatusCommitted(t *testing.T) {
+	mr := miniredis.RunT(t)
+	addr := mr.Addr()
+	mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	expectUpdateUserStatusSetup(mDB)
+
+	svc := newSvcWithBlacklist(t, mDB, rdb)
+	res, err := svc.UpdateUserStatus(context.Background(), UserStatusRequest{
+		UserID:  testUserID,
+		AdminID: testAdminID,
+		Action:  "ban",
+	})
+	require.NoError(t, err, "Redis error saat revoke tidak boleh menggagalkan update status")
+	assert.Equal(t, "DELETED", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet(), "commit transaksi harus tetap terjadi")
+}
+
+// TestUpdateUserStatus_Freeze_RevokeCalled: freeze -> status FROZEN
+// ter-commit DAN RevokeUserBefore dipanggil (key user_revoke_before:<uid>
+// ada di Redis dengan timestamp ~sekarang).
+func TestUpdateUserStatus_Freeze_RevokeCalled(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	expectUpdateUserStatusSetup(mDB)
+
+	svc := newSvcWithBlacklist(t, mDB, rdb)
+	before := time.Now().Unix()
+	res, err := svc.UpdateUserStatus(context.Background(), UserStatusRequest{
+		UserID:  testUserID,
+		AdminID: testAdminID,
+		Action:  "freeze",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "FROZEN", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	key := "user_revoke_before:" + testUserID.String()
+	require.True(t, mr.Exists(key), "key revoke harus dibuat di Redis")
+	raw, err := mr.Get(key)
+	require.NoError(t, err)
+	until, err := strconv.ParseInt(raw, 10, 64)
+	require.NoError(t, err)
+	after := time.Now().Unix()
+	assert.GreaterOrEqual(t, until, before)
+	assert.LessOrEqual(t, until, after)
+}
+
+// TestUpdateUserStatus_Ban_RevokeCalled: ban -> status DELETED
+// ter-commit DAN RevokeUserBefore dipanggil (key user_revoke_before:<uid> ada).
+func TestUpdateUserStatus_Ban_RevokeCalled(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	expectUpdateUserStatusSetup(mDB)
+
+	svc := newSvcWithBlacklist(t, mDB, rdb)
+	before := time.Now().Unix()
+	res, err := svc.UpdateUserStatus(context.Background(), UserStatusRequest{
+		UserID:  testUserID,
+		AdminID: testAdminID,
+		Action:  "ban",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "DELETED", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+
+	key := "user_revoke_before:" + testUserID.String()
+	require.True(t, mr.Exists(key), "key revoke harus dibuat di Redis")
+	raw, err := mr.Get(key)
+	require.NoError(t, err)
+	until, err := strconv.ParseInt(raw, 10, 64)
+	require.NoError(t, err)
+	after := time.Now().Unix()
+	assert.GreaterOrEqual(t, until, before)
+	assert.LessOrEqual(t, until, after)
 }
