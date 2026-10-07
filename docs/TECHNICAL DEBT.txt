@@ -4156,6 +4156,17 @@ Note       :
              * Implementasi actual: user-level revocation via key `user_revoke_before:{userID}` = Unix timestamp cutoff; token dengan `iat < cutoff` invalid.
              * Wiring: BlacklistService.RevokeUserBefore + IsUserRevoked; middleware cek post-IsBlacklisted; admin.UpdateUserStatus panggil setelah commit (best-effort).
              * Bukti commit: sesi TD-174 (belum commit saat entry ini ditulis, R10).
+             * Timing race fix (2026-10-07, sesi TD-174 STEP D-FIX): E2E verify
+               awal menunjukkan Step 6 = 200 (token lama masih valid) karena
+               login & suspend di detik yang sama → iat == cutoff → `iat < cutoff`
+               false. Fix: cutoff = `time.Now().Add(time.Second).Unix()`.
+               Integration test baru (internal/admin/service_revoke_integration_test.go,
+               build tag `integration`, miniredis + time.Now() aktual — bukan fixed
+               untilUnix) mereproduksi race + menahan regresi. E2E verify ulang:
+               Step 6 = 401 (PROOF).
+             * File diubah: internal/admin/service.go (fix +1s), internal/admin/
+               service_test.go (3 assertion +1s grace), internal/admin/
+               service_revoke_integration_test.go (BARU).
 Referensi  : TD-061 (split triage-v3), audit triage-v3 2026-10-04
 
 ================================================================================
@@ -8201,6 +8212,11 @@ CHANGELOG — 2026-10-07 (sesi TD-174, security user-level token revocation):
 - [OVERRIDE-2] TD-174 Solusi original "query sessions user_id" TIDAK AKURAT: schema tidak punya tabel sessions, JWT stateless. Diperbaiki ke user-level revocation berbasis iat.
 - FIXED 60→61, OPEN 56→55, Total tetap 168.
 - [OVERRIDE-3] STEP C bug: parser .upper() salah klasifikasi 6 CLOSED jadi FIXED (kata 'fixed' di note). Direvert di STEP C-FIX. Angka register akhir = FIXED 61, CLOSED 44, DEFERRED 8, OPEN 55, TOTAL 168.
+- [STEP D-FIX] Timing race `iat == cutoff` ditemukan di E2E (Step 6 = 200).
+  Fix: cutoff = now + 1s grace. Integration test baru pakai time.Now() aktual
+  (bukan fixed untilUnix) → menangkap bug. E2E re-verify: Step 6 = 401.
+  Register counter TIDAK berubah (FIXED 61 / CLOSED 44 / DEFERRED 8 / OPEN 55
+  / TOTAL 168) — STEP D-FIX = perbaikan dalam sesi yang sama, TD-174 tetap 1.
 ===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================

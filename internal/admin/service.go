@@ -898,7 +898,11 @@ func (s *Service) UpdateUserStatus(ctx context.Context, req UserStatusRequest) (
 	case "SUSPENDED", "FROZEN", "DELETED":
 		if s.blacklist != nil {
 			uid := req.UserID.String()
-			if err := s.blacklist.RevokeUserBefore(ctx, uid, time.Now().Unix()); err != nil {
+			// +1 detik: kalau login & suspend di detik yang sama, iat == cutoff
+			// -> iat < cutoff false -> token tidak ter-revoke. Grace 1s menutup race ini.
+			// Semua token pre-suspend (iat <= T) invalid; token post-suspend (> T+1)
+			// tetap valid — tapi post-suspend login mustahil (status non-ACTIVE tolak).
+			if err := s.blacklist.RevokeUserBefore(ctx, uid, time.Now().Add(time.Second).Unix()); err != nil {
 				s.logger.Warn("failed to revoke user tokens after status change",
 					"user_id", req.UserID, "new_status", newStatus, "error", err)
 			}

@@ -967,7 +967,8 @@ func TestUpdateUserStatus_Suspend_RevokeCalled(t *testing.T) {
 	require.NoError(t, err)
 	after := time.Now().Unix()
 	assert.GreaterOrEqual(t, until, before)
-	assert.LessOrEqual(t, until, after)
+	// +1s grace (TD-174 STEP D-FIX): cutoff = time.Now()+1 detik, jadi bisa after+1.
+	assert.LessOrEqual(t, until, after+1)
 }
 
 // TestUpdateUserStatus_Activate_RevokeNotCalled: unfreeze (-> ACTIVE) TIDAK
@@ -1050,7 +1051,8 @@ func TestUpdateUserStatus_Freeze_RevokeCalled(t *testing.T) {
 	require.NoError(t, err)
 	after := time.Now().Unix()
 	assert.GreaterOrEqual(t, until, before)
-	assert.LessOrEqual(t, until, after)
+	// +1s grace (TD-174 STEP D-FIX): cutoff = time.Now()+1 detik, jadi bisa after+1.
+	assert.LessOrEqual(t, until, after+1)
 }
 
 // TestUpdateUserStatus_Ban_RevokeCalled: ban -> status DELETED
@@ -1083,5 +1085,6 @@ func TestUpdateUserStatus_Ban_RevokeCalled(t *testing.T) {
 	require.NoError(t, err)
 	after := time.Now().Unix()
 	assert.GreaterOrEqual(t, until, before)
-	assert.LessOrEqual(t, until, after)
+	// +1s grace (TD-174 STEP D-FIX): cutoff = time.Now()+1 detik, jadi bisa after+1.
+	assert.LessOrEqual(t, until, after+1)
 }
