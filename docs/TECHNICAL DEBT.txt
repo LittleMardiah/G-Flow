@@ -4301,12 +4301,55 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), ROADMAP 04
              §4.2.3 (admin user management pattern), FOOD_MERCHANTS.status
              schema (migrations/005)
 
+ID         : TD-179
+Kategori   : KODE / KONSISTENSI
+Judul      : Path PATCH status tidak konsisten antar modul: food = `PATCH
+             /food-orders/:id` (main.go:260, tanpa `/status`), ride = `PATCH
+             /rides/:order_id/status` (main.go:194, dengan `/status`).
+             API CONTRACT §8.4 spec = `/food-orders/{order_id}/status`.
+Dampak     : (1) Consumer baru (mobile, integrasi pihak ketiga) harus tahu 2
+             convention → friksi onboarding. (2) API CONTRACT LOCKED tapi kode
+             beda → R2 violation (dokumen harus ikut kode ATAU kode fix).
+             (3) E2E 2026-10-08 1E-3 awalnya 404 karena asumsi path sama
+             dengan ride.
+Bukti      : (a) E2E 2026-10-08 BLOK 1E-3: `PATCH /food-orders/$ID/status` →
+             404 (server log confirmed). (b) cmd/api/main.go:260 —
+             `foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)`
+             TANPA `/status`. (c) cmd/api/main.go:194 —
+             `api.PATCH("/rides/:order_id/status", rideHandler.UpdateStatus)`
+             DENGAN `/status`. (d) docs/API CONTRACT.txt §8.4 (baris 955-958)
+             "PATCH /food-orders/{order_id}/status" (nama file = "API
+             CONTRACT.txt", bukan API_CONTRACT.txt — lihat [OVERRIDE-1] di
+             changelog sesi ini). (e) VERIFIED grep 2026-10-08: 3 mobile apps
+             SEMUA pakai `/:id` tanpa `/status` —
+             apps/customer_app/lib/services/food_order_service.dart:54-59,
+             apps/driver_app/lib/services/order_service.dart:164-169,
+             apps/merchant_app/lib/services/order_service.dart:39. TIDAK ada
+             pemakaian `/food-orders/:id/status` di apps/ maupun admin_web
+             (grep `food-orders` × *.ts/*.tsx = 0). (f) Modul ke-3 (G-Send)
+             juga `/:id`: cmd/api/main.go:274 `sendOrders.PATCH("/:id", ...)`
+             tapi docs/API CONTRACT.txt (baris 1129) spec =
+             `/send-orders/{order_id}/status` → 2 dari 3 module (food, send)
+             code/doc mismatch; ride satu-satunya yang match contract.
+Solusi     : Pilih satu convention. Rekomendasi prompt: `/status` (align ride +
+             API CONTRACT §8.4). Tapi bukti (e): ketiga mobile apps sudah pakai
+             `/:id` → fix kode = breaking change untuk SEMUA app → butuh
+             backward-compat window (dukung kedua path 1-2 rilis, lalu
+             deprecate). Alternatif B (zero mobile break, align R2 "kode =
+             source of truth"): fix dokumen — ubah API CONTRACT §8.4 (+
+             §send, §ride) ke path kode. Keduanya butuh keputusan User: kode
+             atau dokumen yang di-fix. Jangan fix tanpa keputusan (R9).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
+             CONTRACT.txt §8.4, TEAM_CONTRACT R2/R6/R8
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 172 item (TD-051 di-reserve/skip)
-                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 57 OPEN = 172)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 173 item (TD-051 di-reserve/skip)
+                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 58 OPEN = 173)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4364,7 +4407,15 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 172 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 90 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177, TD-178)
+- SEDANG  : 91 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177, TD-178, TD-179)
+           [91 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E-3): TD-179 entry
+           BARU (KODE / KONSISTENSI — path PATCH status food `PATCH
+           /food-orders/:id` (main.go:260) vs ride `PATCH
+           /rides/:order_id/status` (main.go:194) vs API CONTRACT §8.4
+           `/status`, `Prioritas : SEDANG`, `Status : OPEN`) → bucket SEDANG
+           90 → 91 (+1). TIDAK ada entry yang ditutup di sesi ini. Parser atas
+           173 field `ID :` SESUDAH edit: Prioritas 8 + 42 + 91 + 32 = 173 ✓
+           = Status 63 + 44 + 8 + 58 = 173 ✓.]
            [90 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E): TD-178 entry
            BARU (BACKEND / FITUR — endpoint admin approve merchant `PATCH
            /api/v1/admin/merchants/:id/status` tidak ada, merchant berhenti di
@@ -4632,7 +4683,20 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 172 item (TD-051 di-reserve/skip)
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
 STATUS: ✅ FIXED 63 item, 44 item CLOSED (FIXED/CLOSED 107), 8 item DEFERRED,
-        57 item OPEN.  [63 + 44 + 8 + 57 = 172 = TOTAL]
+        58 item OPEN.  [63 + 44 + 8 + 58 = 173 = TOTAL]
+        [63/44/8/58 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E-3 — TD-179
+        entry baru): TIDAK ada entry yang ditutup. TD-179 (KODE / KONSISTENSI
+        — path PATCH status food `PATCH /food-orders/:id` (main.go:260, tanpa
+        `/status`) vs ride `PATCH /rides/:order_id/status` (main.go:194, dengan
+        `/status`) vs API CONTRACT §8.4 `/food-orders/{order_id}/status`; 3
+        mobile apps SEMUA pakai `/:id`, `Prioritas : SEDANG`, `Status : OPEN`)
+        entry BARU → bucket Status OPEN 57 → 58 (+1) dan bucket Prioritas
+        SEDANG 90 → 91 (+1). Delta Status: FIXED 63, CLOSED 44 dan DEFERRED 8
+        tetap, OPEN 57 → 58, TOTAL 172 → 173. KONSISTEN:
+        63 + 44 + 8 + 58 = 173 = TOTAL dan 8 + 42 + 91 + 32 = 173 = TOTAL.
+        Parser atas 173 field `ID :` SESUDAH edit mengonfirmasi kedua sum = 173
+        (V1 sesi ini). Temuan di luar scope sesi E2E demo prep (R8). Tidak ada
+        kode yang diubah — register dokumentasi saja. Tidak commit (R10).]
         [63/44/8/57 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E — TD-178
         entry baru): TIDAK ada entry yang ditutup. TD-178 (BACKEND / FITUR —
         tidak ada endpoint admin approve merchant
@@ -4862,8 +4926,8 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-08, sesi E2E demo prep — TD-178 entry baru):
-   - Total hutang teridentifikasi      : 172 item (TD-051 di-reserve/skip; 172 item aktif terdaftar).
+3. RINGKASAN STATUS TERKINI (2026-10-08, sesi E2E demo prep — TD-179 entry baru):
+   - Total hutang teridentifikasi      : 173 item (TD-051 di-reserve/skip; 173 item aktif terdaftar).
    - ✅ FIXED                           : 63 item
    - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
@@ -4871,10 +4935,33 @@ REKOMENDASI:
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
    - FIXED/CLOSED                       : 107 item
    - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 57 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-178 — masih ada
+   - ❌ OPEN                              : 58 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-179 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [63 + 44 + 8 + 57 = 172 = TOTAL]
+     [63 + 44 + 8 + 58 = 173 = TOTAL]
+     [Perubahan 2026-10-08 sesi E2E demo (BLOK 1E-3) — TD-179 (KODE /
+     KONSISTENSI — path PATCH status food = `PATCH /food-orders/:id`
+     (main.go:260, tanpa `/status`), ride = `PATCH /rides/:order_id/status`
+     (main.go:194, dengan `/status`), API CONTRACT §8.4 spec =
+     `/food-orders/{order_id}/status`; 3 mobile apps SEMUA pakai `/:id`)
+     DITAMBAHKAN sebagai entry BARU, `Prioritas : SEDANG`, `Status : OPEN` —
+     hasil TEMUAN DI LUAR SCOPE sesi E2E demo prep (R8, dicatat tidak
+     diperbaiki).
+     (a) Konteks E2E 2026-10-08 BLOK 1E-3: `PATCH /food-orders/$ID/status` →
+         404 (server log confirmed) karena asumsi path sama dengan ride.
+         cmd/api/main.go:260 `foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)`,
+         cmd/api/main.go:194 `api.PATCH("/rides/:order_id/status", rideHandler.UpdateStatus)`,
+         docs/API CONTRACT.txt §8.4 (baris 958) spec = `/status`. Grep apps/
+         = customer food_order_service.dart:54-59, driver
+         order_service.dart:164-169, merchant order_service.dart:39 (semua
+         `PATCH /food-orders/:id`); admin_web 0 pemakaian food-orders.
+     (b) Delta: OPEN 57 → 58 (+1 entry baru; TIDAK ada entry ditutup), TOTAL
+         172 → 173. FIXED 63, CLOSED 44, DEFERRED 8 TETAP. Bucket Prioritas:
+         SEDANG 90 → 91 (+1 TD-179); KRITIS 8, TINGGI 42, RENDAH 32 tetap
+         → 8 + 42 + 91 + 32 = 173 = TOTAL.
+     (c) KONSISTEN: 63 + 44 + 8 + 58 = 173 = TOTAL. Parser atas 173 field `ID :`
+         SESUDAH edit mengonfirmasi kedua sum = 173 (V1 sesi ini). Tidak ada
+         kode yang diubah — register dokumentasi saja. Tidak commit (R10).]
      [Perubahan 2026-10-08 sesi E2E demo (BLOK 1E, lanjutan) — TD-178 (BACKEND
      / FITUR — tidak ada endpoint admin approve merchant `PATCH
      /api/v1/admin/merchants/:id/status` atau setara; merchant register →
@@ -8544,6 +8631,25 @@ CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1E-1 + 1E-2):
 - BLOK 1E-2 BLOCKED: merchant status = PENDING_VERIFICATION → MERCHANT_INACTIVE di order creation. Admin approve endpoint missing.
 - TD-178 log BARU (admin merchant approve endpoint).
 - FIXED 63 tetap, OPEN 56 → 57, SEDANG 89 → 90, TOTAL 171 → 172.
+========================================================================
+CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1E-3):
+- Food flow 4-way settlement verified end-to-end (WAITING→CONFIRMED→PREPARING→READY→ACCEPT→PICKED_UP→IN_TRANSIT→DELIVERED→SETTLED).
+- Balances exact: DRV +18000 (90% delivery), MER +42500 (items-15%), platform 9500 (7500+2000).
+- Ledger balanced: FOOD_ESCROW 70000=70000, FOOD_SETTLEMENT 70000=70000.
+- TD-179 log BARU (path inconsistency food vs ride).
+- FIXED 63 tetap, OPEN 57→58, SEDANG 90→91, TOTAL 172→173.
+
+[OVERRIDE-1] Prompt salah: "API_CONTRACT.txt §8.4" (Bukti d).
+Kenyataan (bukti file:line): file-nya docs/API CONTRACT.txt (spasi, tanpa
+underscore) — baris 955-958 §8.4 = "PATCH /food-orders/{order_id}/status";
+find . -iname "*API_CONTRACT*" = 0 hasil.
+Fix: penamaan di TD-179 + catatan §3 ditulis "docs/API CONTRACT.txt §8.4".
+Alignment: TEAM_CONTRACT R3 / Section 11.2 (koreksi faktual, in-scope).
+[BUKTI-V] Bukti (e) prompt "[PERLU VERIFIKASI] apakah 3 mobile apps ..." sudah
+di-verify grep 2026-10-08: customer food_order_service.dart:54-59, driver
+order_service.dart:164-169, merchant order_service.dart:39 — ketiganya
+`PATCH /api/v1/food-orders/$orderId` (TANPA /status); admin_web 0 hasil.
+Semua bukti (a)-(f) di TD-179 diambil dari grep/sed langsung, bukan asumsi.
 ========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
