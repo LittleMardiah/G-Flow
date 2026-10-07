@@ -546,6 +546,50 @@ func TestHandler_GetRide_DriverAssigned_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// TestHandler_GetRide_PlatformCommission Memverifikasi GET /rides/{id}
+// memuat kunci platform_commission yang ikut terisi (konsisten dengan
+// driver_earning) — regression E2E: platform_commission pernah null.
+func TestHandler_GetRide_PlatformCommission(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+svcOrderID.String(), nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	commission := decimal.RequireFromString("9835.2")
+	earning := decimal.RequireFromString("39340.8")
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	order.PlatformCommission = &commission
+	order.DriverEarning = &earning
+
+	svc := new(mockRideService)
+	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+
+	h := NewHandler(svc)
+	h.GetRide(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Kunci "platform_commission" HARUS ada di body JSON dan terisi.
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	data, ok := raw["data"].(map[string]any)
+	require.True(t, ok)
+	val, present := data["platform_commission"]
+	require.True(t, present, "kunci platform_commission harus ada di response")
+	require.NotNil(t, val, "platform_commission tidak boleh null")
+	assert.Equal(t, "9835.2", val)
+
+	var out struct {
+		Data rideDetailResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.NotNil(t, out.Data.PlatformCommission)
+	assert.True(t, out.Data.PlatformCommission.Equal(commission))
+	require.NotNil(t, out.Data.DriverEarning)
+	assert.True(t, out.Data.DriverEarning.Equal(earning))
+	svc.AssertExpectations(t)
+}
+
 // ---- TD-113: response GET /rides/{id} memuat object "driver" ----
 
 // TestHandler_GetRide_WithDriver Memverifikasi body JSON memuat object

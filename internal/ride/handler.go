@@ -273,6 +273,7 @@ type rideDetailResponse struct {
 	EstimatedFare      decimal.Decimal     `json:"estimated_fare"`
 	ActualFare         *decimal.Decimal    `json:"actual_fare"`
 	DriverEarning      *decimal.Decimal    `json:"driver_earning"`
+	PlatformCommission *decimal.Decimal    `json:"platform_commission"`
 	DiscountAmount     *decimal.Decimal    `json:"discount_amount"`
 	PaymentMethod      string              `json:"payment_method"`
 	CancellationReason *string             `json:"cancellation_reason"`
@@ -345,6 +346,7 @@ func (h *Handler) GetRide(c *gin.Context) {
 			EstimatedFare:      order.EstimatedFare,
 			ActualFare:         order.ActualFare,
 			DriverEarning:      order.DriverEarning,
+			PlatformCommission: order.PlatformCommission,
 			DiscountAmount:     order.DiscountAmount,
 			PaymentMethod:      order.PaymentMethod,
 			CancellationReason: order.CancellationReason,
