@@ -21,6 +21,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/g-flow/g-flow/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -36,7 +37,7 @@ const (
 	WalletTypeSystemBankGateway = "SYSTEM_BANK_GATEWAY"
 	WalletTypeSystemPlatform    = "SYSTEM_PLATFORM"
 
-	WalletStatusActive   = "ACTIVE"
+	WalletStatusActive    = "ACTIVE"
 	WalletStatusSuspended = "SUSPENDED"
 	WalletStatusFrozen    = "FROZEN"
 
@@ -488,7 +489,12 @@ func (s *Service) Transfer(ctx context.Context, req TransferRequest) (*TransferR
 // Idempotent: jika tidak ada baris PENDING yang cocok (misal sudah COMPLETED),
 // log warning dan return nil.
 func (s *Service) ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error {
-	return s.markTopUpCompleted(ctx, s.db, txnID)
+	// TD-091: wrap dengan retry transient (ROADMAP 04 §4.3.2).
+	// Idempotent: markTopUpCompleted pakai CAS status='PENDING' + RowsAffected guard.
+	// Error 55P03 (lock timeout) TIDAK transient → fail-fast (IsTransient handle).
+	return db.ProcessWithRetry(ctx, func(retryCtx context.Context) error {
+		return s.markTopUpCompleted(retryCtx, s.db, txnID)
+	}, true)
 }
 
 // GetBalance mengembalikan saldo wallet milik user yang terautentikasi.

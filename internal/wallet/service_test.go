@@ -1442,3 +1442,75 @@ func TestService_GetWalletHistory_InvalidPagination(t *testing.T) {
 	repo.AssertNotCalled(t, "ListLedgerEntries", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
+
+// ---- Test Service: ProcessTopUpWebhook — TD-091 retry ----
+
+// countingDB menghitung jumlah pemanggilan Exec untuk assert retry behavior.
+type countingDB struct {
+	DB
+	execCalls int
+}
+
+func (c *countingDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	c.execCalls++
+	return c.DB.Exec(ctx, sql, args...)
+}
+
+// TestProcessTopUpWebhook_RetryOnTransient: attempt 1 gagal transient
+// (SQLSTATE 40001 serialization failure) -> ProcessWithRetry mencoba ulang;
+// attempt 2 sukses (RowsAffected=1). Assert: tepat 2 panggilan Exec, return nil.
+func TestProcessTopUpWebhook_RetryOnTransient(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	cdb := &countingDB{DB: mDB}
+	svc := NewService(repo, lgr, nil, cdb)
+
+	txnID := uuid.New()
+	// Attempt 1: transient error -> wajib retry.
+	mDB.ExpectExec("UPDATE topup_transactions").
+		WithArgs(txnID).
+		WillReturnError(&pgconn.PgError{Code: "40001", Message: "serialization failure"})
+	// Attempt 2: CAS update sukses (1 baris PENDING -> COMPLETED).
+	mDB.ExpectExec("UPDATE topup_transactions").
+		WithArgs(txnID).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	err = svc.ProcessTopUpWebhook(context.Background(), txnID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, cdb.execCalls, "harus retry tepat 1x (total 2 Exec)")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+	repo.AssertNotCalled(t, "GetBalance")
+}
+
+// TestProcessTopUpWebhook_NoRetryOnNonTransient: attempt 1 gagal NON-transient
+// (SQLSTATE 23505 unique violation) -> fail-fast tanpa retry.
+// Assert: tepat 1 panggilan Exec, return error ber-code 23505.
+func TestProcessTopUpWebhook_NoRetryOnNonTransient(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	cdb := &countingDB{DB: mDB}
+	svc := NewService(repo, lgr, nil, cdb)
+
+	txnID := uuid.New()
+	mDB.ExpectExec("UPDATE topup_transactions").
+		WithArgs(txnID).
+		WillReturnError(&pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"})
+
+	err = svc.ProcessTopUpWebhook(context.Background(), txnID)
+
+	assert.Error(t, err)
+	assert.Equal(t, 1, cdb.execCalls, "error non-transient TIDAK boleh di-retry")
+	var pgErr *pgconn.PgError
+	if assert.ErrorAs(t, err, &pgErr) {
+		assert.Equal(t, "23505", pgErr.Code)
+	}
+	assert.NoError(t, mDB.ExpectationsWereMet())
+	repo.AssertNotCalled(t, "GetBalance")
+}
