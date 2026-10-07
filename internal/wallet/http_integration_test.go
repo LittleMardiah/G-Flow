@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func setupHTTPRouter(t *testing.T) (*gin.Engine, *tg) {
 	t.Helper()
 	pool := setupPool(t)
 
-	rdb, err := redis.ParseURL("redis://localhost:6380/0")
+	rdb, err := redis.ParseURL(testRedisURL())
 	require.NoError(t, err)
 	rd := redis.NewClient(rdb)
 	t.Cleanup(func() { _ = rd.Close() })
@@ -158,7 +159,7 @@ func TestWalletTopUp_Success(t *testing.T) {
 	require.True(t, bal0.IsZero(), "balance awal = %v", bal0)
 
 	resp := wDoJSON(r, http.MethodPost, "/api/v1/wallets/"+walletID.String()+"/topup", gin.H{
-		"amount":         "100000",
+		"amount":          "100000",
 		"idempotency_key": uuid.New().String(),
 	}, token)
 	if resp.Code != http.StatusOK {
@@ -180,7 +181,7 @@ func TestWalletTransfer_Success(t *testing.T) {
 
 	// Topup dulu wallet sumber.
 	resp := wDoJSON(r, http.MethodPost, "/api/v1/wallets/"+fromWalletID.String()+"/topup", gin.H{
-		"amount":         "200000",
+		"amount":          "200000",
 		"idempotency_key": uuid.New().String(),
 	}, tokenFrom)
 	if resp.Code != http.StatusOK {
@@ -189,8 +190,8 @@ func TestWalletTransfer_Success(t *testing.T) {
 
 	// Transfer 50000 ke wallet tujuan.
 	resp = wDoJSON(r, http.MethodPost, "/api/v1/wallets/"+fromWalletID.String()+"/transfer", gin.H{
-		"to_wallet_id":   toWalletID.String(),
-		"amount":         "50000",
+		"to_wallet_id":    toWalletID.String(),
+		"amount":          "50000",
 		"idempotency_key": uuid.New().String(),
 		"description":     "integration-http-transfer",
 	}, tokenFrom)
@@ -214,7 +215,7 @@ func TestWalletTopUp_Unauthorized(t *testing.T) {
 
 	// Tanpa token -> middleware auth menolak sebelum handler.
 	resp := wDoJSON(r, http.MethodPost, "/api/v1/wallets/"+walletID.String()+"/topup", gin.H{
-		"amount":         "100000",
+		"amount":          "100000",
 		"idempotency_key": uuid.New().String(),
 	}, "")
 	if resp.Code != http.StatusUnauthorized {
@@ -423,4 +424,14 @@ func TestWalletTopUp_MissingIdempotency(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d (%s)", w.Code, w.Body.String())
 	}
+}
+
+// testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
+// port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
+// dev lokal (Redis:6380) sama-sama jalan.
+func testRedisURL() string {
+	if url := os.Getenv("REDIS_URL"); url != "" {
+		return url
+	}
+	return "redis://localhost:6380/0"
 }

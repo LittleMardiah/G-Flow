@@ -90,7 +90,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	pool := setupPool(t)
 	gin.SetMode(gin.TestMode)
 
-	rdb, err := redis.ParseURL("redis://localhost:6380/0")
+	rdb, err := redis.ParseURL(testRedisURL())
 	require.NoError(t, err)
 	rd := redis.NewClient(rdb)
 	t.Cleanup(func() { _ = rd.Close() })
@@ -843,4 +843,14 @@ func TestIntegrationFood_TC_FOOD_006_MerchantRejectWalletRefund(t *testing.T) {
 	require.Equal(t, "WAITING", ms, "merchant_status tidak bisa CANCELLED (CHECK constraint)")
 
 	assertLedgerBalanced(t, e, ctx, orderID)
+}
+
+// testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
+// port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
+// dev lokal (Redis:6380) sama-sama jalan.
+func testRedisURL() string {
+	if url := os.Getenv("REDIS_URL"); url != "" {
+		return url
+	}
+	return "redis://localhost:6380/0"
 }

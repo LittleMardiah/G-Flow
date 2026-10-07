@@ -55,7 +55,7 @@ func setupTestConfig(t *testing.T) *testConfig {
 	}
 	t.Cleanup(func() { db.Close(pool) })
 
-	rdb, err := redis.ParseURL("redis://localhost:6380/0")
+	rdb, err := redis.ParseURL(testRedisURL())
 	if err != nil {
 		t.Fatalf("redis url parse: %v", err)
 	}
@@ -757,4 +757,14 @@ func TestAuthRegister_MerchantHasWallet_Integration(t *testing.T) {
 	if wMerchant.Code != http.StatusNotFound {
 		t.Fatalf("GET /wallets/me?type=MERCHANT harus 404 (wallet MERCHANT dibuat food service), got %d (%s)", wMerchant.Code, wMerchant.Body.String())
 	}
+}
+
+// testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
+// port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
+// dev lokal (Redis:6380) sama-sama jalan.
+func testRedisURL() string {
+	if url := os.Getenv("REDIS_URL"); url != "" {
+		return url
+	}
+	return "redis://localhost:6380/0"
 }
