@@ -63,7 +63,7 @@ func setupWorkerPool(t *testing.T) *pgxpool.Pool {
 // menyentuh Redis (lock Redis hanya dipakai di sweepOnce/Run).
 func newIntegrationWorker(t *testing.T, pool *pgxpool.Pool) *Worker {
 	t.Helper()
-	rdb, err := redis.ParseURL("redis://localhost:6380/0")
+	rdb, err := redis.ParseURL(testRedisURL())
 	require.NoError(t, err)
 	rd := redis.NewClient(rdb)
 	t.Cleanup(func() { _ = rd.Close() })
@@ -240,4 +240,14 @@ func TestIntegrationWorker_AutoCancelRideExpiredIdempotent(t *testing.T) {
 		SELECT count(*) FROM ledger_entries
 		WHERE reference_id = $1 AND reference_type = 'RIDE_REFUND'`, orderID).Scan(&refunds))
 	require.Equal(t, 2, refunds, "tepat 2 entri RIDE_REFUND (1 DEBIT escrow + 1 CREDIT customer)")
+}
+
+// testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
+// port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
+// dev lokal (Redis:6380) sama-sama jalan.
+func testRedisURL() string {
+	if url := os.Getenv("REDIS_URL"); url != "" {
+		return url
+	}
+	return "redis://localhost:6380/0"
 }

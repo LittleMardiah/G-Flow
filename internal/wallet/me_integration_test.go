@@ -41,7 +41,7 @@ func setupMeRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	pool := setupPool(t)
 
-	rdb, err := redis.ParseURL("redis://localhost:6380/0")
+	rdb, err := redis.ParseURL(testRedisURL())
 	require.NoError(t, err)
 	rd := redis.NewClient(rdb)
 	t.Cleanup(func() { _ = rd.Close() })
