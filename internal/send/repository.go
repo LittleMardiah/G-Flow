@@ -333,13 +333,14 @@ func (r *Repository) MarkSendOrderDelivered(ctx context.Context, q Querier, orde
 
 // MarkSendOrderSettled menandai send order SETTLED + is_settled + settled_at
 // (Task 3.6.4 — dipanggil SETELAH settlement ledger berhasil dalam transaksi).
-// CAS guard status DELIVERED.
-func (r *Repository) MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error {
+// CAS guard status DELIVERED. Persist driver_earning + platform_commission (non-NULL).
+func (r *Repository) MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID, driverEarning, platformCommission decimal.Decimal) error {
 	_, err := q.Exec(ctx, `
 		UPDATE send_orders
-		SET status = 'SETTLED', is_settled = TRUE, settled_at = NOW(), updated_at = NOW()
+		SET status = 'SETTLED', is_settled = TRUE, settled_at = NOW(), updated_at = NOW(),
+		    driver_earning = $2, platform_commission = $3
 		WHERE id = $1 AND status = 'DELIVERED'
-	`, orderID)
+	`, orderID, driverEarning, platformCommission)
 	return err
 }
 

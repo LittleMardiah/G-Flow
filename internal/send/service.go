@@ -183,7 +183,7 @@ type Repo interface {
 	UpdateDriverWorkingStatus(ctx context.Context, q Querier, driverID uuid.UUID, status string) error
 	MarkDriverSuspended(ctx context.Context, q Querier, driverID uuid.UUID) error
 	MarkSendOrderDelivered(ctx context.Context, q Querier, orderID uuid.UUID) (bool, error)
-	MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
+	MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID, driverEarning, platformCommission decimal.Decimal) error
 	GetSendOrderStopsByOrderID(ctx context.Context, q Querier, orderID uuid.UUID) ([]*SendOrderStop, error)
 	UpdateSendOrderStopStatus(ctx context.Context, q Querier, stopID uuid.UUID, status string, proof *string) (bool, error)
 }
@@ -1252,7 +1252,7 @@ func (s *Service) settleSendOrderTx(ctx context.Context, tx pgx.Tx, order *SendO
 		return ErrInvalidPaymentMethod
 	}
 
-	if err := s.repo.MarkSendOrderSettled(ctx, tx, order.ID); err != nil {
+	if err := s.repo.MarkSendOrderSettled(ctx, tx, order.ID, earning, commission); err != nil {
 		return err
 	}
 

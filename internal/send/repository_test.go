@@ -273,15 +273,16 @@ func TestRepo_MarkSendOrderDelivered(t *testing.T) {
 
 func TestRepo_MarkSendOrderSettled(t *testing.T) {
 	r, mDB := newSendRepo(t)
-	mDB.ExpectExec("SET status = 'SETTLED'").
-		WithArgs(fOrderID).
+	decZero := decimal.Zero
+	mDB.ExpectExec("driver_earning").
+		WithArgs(fOrderID, decZero, decZero).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
-	err := r.MarkSendOrderSettled(context.Background(), mDB, fOrderID)
+	err := r.MarkSendOrderSettled(context.Background(), mDB, fOrderID, decZero, decZero)
 	assert.NoError(t, err)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 
-	mDB.ExpectExec("SET status = 'SETTLED'").WithArgs(fOrderID).WillReturnError(errors.New("db down"))
-	err = r.MarkSendOrderSettled(context.Background(), mDB, fOrderID)
+	mDB.ExpectExec("driver_earning").WithArgs(fOrderID, decZero, decZero).WillReturnError(errors.New("db down"))
+	err = r.MarkSendOrderSettled(context.Background(), mDB, fOrderID, decZero, decZero)
 	assert.Error(t, err)
 }
 

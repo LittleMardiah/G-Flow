@@ -151,8 +151,8 @@ func (m *mockRepo) MarkSendOrderDelivered(ctx context.Context, q Querier, orderI
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *mockRepo) MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID) error {
-	args := m.Called(ctx, q, orderID)
+func (m *mockRepo) MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID, driverEarning, platformCommission decimal.Decimal) error {
+	args := m.Called(ctx, q, orderID, driverEarning, platformCommission)
 	return args.Error(0)
 }
 
@@ -645,7 +645,7 @@ func Test_settleSendOrderTx_CashSuspended(t *testing.T) {
 		WithArgs(fDriverWID).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(-60000)))
 	repo.On("MarkDriverSuspended", mock.Anything, mock.Anything, fDriverID).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	svc := NewService(repo, mDB, nil, lgr)
@@ -693,7 +693,7 @@ func Test_settleSendOrderTx_CashIdle(t *testing.T) {
 		WithArgs(fDriverWID).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(-1000)))
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	svc := NewService(repo, mDB, nil, lgr)
@@ -795,12 +795,42 @@ func Test_settleSendOrderTx_WalletSuccess(t *testing.T) {
 	sendLockWallets(mDB, "SELECT 3")
 	lgr.On("CreateLedgerEntries", mock.Anything, mock.Anything, mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	svc := NewService(repo, mDB, nil, lgr)
 	err = svc.settleSendOrderTx(context.Background(), tx, order)
 	assert.NoError(t, err)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func Test_settleSendOrderTx_PersistEarningAndCommission(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	tx := sendBeginTx(t, mDB)
+
+	order := fSendOrder(sendStatusDelivered, PaymentMethodWallet, &fDriverID)
+	// total_fare 48336 → commission = 48336 * 0.10 = 4833.6, earning = 43502.4
+	expCommission := order.TotalFare.Mul(sendPlatformCommissionRate).Round(2)
+	expEarning := order.TotalFare.Sub(expCommission).Round(2)
+	require.True(t, expCommission.Equal(decimal.RequireFromString("4833.6")), "commission=%s", expCommission)
+	require.True(t, expEarning.Equal(decimal.RequireFromString("43502.4")), "earning=%s", expEarning)
+	require.True(t, expEarning.Add(expCommission).Equal(order.TotalFare))
+	repo.On("GetWalletByUserAndType", mock.Anything, fDriverID, walletTypeDriver).Return(fSendDriverWallet(decimal.Zero), nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, walletTypeSystemPlatform).Return(fPlatformID, nil)
+	repo.On("SystemWalletID", mock.Anything, mock.Anything, walletTypeSystemEscrow).Return(fEscrowID, nil)
+	sendLockWallets(mDB, "SELECT 3")
+	lgr.On("CreateLedgerEntries", mock.Anything, mock.Anything, mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
+	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, expEarning, expCommission).Return(nil)
+	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	svc := NewService(repo, mDB, nil, lgr)
+	err = svc.settleSendOrderTx(context.Background(), tx, order)
+	assert.NoError(t, err)
+	repo.AssertCalled(t, "MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, expEarning, expCommission)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
@@ -820,7 +850,7 @@ func Test_settleSendOrderTx_MarkSettledError(t *testing.T) {
 		WithArgs(fDriverWID).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.Zero))
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(pgx.ErrNoRows)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, lgr)
 	err = svc.settleSendOrderTx(context.Background(), tx, order)
@@ -844,7 +874,7 @@ func Test_settleSendOrderTx_EventError(t *testing.T) {
 		WithArgs(fDriverWID).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.Zero))
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, lgr)
@@ -2221,7 +2251,7 @@ func TestUpdateSendOrderStatus_DeliverSuccessCash(t *testing.T) {
 		WithArgs(fDriverWID).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.Zero))
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	mDB.ExpectCommit()
 
 	svc := NewService(repo, mDB, nil, lgr)
@@ -2445,7 +2475,7 @@ func TestUpdateSendOrderStop_AutoDeliverSuccess(t *testing.T) {
 	sendLockWallets(mDB, "SELECT 3")
 	lgr.On("CreateLedgerEntries", mock.Anything, mock.Anything, mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
-	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID).Return(nil)
+	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	mDB.ExpectCommit()
 
 	svc := NewService(repo, mDB, nil, lgr)

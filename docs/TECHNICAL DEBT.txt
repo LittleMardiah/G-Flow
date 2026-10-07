@@ -4304,11 +4304,13 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), ROADMAP 04
 ID         : TD-179
 Kategori   : KODE / KONSISTENSI
 Judul      : Path PATCH status tidak konsisten antar modul: food = `PATCH
-             /food-orders/:id` (main.go:260, tanpa `/status`), ride = `PATCH
-             /rides/:order_id/status` (main.go:194, dengan `/status`).
-             API CONTRACT §8.4 spec = `/food-orders/{order_id}/status`.
-Dampak     : (1) Consumer baru (mobile, integrasi pihak ketiga) harus tahu 2
-             convention → friksi onboarding. (2) API CONTRACT LOCKED tapi kode
+             /food-orders/:id` (main.go:260), send = `PATCH /send-orders/:id`
+             (main.go:273) — SAMA, tanpa `/status`; ride = `PATCH
+             /rides/:order_id/status` (main.go:194) — DENGAN `/status`. Ride
+             outlier. API CONTRACT §8.4 spec = `/food-orders/{order_id}/status`.
+Dampak     : (1) Consumer baru (mobile, integrasi pihak ketiga) harus tahu
+             2 modul (food+send) konsisten vs 1 outlier (ride) → friksi
+             onboarding. (2) API CONTRACT LOCKED tapi kode
              beda → R2 violation (dokumen harus ikut kode ATAU kode fix).
              (3) E2E 2026-10-08 1E-3 awalnya 404 karena asumsi path sama
              dengan ride.
@@ -4327,18 +4329,23 @@ Bukti      : (a) E2E 2026-10-08 BLOK 1E-3: `PATCH /food-orders/$ID/status` →
              apps/merchant_app/lib/services/order_service.dart:39. TIDAK ada
              pemakaian `/food-orders/:id/status` di apps/ maupun admin_web
              (grep `food-orders` × *.ts/*.tsx = 0). (f) Modul ke-3 (G-Send)
-             juga `/:id`: cmd/api/main.go:274 `sendOrders.PATCH("/:id", ...)`
+             juga `/:id`: cmd/api/main.go:273 `sendOrders.PATCH("/:id", ...)`
              tapi docs/API CONTRACT.txt (baris 1129) spec =
              `/send-orders/{order_id}/status` → 2 dari 3 module (food, send)
              code/doc mismatch; ride satu-satunya yang match contract.
-Solusi     : Pilih satu convention. Rekomendasi prompt: `/status` (align ride +
-             API CONTRACT §8.4). Tapi bukti (e): ketiga mobile apps sudah pakai
-             `/:id` → fix kode = breaking change untuk SEMUA app → butuh
-             backward-compat window (dukung kedua path 1-2 rilis, lalu
-             deprecate). Alternatif B (zero mobile break, align R2 "kode =
-             source of truth"): fix dokumen — ubah API CONTRACT §8.4 (+
-             §send, §ride) ke path kode. Keduanya butuh keputusan User: kode
-             atau dokumen yang di-fix. Jangan fix tanpa keputusan (R9).
+Solusi     : Pilih satu convention. Rekomendasi (diperbarui 2026-10-08):
+             (A) align ride ke food/send — hapus `/status` dari
+             `PATCH /rides/:order_id/status` (kode = source of truth, R2;
+             food+send 2 modul sudah `/:id`); ATAU (B) align food+send ke
+             ride — tambah `/status`. Rekomendasi utama: (A) align ride ke
+             food/send (hapus `/status`), karena 2 dari 3 module + ketiga
+             mobile apps sudah `/:id` (bukti e). API CONTRACT §8-9 (food,
+             send, ride) WAJIB di-sync ke keputusan final. Keduanya butuh
+             keputusan User: kode atau dokumen yang di-fix. Jangan fix tanpa
+             keputusan (R9).
+Note       : Update 2026-10-08 (E2E BLOK 1F-2): send juga
+             `PATCH /send-orders/:id` — konsisten dengan food. Scope: 2
+             modul (food+send) vs 1 outlier (ride).
 Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
