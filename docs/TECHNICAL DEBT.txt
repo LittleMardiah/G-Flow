@@ -4242,12 +4242,39 @@ Prioritas  : SEDANG
 Status     : OPEN
 Referensi  : TD-091 (infra sudah siap), ROADMAP 04 §4.3.2 / ADR-006 (spec)
 
+ID         : TD-177
+Kategori   : BACKEND / FITUR
+Judul      : Tidak ada endpoint global `GET /admin/ledger/verify` (tanpa wallet_id)
+             untuk admin dashboard menampilkan "BALANCED ✅" runtime.
+Dampak     : (1) Admin tidak bisa verify global ledger integrity via API — harus
+             direct DB query (tidak scalable). (2) E2E verify 2026-10-08 salah
+             lapor imbalance karena pakai `?limit=100` (partial page cut mid-pair
+             DEBIT/CREDIT) — tanpa endpoint global, artifact ini akan terus
+             menipu. (3) PRD Success Metric "Ledger Balance Discrepancy: Rp 0"
+             hanya bisa divalidasi manual, bukan otomatis di dashboard.
+Bukti      : (a) E2E 2026-10-08 BLOK 1D-3: API `GET /admin/ledger?limit=100` sum
+             DEBIT=5,125,817.6 CREDIT=4,625,817.6, diff=500,000 — FALSE POSITIVE.
+             (b) Direct DB `SELECT SUM(CASE WHEN entry_type='DEBIT'...) - SUM(CASE
+             WHEN entry_type='CREDIT'...)` = `0.00` (verified, 5809 entries total).
+             (c) `GET /admin/ledger/verify/:wallet_id` exists (per-wallet) tapi
+             tidak ada `/admin/ledger/verify` (global). (d) Incomplete-pair query
+             `HAVING debit_sum != credit_sum` = 0 rows — semua reference_id
+             balanced.
+Solusi     : Tambah handler `GET /admin/ledger/verify` (global) mirror per-wallet:
+             response `{total_debit, total_credit, diff, is_balanced,
+             checked_at}`. Repository query direct DB SUM tanpa limit. + test.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : E2E verify 2026-10-08 (temuan di luar scope demo prep, R8), TD-091
+             (tidak terkait, hanya contoh referensi), PRD Success Metric "Ledger
+             Balance Discrepancy: Rp 0"
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 170 item (TD-051 di-reserve/skip)
-                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 55 OPEN = 170)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 171 item (TD-051 di-reserve/skip)
+                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 56 OPEN = 171)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4305,7 +4332,13 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 170 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 88 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176)
+- SEDANG  : 89 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177)
+           [89 pada 2026-10-08 (sesi E2E demo prep): TD-177 entry BARU
+           (BACKEND / FITUR — endpoint global `GET /admin/ledger/verify` tanpa
+           wallet_id belum ada, `Prioritas : SEDANG`, `Status : OPEN`) →
+           bucket SEDANG 88 → 89 (+1). TIDAK ada entry yang ditutup di sesi
+           ini. Parser atas 171 field `ID :` SESUDAH edit: Prioritas
+           8 + 42 + 89 + 32 = 171 ✓ = Status 63 + 44 + 8 + 56 = 171 ✓.]
            [88 pada 2026-10-07 (sesi TD-091): TD-176 entry BARU
            (KODE/RELIABILITAS — wire ProcessWithRetry ke 3 settlement
            endpoint, `Prioritas : SEDANG`, `Status : OPEN`) → bucket SEDANG
@@ -4560,7 +4593,18 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 170 item (TD-051 di-reserve/skip)
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
 STATUS: ✅ FIXED 63 item, 44 item CLOSED (FIXED/CLOSED 107), 8 item DEFERRED,
-        55 item OPEN.  [63 + 44 + 8 + 55 = 170 = TOTAL]
+        56 item OPEN.  [63 + 44 + 8 + 56 = 171 = TOTAL]
+        [63/44/8/56 pada 2026-10-08 (sesi E2E demo prep — TD-177 entry baru):
+        TIDAK ada entry yang ditutup. TD-177 (BACKEND / FITUR — tidak ada
+        endpoint global `GET /admin/ledger/verify` tanpa wallet_id untuk
+        verifikasi integritas ledger global, `Prioritas : SEDANG`,
+        `Status : OPEN`) entry BARU → bucket Status OPEN 55 → 56 (+1) dan
+        bucket Prioritas SEDANG 88 → 89 (+1). Delta Status: FIXED 63, CLOSED 44
+        dan DEFERRED 8 tetap, OPEN 55 → 56, TOTAL 170 → 171. KONSISTEN:
+        63 + 44 + 8 + 56 = 171 = TOTAL dan 8 + 42 + 89 + 32 = 171 = TOTAL.
+        Parser atas 171 field `ID :` SESUDAH edit mengonfirmasi kedua sum = 171
+        (V1 sesi ini). Tidak ada kode yang diubah — register dokumentasi saja.
+        Tidak commit (R10).]
         [63/44/8/55 pada 2026-10-07 (sesi TD-091 close + TD-176 entry baru):
         TD-091 (KODE/RELIABILITAS — transient retry guard
         processWithRetry/isIdempotent) Status OPEN → ✅ FIXED (2026-10-07,
@@ -4766,8 +4810,8 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-07, sesi TD-091 + sesi TD-174 + sesi TD-167):
-   - Total hutang teridentifikasi      : 170 item (TD-051 di-reserve/skip; 170 item aktif terdaftar).
+3. RINGKASAN STATUS TERKINI (2026-10-08, sesi E2E demo prep — TD-177 entry baru):
+   - Total hutang teridentifikasi      : 171 item (TD-051 di-reserve/skip; 171 item aktif terdaftar).
    - ✅ FIXED                           : 63 item
    - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
@@ -4775,10 +4819,28 @@ REKOMENDASI:
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
    - FIXED/CLOSED                       : 107 item
    - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 55 item (bukan hanya TD-058 s/d TD-173, TD-175, TD-176 — masih ada
+   - ❌ OPEN                              : 56 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-177 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [63 + 44 + 8 + 55 = 170 = TOTAL]
+     [63 + 44 + 8 + 56 = 171 = TOTAL]
+     [Perubahan 2026-10-08 sesi E2E demo — TD-177 (BACKEND / FITUR — tidak ada
+     endpoint global `GET /admin/ledger/verify` tanpa wallet_id; admin hanya
+     bisa verify per-wallet via `GET /admin/ledger/verify/:wallet_id`, sehingga
+     verifikasi integritas ledger global harus lewat direct DB query) DITAMBAHKAN
+     sebagai entry BARU, `Prioritas : SEDANG`, `Status : OPEN` — hasil TEMUAN DI
+     LUAR SCOPE sesi E2E demo prep (R8, dicatat tidak diperbaiki).
+     (a) Konteks E2E 2026-10-08 BLOK 1D-3: `GET /admin/ledger?limit=100` sum
+         DEBIT=5,125,817.6 CREDIT=4,625,817.6, diff=500,000 → FALSE POSITIVE
+         (limit artifact: partial page terpotong di tengah pasangan
+         DEBIT/CREDIT). Direct DB SUM tanpa limit = diff 0.00 (5809 entries) →
+         ledger BALANCED, PRD metric "Ledger Balance Discrepancy: Rp 0" terpenuhi.
+     (b) Delta: OPEN 55 → 56 (+1 entry baru; TIDAK ada entry ditutup), TOTAL
+         170 → 171. FIXED 63, CLOSED 44, DEFERRED 8 TETAP. Bucket Prioritas:
+         SEDANG 88 → 89 (+1 TD-177); KRITIS 8, TINGGI 42, RENDAH 32 tetap
+         → 8 + 42 + 89 + 32 = 171 = TOTAL.
+     (c) KONSISTEN: 63 + 44 + 8 + 56 = 171 = TOTAL. Parser atas 171 field `ID :`
+         SESUDAH edit mengonfirmasi kedua sum = 171 (V1 sesi ini). Tidak ada kode
+         yang diubah — register dokumentasi saja. Tidak commit (R10).]
      [Perubahan 2026-10-07 sesi TD-091 — (a) TD-091 (KODE/RELIABILITAS —
      transient retry guard processWithRetry/isIdempotent) Status OPEN →
      ✅ FIXED (2026-10-07, sesi TD-091): internal/db/retry.go
@@ -8397,6 +8459,14 @@ CHANGELOG — 2026-10-07 (sesi TD-091, transient retry guard):
 - TD-176 log BARU (wire 3 settlement endpoint — blocked by idempotency-key).
 - FIXED 62→63, OPEN 55 TETAP, TOTAL 169→170.
 ===========================================================================
+========================================================================
+CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1A-1D):
+- BLOK 1A-1D E2E verified: auth 4 role, wallet topup+idem, transfer P2P+idem, ride book+accept+settle+ledger.
+- Ledger BALANCED confirmed: direct DB SUM diff 0.00 (PRD metric met).
+- Fix: expose platform_commission di GET /rides/:id (commit 960f8a2).
+- TD-177 log BARU (global verify endpoint missing).
+- FIXED 63 tetap, OPEN 55 → 56 (+1 TD-177), TOTAL 170 → 171.
+========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
 =====
