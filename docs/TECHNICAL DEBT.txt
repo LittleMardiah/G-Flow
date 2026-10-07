@@ -1272,7 +1272,13 @@ Dampak     : Gagal transient (network/DB) di settlement/webhook tidak di-retry a
 Solusi     : Implementasi processWithRetry + isIdempotent guard (koordinasi TD-065).
 Estimasi   : 3-4 jam
 Prioritas  : TINGGI
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-07, sesi TD-091)
+Note       :
+             * Implementasi: internal/db/retry.go — ProcessWithRetry (3 attempts, 50ms exponential + jitter, per-attempt ctx timeout 3s) + IsTransient (SQLSTATE 08xxx/40001/40P01/53300/57Pxx + io.EOF + net.Error Timeout).
+             * Wire: ProcessTopUpWebhook (idempotent via CAS status='PENDING' + RowsAffected guard — aman retry-after-commit).
+             * Test: retry.go 42 subtest (100% per-func), wallet 2 test retry behavior (assert Exec count + ExpectationsWereMet).
+             * Bukti: commit a8927f2, CI run (post-push), semua job HIJAU (11 jobs, 5m59s).
+             * SCOPE REDUKSI: 3 settlement endpoint (UpdateRideStatus/UpdateFoodOrderStatus/UpdateSendOrderStatus) TIDAK diwire — handler tidak baca X-Idempotency-Key, struct request tanpa key field. Spec §4.3.2 "Mutations WITHOUT Idempotency-Key → FORBIDDEN" mencegah wire. Follow-up: TD-176.
 Referensi  : audit_r04.log (GAP-5; usulan TD-070)
 
 ID         : TD-092
@@ -4205,12 +4211,43 @@ Status     : OPEN
 Referensi  : TD-167 (temuan sesi ini, di luar scope fix), CI run
              37623565814 (7edae01) vs 37629375406 (984667e)
 
+ID         : TD-176
+Kategori   : KODE / RELIABILITAS
+Judul      : Wire db.ProcessWithRetry ke 3 settlement endpoint (UpdateRideStatus /
+             UpdateFoodOrderStatus / UpdateSendOrderStatus) — BLOCKED by missing
+             X-Idempotency-Key.
+Dampak     : Transient DB error (40001/40P01/08xxx) di 3 endpoint settlement
+             TIDAK di-retry → user lihat error "gagal" padahal server transient
+             hiccup. Infra retry (TD-091) sudah siap, tinggal adoption.
+Bukti      : (a) internal/ride/handler.go:194 `UpdateStatus` — TIDAK baca
+             `X-Idempotency-Key`.
+             (b) internal/ride/service.go:711 `UpdateRideStatusRequest` — field
+             hanya OrderID/UserID/Status/Reason/ActualFare (tidak ada
+             IdempotencyKey). Bandingkan `BookRide` (handler.go:68-115 baca
+             header, service.go:305/373/520 pakai L1 Redis + L2 PostgreSQL).
+             (c) internal/food/handler.go:876-883 — `X-Idempotency-Key` WAJIB
+             untuk driver accept (TD-078), tapi endpoint PATCH
+             /food-orders/:id/status TIDAK.
+             (d) Spec ROADMAP 04 §4.3.2 line 322-324: "Mutations WITHOUT
+             Idempotency-Key → ❌ FORBIDDEN".
+Solusi     : (1) Tambah `X-Idempotency-Key` requirement di 3 handler status
+             (mirror food/handler.go:876-883 pattern). (2) Tambah field
+             `IdempotencyKey` di struct request + wire L1+L2 idempotency di
+             service. (3) Setelah itu, wrap entry point masing-masing endpoint
+             dengan `db.ProcessWithRetry(ctx, fn, true)`. (4) Test:
+             retry-after-commit safe (CAS semua transition — CancelOrder WHERE
+             status=$2 AND is_settled=FALSE, CompleteOrder WHERE status=$2,
+             TransitionStatus WHERE status=$3).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-091 (infra sudah siap), ROADMAP 04 §4.3.2 / ADR-006 (spec)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 169 item (TD-051 di-reserve/skip)
-                                       (62 FIXED + 44 CLOSED + 8 DEFERRED + 55 OPEN = 169)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 170 item (TD-051 di-reserve/skip)
+                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 55 OPEN = 170)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4268,7 +4305,14 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 169 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 87 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175)
+- SEDANG  : 88 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176)
+           [88 pada 2026-10-07 (sesi TD-091): TD-176 entry BARU
+           (KODE/RELIABILITAS — wire ProcessWithRetry ke 3 settlement
+           endpoint, `Prioritas : SEDANG`, `Status : OPEN`) → bucket SEDANG
+           87 → 88 (+1). TD-091 close TIDAK menggeser bucket (yang bergerak
+           hanya Status OPEN → FIXED; `Prioritas : TINGGI`-nya tetap).
+           Parser atas 170 field `ID :` SESUDAH edit: Prioritas
+           8 + 42 + 88 + 32 = 170 ✓ = Status 63 + 44 + 8 + 55 = 170 ✓.]
            [87 pada 2026-10-07 (sesi TD-167): TD-175 entry BARU (CI / TESTING,
            `e2e-landing` FLAKY, `Prioritas : SEDANG`, `Status : OPEN`) →
            bucket ini 86 → 87 (+1).]
@@ -4515,8 +4559,29 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 169 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 62 item, 44 item CLOSED (FIXED/CLOSED 106), 8 item DEFERRED,
-        55 item OPEN.  [62 + 44 + 8 + 55 = 169 = TOTAL]
+STATUS: ✅ FIXED 63 item, 44 item CLOSED (FIXED/CLOSED 107), 8 item DEFERRED,
+        55 item OPEN.  [63 + 44 + 8 + 55 = 170 = TOTAL]
+        [63/44/8/55 pada 2026-10-07 (sesi TD-091 close + TD-176 entry baru):
+        TD-091 (KODE/RELIABILITAS — transient retry guard
+        processWithRetry/isIdempotent) Status OPEN → ✅ FIXED (2026-10-07,
+        sesi TD-091): internal/db/retry.go ProcessWithRetry (3 attempts, 50ms
+        exponential + jitter, per-attempt ctx 3s) + IsTransient (SQLSTATE
+        08xxx/40001/40P01/53300/57Pxx + io.EOF + net.Error Timeout), wire
+        ProcessTopUpWebhook (idempotent via CAS status='PENDING' + RowsAffected
+        guard), 42 subtest retry.go + 2 test wallet. SCOPE REDUKSI: 3
+        settlement endpoint (UpdateRideStatus/UpdateFoodOrderStatus/
+        UpdateSendOrderStatus) TIDAK diwire — handler tidak baca
+        X-Idempotency-Key, struct request tanpa key field; spec §4.3.2
+        "Mutations WITHOUT Idempotency-Key → FORBIDDEN" mencegah wire.
+        Follow-up: TD-176. TD-176 (KODE/RELIABILITAS — wire
+        ProcessWithRetry ke 3 settlement endpoint, BLOCKED by missing
+        X-Idempotency-Key) entry BARU `Prioritas : SEDANG`, `Status : OPEN` →
+        bucket SEDANG 87 → 88. Delta Status: FIXED 62 → 63, CLOSED 44 dan
+        DEFERRED 8 tetap, OPEN 55 TETAP (−1 TD-091 close saling meniadakan
+        dengan +1 TD-176 baru), TOTAL 169 → 170. KONSISTEN: 63 + 44 + 8 + 55
+        = 170 = TOTAL dan 8 + 42 + 88 + 32 = 170 = TOTAL. Parser atas 170
+        field `ID :` SESUDAH edit mengonfirmasi kedua sum = 170 (V1 sesi ini).
+        Bukti: commit a8927f2, CI HIJAU (11 jobs, 5m59s). Tidak commit (R10).]
         [62/44/8/55 pada 2026-10-07 (sesi TD-167 + TD-175 entry baru): TD-167
         (TESTING — pipeline tidak menjalankan test ber-tag `integration`)
         Status OPEN → ✅ FIXED (2026-10-07, sesi TD-167): job `go-integration`
@@ -4701,19 +4766,42 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-07, sesi TD-174 + sesi TD-167):
-   - Total hutang teridentifikasi      : 169 item (TD-051 di-reserve/skip; 169 item aktif terdaftar).
-   - ✅ FIXED                           : 62 item
+3. RINGKASAN STATUS TERKINI (2026-10-07, sesi TD-091 + sesi TD-174 + sesi TD-167):
+   - Total hutang teridentifikasi      : 170 item (TD-051 di-reserve/skip; 170 item aktif terdaftar).
+   - ✅ FIXED                           : 63 item
    - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
-   - FIXED/CLOSED                       : 106 item
+   - FIXED/CLOSED                       : 107 item
    - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 55 item (bukan hanya TD-058 s/d TD-173, TD-175 — masih ada
+   - ❌ OPEN                              : 55 item (bukan hanya TD-058 s/d TD-173, TD-175, TD-176 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [62 + 44 + 8 + 55 = 169 = TOTAL]
+     [63 + 44 + 8 + 55 = 170 = TOTAL]
+     [Perubahan 2026-10-07 sesi TD-091 — (a) TD-091 (KODE/RELIABILITAS —
+     transient retry guard processWithRetry/isIdempotent) Status OPEN →
+     ✅ FIXED (2026-10-07, sesi TD-091): internal/db/retry.go
+     ProcessWithRetry (3 attempts, 50ms exponential + jitter, per-attempt ctx
+     timeout 3s) + IsTransient (SQLSTATE 08xxx/40001/40P01/53300/57Pxx +
+     io.EOF + net.Error Timeout); wire ProcessTopUpWebhook (idempotent via
+     CAS status='PENDING' + RowsAffected guard — aman retry-after-commit);
+     42 subtest retry.go (100% per-func) + 2 test wallet. SCOPE REDUKSI:
+     3 settlement endpoint (UpdateRideStatus/UpdateFoodOrderStatus/
+     UpdateSendOrderStatus) TIDAK diwire — handler tidak baca
+     X-Idempotency-Key, struct request tanpa key field; spec §4.3.2
+     "Mutations WITHOUT Idempotency-Key → FORBIDDEN" mencegah wire (bukti:
+     internal/ride/handler.go:194, internal/ride/service.go:711,
+     internal/food/handler.go:876-883) → follow-up TD-176.
+     (b) TD-176 (KODE/RELIABILITAS — wire db.ProcessWithRetry ke 3
+     settlement endpoint, BLOCKED by missing X-Idempotency-Key) entry BARU
+     `Prioritas : SEDANG`, `Status : OPEN` → bucket SEDANG 87 → 88.
+     STATUS: FIXED 62→63, CLOSED 44 dan DEFERRED 8 tetap, OPEN 55 TETAP
+     (−1 TD-091 close saling meniadakan dengan +1 TD-176 baru), TOTAL
+     169→170. KONSISTEN: 63 + 44 + 8 + 55 = 170 = TOTAL dan
+     8 + 42 + 88 + 32 = 170 = TOTAL. Parser atas 170 field `ID :` SESUDAH
+     edit mengonfirmasi kedua sum = 170 (V1 sesi ini). Bukti: commit a8927f2,
+     CI HIJAU (11 jobs, 5m59s). Tidak commit (R10).]
      [Perubahan 2026-10-07 sesi TD-167 — (a) TD-167 (TESTING — pipeline GitHub
      Actions tidak menjalankan test ber-tag `integration`) Status OPEN →
      ✅ FIXED (2026-10-07, sesi TD-167): job `go-integration` di
@@ -8299,6 +8387,15 @@ CHANGELOG — 2026-10-07 (sesi TD-167, CI integration job):
 - TD-175 log BARU: e2e-landing flaky Turbopack.
 - Bukti CI HIJAU: run 984667e, 11 jobs, 4m52s.
 - FIXED 61→62, OPEN 55 TETAP (−1 TD-167 close +1 TD-175 baru saling meniadakan), TOTAL 168→169.
+===========================================================================
+CHANGELOG — 2026-10-07 (sesi TD-091, transient retry guard):
+- internal/db/retry.go (BARU): ProcessWithRetry (3 attempts, 50ms exponential + jitter, per-attempt ctx 3s) + IsTransient (SQLSTATE 08xxx/40001/40P01/53300/57Pxx + io.EOF + net.Error Timeout).
+- internal/db/retry_test.go (BARU): 42 subtest (7 ProcessWithRetry + 21 IsTransient + 14 isTransientSQLState), 100% per-func.
+- Wire ProcessTopUpWebhook (idempotent via CAS PENDING + RowsAffected): wrap dengan ProcessWithRetry(ctx, fn, true). 2 test baru (retry-on-transient 2 calls, no-retry-on-nontransient 1 call).
+- SCOPE REDUKSI: 3 settlement endpoint TIDAK diwire (missing X-Idempotency-Key di handler + struct). Follow-up: TD-176.
+- Commit a8927f2, CI HIJAU (11 jobs, 5m59s).
+- TD-176 log BARU (wire 3 settlement endpoint — blocked by idempotency-key).
+- FIXED 62→63, OPEN 55 TETAP, TOTAL 169→170.
 ===========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
