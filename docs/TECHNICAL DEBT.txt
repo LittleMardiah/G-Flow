@@ -4269,12 +4269,44 @@ Referensi  : E2E verify 2026-10-08 (temuan di luar scope demo prep, R8), TD-091
              (tidak terkait, hanya contoh referensi), PRD Success Metric "Ledger
              Balance Discrepancy: Rp 0"
 
+ID         : TD-178
+Kategori   : BACKEND / FITUR
+Judul      : Tidak ada endpoint admin approve merchant (`POST
+             /admin/merchants/:id/verify` atau setara). Merchant register →
+             PENDING_VERIFICATION → blocked forever sampai admin DB raw.
+Dampak     : (1) Onboarding merchant tidak end-to-end — merchant baru tidak
+             bisa transact sampai admin intervensi DB (bukan workflow
+             produksi). (2) E2E demo 2026-10-08 BLOK 1E-2 BLOCKED:
+             `MERCHANT_INACTIVE` saat create food order setelah register.
+             (3) Admin dashboard tidak bisa monitor pending merchants tanpa
+             endpoint. (4) Production blocker: kalau admin DB raw → privilege
+             bypass RLS + no audit trail (per ROADMAP §4.2.3 requires admin
+             action via API).
+Bukti      : (a) `grep -rn "ApproveMerchant\|VerifyMerchant\|merchant.*approve\|PENDING_VERIFICATION.*ACTIVE" internal/admin/*.go` = 0.
+             (b) cmd/api/main.go:286-295 — semua adminGroup endpoint =
+             dashboard, transaksi, ledger, users. Tidak ada merchant.
+             (c) `food_merchants.status` = 'PENDING_VERIFICATION' setelah
+             register (verified DB query). (d) Order creation gate `if
+             merchant.Status != 'ACTIVE'` return MERCHANT_INACTIVE (verified
+             E2E 2026-10-08 BLOK 1E-2). (e) ROADMAP 04 §4.2.3 "User Management"
+             + §4.2.4 "Transaction Reversal" sebagai referensi pattern admin
+             API.
+Solusi     : Tambah admin route `PATCH /api/v1/admin/merchants/:id/status` body
+             `{action: "verify"|"reject"|"suspend", reason?}` + handler +
+             service + repository + audit log (admin_actions). 2FA validation
+             (mirror reversal, TD-114/2FA pattern). Test.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), ROADMAP 04
+             §4.2.3 (admin user management pattern), FOOD_MERCHANTS.status
+             schema (migrations/005)
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 171 item (TD-051 di-reserve/skip)
-                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 56 OPEN = 171)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 172 item (TD-051 di-reserve/skip)
+                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 57 OPEN = 172)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4332,7 +4364,14 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 171 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 89 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177)
+- SEDANG  : 90 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177, TD-178)
+           [90 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E): TD-178 entry
+           BARU (BACKEND / FITUR — endpoint admin approve merchant `PATCH
+           /api/v1/admin/merchants/:id/status` tidak ada, merchant berhenti di
+           PENDING_VERIFICATION, `Prioritas : SEDANG`, `Status : OPEN`) →
+           bucket SEDANG 89 → 90 (+1). TIDAK ada entry yang ditutup di sesi
+           ini. Parser atas 172 field `ID :` SESUDAH edit: Prioritas
+           8 + 42 + 90 + 32 = 172 ✓ = Status 63 + 44 + 8 + 57 = 172 ✓.]
            [89 pada 2026-10-08 (sesi E2E demo prep): TD-177 entry BARU
            (BACKEND / FITUR — endpoint global `GET /admin/ledger/verify` tanpa
            wallet_id belum ada, `Prioritas : SEDANG`, `Status : OPEN`) →
@@ -4593,7 +4632,20 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 171 item (TD-051 di-reserve/skip)
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
 STATUS: ✅ FIXED 63 item, 44 item CLOSED (FIXED/CLOSED 107), 8 item DEFERRED,
-        56 item OPEN.  [63 + 44 + 8 + 56 = 171 = TOTAL]
+        57 item OPEN.  [63 + 44 + 8 + 57 = 172 = TOTAL]
+        [63/44/8/57 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E — TD-178
+        entry baru): TIDAK ada entry yang ditutup. TD-178 (BACKEND / FITUR —
+        tidak ada endpoint admin approve merchant
+        `PATCH /api/v1/admin/merchants/:id/status` atau setara; merchant
+        register → PENDING_VERIFICATION → order creation diblokir
+        MERCHANT_INACTIVE, `Prioritas : SEDANG`, `Status : OPEN`) entry BARU →
+        bucket Status OPEN 56 → 57 (+1) dan bucket Prioritas SEDANG 89 → 90
+        (+1). Delta Status: FIXED 63, CLOSED 44 dan DEFERRED 8 tetap, OPEN
+        56 → 57, TOTAL 171 → 172. KONSISTEN: 63 + 44 + 8 + 57 = 172 = TOTAL
+        dan 8 + 42 + 90 + 32 = 172 = TOTAL. Parser atas 172 field `ID :`
+        SESUDAH edit mengonfirmasi kedua sum = 172 (V1 sesi ini). Temuan di
+        luar scope sesi E2E demo prep (R8). Tidak ada kode yang diubah —
+        register dokumentasi saja. Tidak commit (R10).]
         [63/44/8/56 pada 2026-10-08 (sesi E2E demo prep — TD-177 entry baru):
         TIDAK ada entry yang ditutup. TD-177 (BACKEND / FITUR — tidak ada
         endpoint global `GET /admin/ledger/verify` tanpa wallet_id untuk
@@ -4810,8 +4862,8 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-08, sesi E2E demo prep — TD-177 entry baru):
-   - Total hutang teridentifikasi      : 171 item (TD-051 di-reserve/skip; 171 item aktif terdaftar).
+3. RINGKASAN STATUS TERKINI (2026-10-08, sesi E2E demo prep — TD-178 entry baru):
+   - Total hutang teridentifikasi      : 172 item (TD-051 di-reserve/skip; 172 item aktif terdaftar).
    - ✅ FIXED                           : 63 item
    - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
@@ -4819,10 +4871,30 @@ REKOMENDASI:
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
    - FIXED/CLOSED                       : 107 item
    - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 56 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-177 — masih ada
+   - ❌ OPEN                              : 57 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-178 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [63 + 44 + 8 + 56 = 171 = TOTAL]
+     [63 + 44 + 8 + 57 = 172 = TOTAL]
+     [Perubahan 2026-10-08 sesi E2E demo (BLOK 1E, lanjutan) — TD-178 (BACKEND
+     / FITUR — tidak ada endpoint admin approve merchant `PATCH
+     /api/v1/admin/merchants/:id/status` atau setara; merchant register →
+     PENDING_VERIFICATION → order creation diblokir `MERCHANT_INACTIVE`; admin
+     harus DB raw) DITAMBAHKAN sebagai entry BARU, `Prioritas : SEDANG`,
+     `Status : OPEN` — hasil TEMUAN DI LUAR SCOPE sesi E2E demo prep (R8,
+     dicatat tidak diperbaiki).
+     (a) Konteks E2E 2026-10-08 BLOK 1E-1 PASS (register merchant + auto
+         wallet + menu CRUD + item CRUD), BLOK 1E-2 BLOCKED: status merchant
+         `PENDING_VERIFICATION` → create food order return
+         `MERCHANT_INACTIVE`. cmd/api/main.go:286-295 adminGroup hanya
+         dashboard/transaksi/ledger/users; grep `ApproveMerchant` /
+         `VerifyMerchant` / `merchant.*approve` di internal/admin/*.go = 0.
+     (b) Delta: OPEN 56 → 57 (+1 entry baru; TIDAK ada entry ditutup), TOTAL
+         171 → 172. FIXED 63, CLOSED 44, DEFERRED 8 TETAP. Bucket Prioritas:
+         SEDANG 89 → 90 (+1 TD-178); KRITIS 8, TINGGI 42, RENDAH 32 tetap
+         → 8 + 42 + 90 + 32 = 172 = TOTAL.
+     (c) KONSISTEN: 63 + 44 + 8 + 57 = 172 = TOTAL. Parser atas 172 field `ID :`
+         SESUDAH edit mengonfirmasi kedua sum = 172 (V1 sesi ini). Tidak ada
+         kode yang diubah — register dokumentasi saja. Tidak commit (R10).]
      [Perubahan 2026-10-08 sesi E2E demo — TD-177 (BACKEND / FITUR — tidak ada
      endpoint global `GET /admin/ledger/verify` tanpa wallet_id; admin hanya
      bisa verify per-wallet via `GET /admin/ledger/verify/:wallet_id`, sehingga
@@ -8466,6 +8538,12 @@ CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1A-1D):
 - Fix: expose platform_commission di GET /rides/:id (commit 960f8a2).
 - TD-177 log BARU (global verify endpoint missing).
 - FIXED 63 tetap, OPEN 55 → 56 (+1 TD-177), TOTAL 170 → 171.
+========================================================================
+CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1E-1 + 1E-2):
+- BLOK 1E-1 PASS: merchant register (auto wallet), menu CRUD, item CRUD.
+- BLOK 1E-2 BLOCKED: merchant status = PENDING_VERIFICATION → MERCHANT_INACTIVE di order creation. Admin approve endpoint missing.
+- TD-178 log BARU (admin merchant approve endpoint).
+- FIXED 63 tetap, OPEN 56 → 57, SEDANG 89 → 90, TOTAL 171 → 172.
 ========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
