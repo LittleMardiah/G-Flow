@@ -395,21 +395,33 @@ Kategori   : INFRA
 Judul      : docker-compose.yml paksa `platform: linux/amd64`. Di ARM
              (Apple M-series), bakal emulasi lambat.
 Prioritas  : RENDAH
-Status     : OPEN (ga urgent untuk WSL x86_64)
+Status     : ✅ CLOSED (triage-v3 2026-10-04, ARM env concern, WSL x86_64 aman)
+Note       : Environment dev yang dipakai adalah WSL x86_64, bukan Apple
+             M-series / ARM, jadi `platform: linux/amd64` tidak memicu emulasi
+             lambat di alur kerja saat ini. Baru relevan kalau repo ini
+             dikembangkan dari mesin ARM.
 
 ID         : TD-033
 Kategori   : SECURITY
 Judul      : POSTGRES_PASSWORD `password` hardcoded di docker-compose.yml.
              OK untuk dev lokal, tapi jangan dipakai di production.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, deploy concern, user skip deployment)
+Note       : Keputusan Owner: backend belum di-deploy ke Render/Supabase, jadi
+             hardcoded `POSTGRES_PASSWORD` di docker-compose.yml belum jadi risiko
+             produksi - file itu hanya dipakai untuk dev lokal. Item INI TIDAK
+             HILANG, hanya ditunda; saat deploy dimulai, password wajib pindah ke
+             environment variable.
 
 ID         : TD-034
 Kategori   : INFRA
 Judul      : redis:7-alpine belum upgrade ke redis:7.4-alpine (latest).
              Minor, bukan blocker.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, trivial version bump)
+Note       : Version bump trivia redis:7-alpine -> redis:7.4-alpine. Bukan
+             blocker dan bukan security issue; tidak sebanding dengan effort
+             pull image + verifikasi ulang.
 
 ID         : TD-041
 Kategori   : DOKUMENTASI
@@ -427,7 +439,10 @@ Kategori   : KODE
 Judul      : AuthGuard belum redirect balik ke / kalau user sudah login
              buka /login. Low priority (UX improvement).
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, UX improvement non-blocker)
+Note       : UX improvement, bukan defect: login ulang saat sudah punya sesi tidak
+             me-redirect balik ke /. Tidak memblokir alur mana pun dan tidak ada
+             complaint user; masuk kategori polish.
 
 ID         : TD-043
 Kategori   : DOKUMENTASI
@@ -633,7 +648,11 @@ Judul      : Interface `UserActionResult` di apps/admin_web/src/lib/users.ts
              dideklarasi inline, sebaiknya dipindah ke types.ts (konsisten
              dengan tipe lain).
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, inline type 15 menit 0 demo impact)
+Note       : Pekerjaan ~15 menit dengan dampak demo nol. `UserActionResult` masih
+             inline di apps/admin_web/src/lib/users.ts:40 dan berfungsi normal -
+             ini soal penataan file, bukan correctness. Buka lagi kalau konsistensi
+             types.ts jadi bagian dari refactor yang lebih besar.
 
 ID         : TD-056
 Kategori   : KODE
@@ -653,7 +672,11 @@ Judul      : Bug reverse page crash "No QueryClient set" sudah diperbaiki
 Solusi     : Tambah unit/integration test untuk halaman reverse yang
              mensimulasikan render tanpa Providers di sekeliling hook.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, bug fixed, sisa regression test low-ROI)
+Note       : Bug-nya sudah fixed. Sisa pekerjaan hanya regression test dengan
+             ROI rendah - menambah coverage angka, bukan confidence (bukti di
+             Referensi: TD-077 A2, commit 6c9fabf). Buka lagi kalau query-nya
+             diubah (filter status/JOIN/subquery stop).
 
 -------------------------------------------------------------------------------
 E. INFRA / MIGRATION - Known limitations tooling migrasi database (PostgreSQL /
@@ -672,7 +695,15 @@ Solusi jangka panjang : Split jadi 2 file (010a_add_enum, 010b_create_tables)
                         ATAU buat custom migration runner yang pakai `--no-tx`
                         untuk file tertentu.
 Prioritas             : SEDANG
-Status                : OPEN
+Status                : ✅ CLOSED (triage-v3 2026-10-04, sudah dimitigasi + doc scripts/migrate.sh:72-73)
+Note                  : Sudah dimitigasi. Migration 010 di-apply via psql -f
+                        (scripts/migrate.sh:39-40) sehingga `ALTER TYPE ... ADD VALUE` tidak
+                        lagi berada di file yang sama dengan CREATE TABLE pemakainya.
+                        Batasan PostgreSQL-nya juga sudah didokumentasikan di
+                        scripts/migrate.sh:72-73 ("JANGAN jalankan dengan
+                        --single-transaction: nilai enum baru tidak boleh dipakai di
+                        transaksi yang sama dengan ALTER TYPE ADD VALUE"). Tidak ada
+                        workaround tambahan yang perlu dikerjakan.
 
 ID                    : TD-036
 Kategori              : INFRA
@@ -683,7 +714,12 @@ Judul                 : Migration 011 (`011_add_performance_indexes.up.sql`)
 Solusi sementara      : Apply manual via psql, force version 11.
 Solusi jangka panjang : Sama seperti TD-035 — custom migration runner.
 Prioritas             : SEDANG
-Status                : OPEN
+Status                : ✅ CLOSED (triage-v3 2026-10-04, premis tidak berlaku - psql -f autocommit)
+Note                  : PREMIS TIDAK BERLAKU. scripts/migrate.sh:42-43 apply migration 011
+                        lewat `psql ... -f migrations/011_add_performance_indexes.up.sql`.
+                        psql -f tidak membungkus file dalam transaction block, sehingga
+                        `CREATE INDEX CONCURRENTLY` aman dijalankan - batasan PostgreSQL
+                        yang jadi premis entry ini sudah otomatis terpenuhi oleh runner.
 
 ID                    : TD-037
 Kategori              : INFRA
@@ -695,7 +731,13 @@ Solusi jangka panjang : Bikin wrapper bash (scripts/migrate_with_psql.sh) yang
                         VALUE` dan apply via psql, atau migrate ke tool lain
                         (goose, atlas).
 Prioritas             : SEDANG
-Status                : OPEN
+Status                : ✅ CLOSED (triage-v3 2026-10-04, premis salah - repo pakai scripts/migrate.sh, bukan golang-migrate)
+Note                  : PREMIS SALAH. Repo tidak memakai golang-migrate sama sekali: grep
+                        `golang-migrate|migrate -path|cmd/migrate` di *.go, *.sh, *.yml dan
+                        Makefile = 0 hasil. Runner aktual scripts/migrate.sh memakai
+                        `psql $DATABASE_URL -v ON_ERROR_STOP=1 -f <file>` (19 pemanggilan),
+                        yang sudah autocommit per statement - jadi `--no-tx` yang dikeluh
+                        entry ini tidak pernah dipakai dan tidak ada wrapper yang perlu dibuat.
 
 ------------------------------------------------------------------------------
 F. AUDIT 2026-09-21 — GAP DARI 4 ROADMAP AUDIT (R01 WALLET AUTH, R02 RIDE
@@ -750,16 +792,16 @@ Referensi  : audit_r01.log (GAP list #1; usulan TD-060)
 
 ID         : TD-061
 Kategori   : BACKEND / AUTH
-Judul      : OTP flow (screen + POST /auth/verify-otp) belum ada; token refresh endpoint
-            & suspend-blacklist-all-tokens belum ada
-Dampak     : Verifikasi akun via OTP tidak jalan; refresh token tidak bisa dirotasi dan
-            semua token user tidak bisa di-blacklist saat suspend.
-Solusi     : Endpoint verify-otp/resend-otp + refresh token + blacklist-all-tokens user;
-            layar OTP di apps.
+Judul      : Refresh token endpoint /auth/refresh + OTP flow
+            (OTP dipisah TD-173 terkait, tapi di sini dipecah: blacklist-on-suspend
+            → TD-174)
+Dampak     : Refresh token tidak bisa dirotasi; OTP perlu keputusan (vendor).
+Solusi     : /auth/refresh (rotate) + scope suspend-blacklist terpisah ke TD-174.
 Estimasi   : 4-6 jam
 Prioritas  : TINGGI
-Status     : OPEN
-Referensi  : audit_r01.log (GAP list #3, #5; usulan TD-061)
+Status     : 🔵 DEFERRED (triage-v3 2026-10-04, OTP DROP - vendor SMS/email paid tier, user skip; refresh DEFER - butuh keputusan schema auth)
+Note       : Split triage-v3: blacklist-on-suspend → TD-174 (DO); refresh → DEFER; OTP → DROP.
+Referensi  : audit_r01.log (GAP list #3, #5; usulan TD-061), TD-174 (split triage-v3)
 
 ID         : TD-062
 Kategori   : TESTING
@@ -1084,7 +1126,12 @@ Solusi     : Endpoint CRUD item_option_groups/item_options + seed sample + migra
             data + TC.
 Estimasi   : 4-6 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, fitur tanpa demand, 0 route)
+Note       : Fitur tanpa demand. Tidak ada satu pun referensi `item_option` di
+             internal/ maupun cmd/ (0 file .go) - tabel item_option_groups /
+             item_options masih idle dan belum ada route-nya. Item 3.2b di roadmap
+             tidak dicentang; membangun CRUD untuk tabel yang belum dipakai hanya
+             menambah permukaan API tanpa consumer.
 Referensi  : audit_r03.log (GAP-5, 3.2b; usulan TD-063)
 
 ID         : TD-082
@@ -1146,7 +1193,11 @@ Dampak     : Dua sumber kebenaran bertabrakan; integrasi real app break meski TD
 Solusi     : Sync status TD-008 dengan kondisi aktual; selesaikan/rolling item TD-077.
 Estimasi   : 1-2 jam
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, fixed di 07634b0+6c9fabf)
+Note       : Fixed di 07634b0 (refactor(driver_app): unified /drivers/
+             available-orders & /drivers/orders) + 6c9fabf (feat(driver):
+             GET /drivers/orders active-orders list). Dampak TD-008 sudah
+             teratasi; app tidak lagi memakai path lama.
 Referensi  : audit_r03.log (GAP-10)
 
 ID         : TD-087
@@ -1283,15 +1334,15 @@ Referensi  : audit_r04.log (GAP-18; usulan TD-073)
 
 ID         : TD-095
 Kategori   : SECURITY / TESTING
-Judul      : Functional security test OWASP/BOLA/IDOR/PII masking/UU-PDP TIDAK ada;
-            gosec `-no-fail` (non-blocking); belum ada trivy/govulncheck/nancy
-Dampak     : Celah authorization (BOLA/IDOR) & kebocoran PII tidak teruji; scan
-            keamanan tidak membuat CI gagal.
-Solusi     : Functional security suite + jadikan gosec blocking + tambah trivy/
-            govulncheck/nancy di CI.
-Estimasi   : 6-10 jam
-Prioritas  : TINGGI
+Judul      : Security scan gosec -no-fail → blocking (ci.yml:112)
+Dampak     : Scan gosec tidak menjadikan CI blocking — `-no-fail` membuat
+             masalah keamanan tidak pernah menahan merge/production.
+Solusi     : Hapus `-no-fail` di .github/workflows/ci.yml → gosec jadi blocking
+             gate.
+Prioritas  : SEDANG
 Status     : OPEN
+Note       : Split triage-v3: functional OWASP/BOLA suite + trivy/govulncheck
+             DROP (fitur >8j non-blocker). Scope tinggal hapus -no-fail.
 Referensi  : audit_r04.log (GAP-13, GAP-20; usulan TD-074)
 
 ID         : TD-096
@@ -1370,7 +1421,13 @@ Dampak     : Regression UI end-to-end di device nyata tidak terdeteksi (berkaita
 Solusi     : integration_test package per app + CI (real device emulator).
 Estimasi   : 6-10 jam
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, folder integration_test tidak ada)
+Note       : Folder `integration_test` benar-benar tidak ada di app mana pun:
+             `ls -d apps/*/integration_test` = tidak ada hasil untuk customer,
+             driver, maupun merchant. Build 6-10 jam untuk suite real-device plus
+             CI job khusus tidak sepadan dengan gap yang ditutup, dan mengaitingkan
+             CI ke device/emulator adalah risk yang lebih besar daripada yang
+             dicegah. Buka lagi kalau ada roadmap device lab.
 Referensi  : audit_r04.log (GAP-12; usulan TD-079)
 
 ID         : TD-103
@@ -1573,7 +1630,10 @@ Dampak     : Test red pre-existing. Signal noise — developer baru
              bingung mana test legitimate fail vs noise.
 Solusi     : Fix test setup — pakai intercept Dio atau TestWidgetsFlutterBinding.ensureInitialized() + mock secure storage.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, fixed di commit e735568)
+Note       : Fixed di commit e735568 (feat(driver): GET /drivers/me profile API
+             + mobile wire). Entry ditutup sebagai stale - tidak ada pekerjaan
+             kode yang tertunda.
 Referensi  : TD-077 Step B (temuan OpenCode, pre-existing)
 
 ID         : TD-112
@@ -1729,7 +1789,12 @@ Dampak     : Mobile & consumer baru harus tahu convention beda per
 Solusi     : Unify ke header X-Idempotency-Key (backend wallet +
              mobile). Kalau ubah, perlu backward-compat window.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, duplikat TD-065)
+Note       : Duplikat TD-065 (HYGIENE / DOKUMENTASI - X-Idempotency-Key di BODY
+             bukan HEADER, inkonsisten dengan spek LOCKED). Keduanya menuntut
+             keputusan yang sama dari User: putuskan satu standar lalu sinkron
+             openapi/API CONTRACT/mobile. Kalau diputuskan di TD-065, entry ini
+             otomatis ikut - tidak perlu upkeep terpisah.
 Referensi  : TD-058 SS4 (override OpenCode)
 
 ID         : TD-119
@@ -2731,7 +2796,13 @@ Solusi     : internal/worker/integration_test.go dengan DB nyata — 4-5
              ...`, jadi file baru hanya terverifikasi lokal/CI job khusus,
              jangan dihitung sebagai regression gate.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v3 2026-10-04, pgxmock coverage cukup)
+Note       : Tutup sebagai keputusan ROI, BUKAN klaim coverage memadai. pgxmock
+             tidak mengeksekusi SQL (nama kolom, CHECK constraint dan rencana lock
+             tidak divalidasi) dan .github/workflows/ci.yml:79 hanya `go test
+             -short -race`, jadi integration test worker pun tidak akan jadi
+             regression gate di CI. Bukti di body entry ini tetap berlaku sebagai
+             catatan; integration test hanya bernilai kalau CI mulai menjalankannya.
 Referensi  : TD-106 (temuan OpenCode)
 
 ID         : TD-157
@@ -3849,8 +3920,8 @@ meng klaim dua domain (mobile customer + mobile driver) sekaligus.
 ID         : TD-171
 Kategori   : HYGIENE / DOKUMENTASI
 Judul      : Format `Status :` di TECHNICAL DEBT.txt TIDAK konsisten —
-             ada 68 varian string distinct untuk 164 entry (prompt awal
-             menyebut "56+"; hasil parser aktual = 68, jadi klaim itu
+             ada 86 varian string distinct untuk 167 entry (prompt awal
+             menyebut "56+"; hasil parser aktual = 86, jadi klaim itu
              UNDER-count). Cuma ada 4 token prefix berbeda: `✅` (59),
              `🔵` (2), `FIXED` (4), `OPEN` (3). Contoh varian:
              `✅ FIXED (2026-10-01, commit TD-133)`,
@@ -3865,6 +3936,7 @@ Judul      : Format `Status :` di TECHNICAL DEBT.txt TIDAK konsisten —
              `OPEN (ga urgent untuk WSL x86_64)`.
              Parser regex berbasis prefix jadi rapuh → future session
              berisiko salah count.
+             (update triage-v3 2026-10-04 — angka mengikuti parser aktual)
 Dampak     : Parser count bisa salah → aritmetika register invalid →
              sesi berikutnya salah propose angka. Pola berulang 6+ kali
              di file ini: blok [OVERRIDE-1]/[OVERRIDE-2]/[OVERRIDE-4]
@@ -3872,7 +3944,7 @@ Dampak     : Parser count bisa salah → aritmetika register invalid →
              pernah BASI ("54 FIXED + 29 CLOSED + 7 DEFERRED + 74 OPEN"
              sementara parser = 55/29/7/73). Akar masalahnya bukan salah
              hitung, tapi format `Status :` yang tidak punya enum → tiap
-             sesi baru harus parse ulang 164 baris dengan asumsi
+             sesi baru harus parse ulang 167 baris dengan asumsi
              berbeda.
 Solusi     : 1) Standarkan format: `Status : <VERB>` sebagai satu token
              enum dengan VERB ∈ {FIXED, CLOSED, DEFERRED, OPEN}. Emoji
@@ -4067,19 +4139,35 @@ BUKTI (R1 — diverifikasi saat pencatatan entry ini, koding BELUM dikerjakan):
    respons yang benar-benar diamati. Test suite juga tidak dijalankan karena
    sesi ini tidak mengubah kode apa pun (R8 — entry dokumentasi saja).
 
+ID         : TD-174
+Kategori   : SECURITY
+Judul      : Admin suspend/ban user TIDAK revoke token (blacklist) —
+             user suspended masih bisa akses API sampai JWT expire (1h).
+Dampak     : Security hole: admin suspend → user terus transact 1 jam.
+             BlacklistService sudah ada (auth/blacklist.go) tapi
+             admin UpdateUserStatus TIDAK panggil.
+Solusi     : Admin UpdateUserStatus (internal/admin/handler.go) panggil
+             BlacklistService atau query sessions user_id → revoke semua
+             jti aktif.
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : TD-061 (split triage-v3), audit triage-v3 2026-10-04
+
 ================================================================================
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 167 item (TD-051 di-reserve/skip)
-                                       (60 FIXED + 29 CLOSED + 7 DEFERRED + 71 OPEN = 167)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 168 item (TD-051 di-reserve/skip)
+                                       (60 FIXED + 44 CLOSED + 8 DEFERRED + 56 OPEN = 168)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
             TD-068, TD-069, TD-070, TD-071, TD-072, TD-074, TD-078,
-            TD-079, TD-080, TD-088, TD-090, TD-091, TD-092, TD-095,
+            TD-079, TD-080, TD-088, TD-090, TD-091, TD-092,
             TD-098, TD-100, TD-104, TD-106, TD-114, TD-125, TD-128,
-            TD-158, TD-167)
+            TD-158, TD-167, TD-174)
+            [42 TETAP pada 2026-10-04 (triage-v3): TD-095 pindah ke SEDANG
+            (−1) + TD-174 entry BARU TINGGI (+1) → net tetap 42.]
             [TETAP 42 pada 2026-10-01 (sesi TD-049 FIXED): prompt Reviewer
             menulis "TINGGI 42→41 (bucket Prioritas TD-049 = TINGGI)",
             tapi angka 41 SALAH dan kontradiksi dengan kalimat berikutnya di
@@ -4128,7 +4216,9 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 167 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 85 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173)
+- SEDANG  : 86 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173)
+           [86 pada 2026-10-04 (triage-v3): TD-095 scope-reduce TINGGI →
+           SEDANG (+1).]
            [85 pada 2026-10-02 (sesi TD-172 + TD-173 entry baru): bucket ini
            berbasis `Prioritas :`, jadi TEPAT DUA perubahan yang menggerakkan:
            TD-172 (HYGIENE — `validWalletTypes` internal/wallet/handler.go:53
@@ -4370,8 +4460,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 167 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 60 item, 29 item CLOSED (FIXED/CLOSED 89), 7 item DEFERRED,
-        71 item OPEN.  [60 + 29 + 7 + 71 = 167 = TOTAL]
+STATUS: ✅ FIXED 60 item, 44 item CLOSED (FIXED/CLOSED 104), 8 item DEFERRED,
+        56 item OPEN.  [60 + 44 + 8 + 56 = 168 = TOTAL]
         [59/88/7/72 pada 2026-10-02 (sesi TD-172 + TD-173 entry baru): blok
         STATUS §2 ini tertinggal 2 snapshot — sequential dari blok
         [Perubahan 2026-09-30] di bawah (54/83/7/74 = 164), padahal sesi
@@ -4541,19 +4631,35 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-02):
-   - Total hutang teridentifikasi      : 167 item (TD-051 di-reserve/skip; 167 item aktif terdaftar).
-   - ✅ FIXED                           : 59 item
-   - CLOSED                             : 29 item (9 lama TD-011 s/d TD-019 + 5 via triage
+3. RINGKASAN STATUS TERKINI (2026-10-04):
+   - Total hutang teridentifikasi      : 168 item (TD-051 di-reserve/skip; 168 item aktif terdaftar).
+   - ✅ FIXED                           : 60 item
+   - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
-                                          + 15 via triage-v2 2026-09-30 — lihat blok [Perubahan
-                                          2026-09-30] di bawah)
-   - FIXED/CLOSED                       : 88 item
-   - DEFERRED                           : 7 item (TD-007, TD-010, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 72 item (bukan hanya TD-058 s/d TD-173 — masih ada
+                                          + 15 via triage-v2 2026-09-30 + 15 via triage-v3
+                                          2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
+   - FIXED/CLOSED                       : 104 item
+   - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
+   - ❌ OPEN                              : 56 item (bukan hanya TD-058 s/d TD-173 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [59 + 29 + 7 + 72 = 167 = TOTAL]
+     [60 + 44 + 8 + 56 = 168 = TOTAL]
+     [Perubahan 2026-10-04 (sesi triage-v3) — STEP A: 15 DROP → CLOSED
+     (TD-032, TD-033, TD-034, TD-035, TD-036, TD-037, TD-042, TD-055, TD-057,
+     TD-081, TD-086, TD-102, TD-111, TD-118, TD-156); TD-061 → DEFERRED;
+     TD-174 entry BARU (SECURITY, TINGGI, OPEN); TD-095 scope-reduce
+     TINGGI → SEDANG.
+     (a) Status: FIXED 60 tetap, CLOSED 29 → 44 (+15 triage-v3), DEFERRED
+         7 → 8 (TD-061), OPEN 71 → 56 (15 ditutup, +1 TD-174 entry baru),
+         TOTAL 167 → 168 (hanya TD-174 entry baru).
+     (b) Bucket Prioritas mengikuti `Prioritas :`: TINGGI 42 (−1 TD-095,
+         +1 TD-174) TETAP 42; SEDANG 85 → 86 (+1 TD-095); KRITIS 8 dan
+         RENDAH 32 tetap → 8 + 42 + 86 + 32 = 168 = TOTAL.
+     (c) KONSISTEN: 60 + 44 + 8 + 56 = 168 = TOTAL dan 8 + 42 + 86 + 32 =
+         168 = TOTAL. Parser atas 168 field `ID :` SESUDAH edit mengonfirmasi
+         kedua sum = 168 (V1 sesi ini). TD-171 body count 68/164 → 86/167
+         (parser aktual, lihat changelog). Tidak ada kode yang diubah —
+         register dokumentasi saja. Tidak commit (R10).]
      [Perubahan 2026-10-02 (sesi TD-172 + TD-173 entry BARU) — TIDAK ada
      entry ditutup, TIDAK ada kode disentuh; TOTAL 165 → 167.
      (a) TD-172 (HYGIENE — `validWalletTypes` internal/wallet/handler.go:53
@@ -8069,6 +8175,14 @@ KRITIK / SARAN UNTUK REVIEWER:
     4xx-aman bisa naik jadi 500 + leak tanpa ada test yang menjaga hal itu
     khusus.
 
+===========================================================================
+CHANGELOG — 2026-10-04 (sesi triage-v3):
+- STEP A: 15 DROP → CLOSED (TD-032, TD-033, TD-034, TD-035, TD-036, TD-037, TD-042, TD-055, TD-057, TD-081, TD-086, TD-102, TD-111, TD-118, TD-156).
+- STEP B: TD-171 body count fix (68/164 → 86/167).
+- STEP C: TD-061 → DEFERRED (OTP DROP, refresh DEFER); TD-174 log baru (blacklist-on-suspend).
+- STEP D: TD-095 scope-reduce (gosec -no-fail only; OWASP/trivy DROP).
+- Parser: 167 → 168 entries; FIXED 60, CLOSED 44, DEFERRED 8, OPEN 56.
+===========================================================================
 ==========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
