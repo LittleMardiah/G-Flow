@@ -255,9 +255,6 @@ Detail lengkap: [`docs/BLUEPRINT ROADMAP.txt`](./docs/BLUEPRINT%20ROADMAP.txt) d
 
 ---
 
-## Lisensi
-
-Distributed under the **MIT License**.
 
 ---
 
