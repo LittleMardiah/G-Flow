@@ -318,8 +318,22 @@ type rideDetailResponse struct {
 
 // GetRide GET /api/v1/rides/:order_id
 // Auth: JWT. Detail order hanya untuk pemiliknya — customer pemesan atau
-// driver tertunjuk. Ownership divalidasi terhadap user_id dari JWT claim;
-// selain itu → 403 FORBIDDEN (mirror ErrNotAllowed di UpdateStatus).
+// driver tertunjuk. Ownership divalidasi terhadap user_id dari JWT claim.
+//
+// Otorisasi: hanya customer pemilik atau driver tertunjuk yang boleh
+// melihat detail order. Selain itu → 403 FORBIDDEN.
+//
+// TD-109 (wontfix 2026-10-09): pertimbangan uniform 404 (OWASP-style
+// non-enumerable) DITOLAK karena:
+//  1. order_id = UUID v4 (122-bit entropy) → enumeration infeasible;
+//     attacker butuh ~2^61 attempt untuk 50% hit.
+//  2. Rate limit 100 req/min read → praktis mustahil probe masif.
+//  3. Konsistensi R6: UpdateStatus juga 403 (ErrNotAllowed) untuk write op.
+//  4. API_CONTRACT §3.2 = FORBIDDEN (403) terdaftar sebagai error code.
+//  5. Zero risk: 404 uniform = breaking change untuk consumer yang
+//     membedakan 403 (bukan milik) vs 404 (tidak ada).
+//
+// Lihat juga: TestHandler_GetRide_Forbidden + TestStatusForError.
 func (h *Handler) GetRide(c *gin.Context) {
 	orderID, err := uuid.Parse(c.Param("order_id"))
 	if err != nil {
