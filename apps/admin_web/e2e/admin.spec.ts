@@ -30,7 +30,8 @@ const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL ?? "admin@g-flow.local";
 // Lokal: seed dengan password yang sama, atau set env sendiri.
 const ADMIN_PASSWORD =
   process.env.E2E_ADMIN_PASSWORD ?? "CI-Test-Only-Pw!2026";
-const ADMIN_2FA = process.env.E2E_ADMIN_2FA ?? "admin-2fa-secret";
+// fallback = CI env ADMIN_2FA_SECRET; kalau lokal, set E2E_ADMIN_2FA = nilai admin2FASecret backend
+const ADMIN_2FA = process.env.E2E_ADMIN_2FA ?? "gflow-e2e-admin-2fa-secret-min-32-chars-2026";
 
 // Transaction / wallet / user fixtures (lihat migration 015).
 const REVERSIBLE_TXN_ID = "60000000-0000-0000-0000-000000000001";
@@ -41,6 +42,13 @@ async function loginAsAdmin(page: Page) {
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(ADMIN_EMAIL);
   await page.locator('input[type="password"]').first().fill(ADMIN_PASSWORD);
+  // TD-054: isi 2FA (login page sudah punya field opsional). Setelah login,
+  // setAdminSession() simpan ke localStorage → interceptor auto-inject ke
+  // semua request (user-actions, dsb).
+  const twoFaInput = page.locator('input[placeholder="X-Admin-2FA-Token"]');
+  if (await twoFaInput.count() > 0) {
+    await twoFaInput.fill(ADMIN_2FA);
+  }
   await page.getByRole("button", { name: "Login", exact: true }).click();
 
   await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });

@@ -589,6 +589,28 @@ func (h *Handler) UpdateUserStatus(c *gin.Context) {
 		return
 	}
 
+	// TD-054: aksi destruktif user (freeze/suspend/ban/unfreeze) WAJIB 2FA + lockout,
+	// mirror ReverseTransaction + UpdateMerchantStatus.
+	locked, err := h.checkLockout(c.Request.Context(), adminID)
+	if err != nil {
+		h.logger.Warn("lockout check failed", "admin_id", adminID, "error", err)
+	}
+	if locked {
+		writeError(c, http.StatusTooManyRequests, "LOCKOUT", "akun terkunci karena terlalu banyak percobaan 2FA; coba lagi 15 menit lagi")
+		return
+	}
+	twoFAToken := c.GetHeader(admin2FASecretHeader)
+	if twoFAToken == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "header X-Admin-2FA-Token wajib diisi")
+		return
+	}
+	if !h.twoFA.Validate(twoFAToken) {
+		_, _ = h.recordFailedAttempt(c.Request.Context(), adminID)
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
+		return
+	}
+	h.resetAttempts(c.Request.Context(), adminID)
+
 	action := c.Param("action")
 	var body userStatusRequestBody
 	if c.Request.ContentLength > 0 {

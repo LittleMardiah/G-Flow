@@ -283,6 +283,7 @@ jobs:
       # sungguhan, dan itu selalu datang dari env lewat scripts/seed_admin.sh.
       # Nilai ini harus SAMA dengan fallback di apps/admin_web/e2e/admin.spec.ts:27.
       E2E_ADMIN_PASSWORD: CI-Test-Only-Pw!2026
+      E2E_ADMIN_2FA: gflow-e2e-admin-2fa-secret-min-32-chars-2026
     defaults:
       run:
         working-directory: apps/admin_web

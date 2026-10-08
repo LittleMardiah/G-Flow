@@ -355,6 +355,7 @@ func TestUpdateUserStatusHandler_Success(t *testing.T) {
 	router := usersRouter(h, testAdminID)
 	req := httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/freeze", strings.NewReader(`{"reason":"aktivitas mencurigakan"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(admin2FASecretHeader, "admin-2fa-secret")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -371,8 +372,10 @@ func TestUpdateUserStatusHandler_InvalidAction(t *testing.T) {
 
 	h := newTestHandler(t, mDB, nil)
 	router := usersRouter(h, testAdminID)
+	req := httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/launch", nil)
+	req.Header.Set(admin2FASecretHeader, "admin-2fa-secret")
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/launch", nil))
+	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "INVALID_REQUEST")
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -390,8 +393,10 @@ func TestUpdateUserStatusHandler_NotFound(t *testing.T) {
 
 	h := newTestHandler(t, mDB, nil)
 	router := usersRouter(h, testAdminID)
+	req := httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/suspend", nil)
+	req.Header.Set(admin2FASecretHeader, "admin-2fa-secret")
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/suspend", nil))
+	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "USER_NOT_FOUND")
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -529,5 +534,70 @@ func TestHandler_UpdateMerchantStatus_Success(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "merchant_id")
 	assert.Contains(t, w.Body.String(), "status")
 	assert.Contains(t, w.Body.String(), "updated_at")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestHandler_UpdateUserStatus_RequireTwoFA: tanpa header -> 401 UNAUTHORIZED_2FA, service TIDAK dipanggil
+func TestHandler_UpdateUserStatus_RequireTwoFA(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	h := newTestHandler(t, mDB, nil)
+	router := usersRouter(h, testAdminID)
+	req := httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/freeze", strings.NewReader(`{"reason":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "UNAUTHORIZED_2FA")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestHandler_UpdateUserStatus_InvalidTwoFA: header salah -> 401 UNAUTHORIZED_2FA + recordFailedAttempt
+func TestHandler_UpdateUserStatus_InvalidTwoFA(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mr.Set(lockoutKeyPrefix+testAdminID.String(), "0")
+	mDB.ExpectQuery("FROM admin_lockouts WHERE admin_id").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(false))
+	mDB.ExpectExec("INSERT INTO admin_lockouts").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+
+	h := newTestHandler(t, mDB, mr)
+	router := usersRouter(h, testAdminID)
+	req := httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/freeze", strings.NewReader(`{"reason":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(admin2FASecretHeader, "wrong-token")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "UNAUTHORIZED_2FA")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestHandler_UpdateUserStatus_Lockout: 3x gagal -> attempt 4 -> 429 LOCKOUT
+func TestHandler_UpdateUserStatus_Lockout(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mr.Set(lockoutKeyPrefix+testAdminID.String(), "3")
+	mDB.ExpectQuery("FROM admin_lockouts WHERE admin_id").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(true))
+
+	h := newTestHandler(t, mDB, mr)
+	router := usersRouter(h, testAdminID)
+	req := httptest.NewRequest(http.MethodPatch, "/admin/users/"+testUserID.String()+"/freeze", strings.NewReader(`{"reason":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(admin2FASecretHeader, "wrong-token")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	assert.Contains(t, w.Body.String(), "LOCKOUT")
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }

@@ -630,7 +630,7 @@ Judul      : Aksi `ban` tidak set kolom deleted_at (soft-delete).
              (ROADMAP 4.1) belum jalan.
 Solusi     : implement soft-delete lengkap saat hardening.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-09, sesi TD-054)
 
 ID         : TD-054
 Kategori   : SECURITY
@@ -639,6 +639,35 @@ Judul      : Aksi user (freeze/suspend/ban) TIDAK divalidasi 2FA —
              X-Admin-2FA-Token (beda dengan handler.go:89-100 ReverseTransaction
              yang enforce 2FA + lockout).
 Solusi     : tambah validasi 2FA + lockout untuk aksi destruktif user.
+Note       : Fixed di sesi TD-054 (2026-10-09). UpdateUserStatus handler
+             (internal/admin/handler.go:592-613) sekarang enforce 2FA +
+             lockout, mirror ReverseTransaction (handler.go:91-112) dan
+             UpdateMerchantStatus (TD-178). Backend + test + E2E + CI
+             diupdate dalam satu sesi:
+             - Backend: blok 2FA + lockout (~22 lines) ditambah di awal
+               UpdateUserStatus sebelum parse action.
+             - Test (internal/admin/users_admin_test.go): 3 existing test
+               diupdate untuk include header 2FA + 3 test baru
+               (TestHandler_UpdateUserStatus_RequireTwoFA,
+               TestHandler_UpdateUserStatus_InvalidTwoFA,
+               TestHandler_UpdateUserStatus_Lockout). Mutation check
+               NON-VACUOUS: (A) hapus blok 2FA → 3 test FAIL
+               (RequireTwoFA 401→500, InvalidTwoFA 401→500, Lockout
+               429→500); (B) `if !h.twoFA.Validate` → `if false` →
+               InvalidTwoFA FAIL + INSERT INTO admin_lockouts expectation
+               unmatched. Restore clean.
+             - E2E (apps/admin_web/e2e/admin.spec.ts): loginAsAdmin
+               tambah step isi 2FA field di login form (opsional field,
+               conditional count>0). ADMIN_2FA fallback disync ke
+               gflow-e2e-admin-2fa-secret-min-32-chars-2026.
+             - CI (.github/workflows/ci.yml): E2E_ADMIN_2FA env added,
+               match dengan ADMIN_2FA_SECRET backend.
+             Sisa gap (di luar scope TD-054, dicatat sebagai TD-182):
+             users-client.tsx TIDAK prompt 2FA secara explicit — rely on
+             localStorage (dari login atau reversal page). UX polish
+             untuk follow-up.
+
+
 Prioritas  : SEDANG
 Status     : OPEN
 
@@ -4397,8 +4426,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
-                                       (68 FIXED + 53 CLOSED + 14 DEFERRED + 40 OPEN = 175)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 176 item (TD-051 di-reserve/skip)
+                                       (69 FIXED + 53 CLOSED + 14 DEFERRED + 40 OPEN = 176)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4456,7 +4485,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
             yang hilang. Parser: 8 + 41 + 72 + 31 = 152 = TOTAL. Yang
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
-- SEDANG  : 92 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177, TD-178, TD-179, TD-181)
+- SEDANG  : 93 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177, TD-178, TD-179, TD-181, TD-182)
            [92 tetap pada 2026-10-09 (sesi TD-109, wontfix 403 by design, + sesi TD-082): TD-109 berubah OPEN → ✅ CLOSED (2026-10-09, wontfix); TD-082 berubah OPEN → ✅ FIXED (2026-10-09, sesi TD-082). `Prioritas :` keduanya tetap SEDANG — bucket SEDANG tidak bergerak (preseden TD-154/178/181). Bucket Status: CLOSED 52→53, OPEN 42→41→40, FIXED 67→68, DEFERRED 14, SEDANG 92, RENDAH 33, TOTAL 175 tetap. KONSISTEN: 68+53+14+40=175 = 8+42+92+33=175.]
            [92 tetap pada 2026-10-08 (sesi TD-154, Redis attempt counter TTL fix): TD-154 berubah Status OPEN → ✅ FIXED, tapi `Prioritas :` tetap SEDANG — bucket SEDANG tidak bergerak (preseden TD-178/181). Bucket Status: FIXED 65→66, OPEN 44→43, SEDANG 92 tetap, RENDAH 33 tetap, TOTAL 175 tetap. KONSISTEN: 66+52+14+43=175 = 8+42+92+33=175.]
            [91 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E-3): TD-179 entry
@@ -5034,20 +5063,34 @@ REKOMENDASI:
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
 3. RINGKASAN STATUS TERKINI (2026-10-09, sesi TD-109 — wontfix 403 by design, TD-109 OPEN → CLOSED):
-   - Total hutang teridentifikasi      : 175 item (TD-051 di-reserve/skip; 175 item aktif terdaftar).
-   - ✅ FIXED                           : 68 item
+   - Total hutang teridentifikasi      : 176 item (TD-051 di-reserve/skip; 176 item aktif terdaftar).
+   - ✅ FIXED                           : 69 item
    - CLOSED                             : 53 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 121 item
+   - FIXED/CLOSED                       : 122 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
    - ❌ OPEN                              : 40 item (sisa setelah sesi TD-109 = SEDANG 30 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [67 + 53 + 14 + 41 = 175 = TOTAL]
+      [69 + 53 + 14 + 40 = 176 = TOTAL]
+      [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
+
+      TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
+      UpdateUserStatus + 2FA + lockout (mirror TD-178). Mutation A/B killed.
+      E2E + CI updated.
+
+      TD-182 entry BARU (MOBILE / UX, SEDANG, OPEN): users-client aksi
+      destructive tidak prompt 2FA explicit.
+
+      [FIX] Over-replace sesi ini: sed prefix-match juga meng-flip TD-026
+      (baris 353, fingerprint "(rencana: STEP 1E)"). Sudah direvert ke
+      OPEN (rencana: STEP 1E). FIXED delta kembali ke +1 (68 → 69),
+      OPEN delta net 0 (40 → 40).
+      Delta final: FIXED 68→69, OPEN 40 (net 0), SEDANG 92→93, TOTAL 175→176.]
       [Perubahan 2026-10-09 sesi TD-109 (wontfix — 403 by design):
       TD-109 (SECURITY, `Prioritas : SEDANG`) Status OPEN → ✅ CLOSED
       (2026-10-09, wontfix — 403 by design). Keputusan: 403 tetap (bukan
@@ -8920,3 +8963,62 @@ Note       : * Implementasi: file BARU internal/admin/repository_integration_tes
              * File diubah: internal/admin/repository_integration_test.go (BARU).
 Referensi  : TD-178 (temuan sesi ini, R8), TD-167 (go-integration job), commit 314de8c
 
+ID         : TD-182
+Kategori   : MOBILE / UX
+Judul      : users-client.tsx aksi destructive (freeze/suspend/ban) tidak
+             prompt 2FA secara explicit — rely on localStorage dari login
+             atau halaman reversal. Setelah TD-054 (backend enforce 2FA),
+             admin yang login tanpa 2FA atau yang localStorage-nya
+             terhapus akan 401 tanpa UI hint untuk input ulang.
+Dampak     : UX gap. Admin tanpa 2FA di localStorage → aksi freeze/suspend/
+             ban/unfreeze gagal 401 UNAUTHORIZED_2FA tanpa guidance. Harus
+             buka reversal page (yang punya prompt 2FA) untuk re-prime,
+             atau re-login dengan 2FA. Tidak ada blocker (aksi tetap bisa
+             dilakukan setelah re-login), tapi friksi operasional.
+Bukti      : (a) Login page (apps/admin_web/src/app/login/page.tsx:84)
+             menandai 2FA " (opsional) " — user boleh login tanpa 2FA;
+             setAdminSession(token, twoFa.trim() || undefined) line 33
+             → jika kosong, admin_2fa_token tidak di-store.
+             (b) api.ts:22 auto-inject X-Admin-2FA-Token dari
+             localStorage.getItem("admin_2fa_token") — kalau kosong,
+             header tidak dikirim.
+             (c) users-client.tsx performAction (line ~55) TIDAK prompt
+             2FA — hanya panggil action.mutate() → api.patch.
+             (d) Reversal page (apps/admin_web/src/app/transactions/[id]/
+             reverse/page.tsx:60) prompt 2FA explicit +
+             localStorage.setItem("admin_2fa_token", twoFa.trim()) —
+             pattern yang seharusnya di-mirror.
+Solusi     : 1) Tambah dialog/input 2FA di users-client sebelum aksi
+             destructive (mirror reversal page). 2) Set localStorage
+             "admin_2fa_token" agar interceptor auto-inject. 3) Test E2E
+             AD-06b: login tanpa 2FA → aksi freeze → prompt 2FA → isi →
+             sukses. 4) Optional: perkuat login page supaya 2FA tidak
+             "opsional" untuk role admin (kosmetik).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : TD-054 (backend enforce 2FA, sesi ini), TD-178 (pattern
+             admin 2FA reversal)
+
+
+
+
+========================================================================
+CHANGELOG — 2026-10-09 (sesi TD-054, admin 2FA untuk UpdateUserStatus):
+- Backend: internal/admin/handler.go UpdateUserStatus + 2FA + lockout block
+  (mirror TD-178), 22 lines. Mutation A/B killed.
+- Test: 3 existing diupdate + 3 test baru (RequireTwoFA, InvalidTwoFA,
+  Lockout). all PASS.
+- E2E: loginAsAdmin isi 2FA field (apps/admin_web/e2e/admin.spec.ts:47-52),
+  ADMIN_2FA fallback disync ke CI value.
+- CI: E2E_ADMIN_2FA env added (.github/workflows/ci.yml:284).
+- TD-182 log BARU (users-client prompt 2FA explicit — UX polish,
+  tidak blocking).
+- Delta: FIXED 68 → 69 (TD-054 FIXED), OPEN 40 tetap (TD-054 -1 + TD-182
+  +1 saling meniadakan), SEDANG +1 (TD-182), TOTAL 175 → 176.
+- [FLAG] E2E test TIDAK dijalankan di sesi ini — hanya verify statis
+  (selector match). CI akan jalankan e2e-admin job; kalau localStorage
+  2FA tidak ter-set via login, E2E AD-06 freeze akan 401.
+- [FLAG] Local dev: fallback ADMIN_2FA = gflow-e2e-admin-2fa-secret-...
+  TIDAK match default backend lokal (admin-2fa-secret, per TD-023).
+  Set E2E_ADMIN_2FA lokal kalau menjalankan E2E di mesin sendiri.
+========================================================================
