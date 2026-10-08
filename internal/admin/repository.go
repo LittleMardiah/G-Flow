@@ -714,8 +714,8 @@ func (r *Repository) UpdateMerchantStatus(ctx context.Context, tx pgx.Tx, mercha
 	var updatedAt time.Time
 	err := tx.QueryRow(ctx, `
 		UPDATE food_merchants
-		SET status = $1,
-			verified_at = CASE WHEN $1 = 'ACTIVE' THEN NOW() ELSE verified_at END,
+		SET status = $1::varchar,
+			verified_at = CASE WHEN $1::varchar = 'ACTIVE' THEN NOW() ELSE verified_at END,
 			updated_at = NOW()
 		WHERE id = $2
 		RETURNING updated_at
