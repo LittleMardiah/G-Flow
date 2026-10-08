@@ -708,6 +708,21 @@ func (r *Repository) UpdateUserStatus(ctx context.Context, tx pgx.Tx, userID uui
 	return updatedAt, err
 }
 
+// UpdateMerchantStatus mengubah status food_merchants + set verified_at bila
+// ACTIVE. Return updated_at. ErrNoRows bila merchant tidak ada.
+func (r *Repository) UpdateMerchantStatus(ctx context.Context, tx pgx.Tx, merchantID uuid.UUID, status string) (time.Time, error) {
+	var updatedAt time.Time
+	err := tx.QueryRow(ctx, `
+		UPDATE food_merchants
+		SET status = $1,
+			verified_at = CASE WHEN $1 = 'ACTIVE' THEN NOW() ELSE verified_at END,
+			updated_at = NOW()
+		WHERE id = $2
+		RETURNING updated_at
+	`, status, merchantID).Scan(&updatedAt)
+	return updatedAt, err
+}
+
 // VerifyWalletLedger membaca saldo wallet + total DEBIT/CREDIT ledger-nya.
 // Wallet tidak ada -> ErrWalletNotFound.
 func (r *Repository) VerifyWalletLedger(ctx context.Context, walletID uuid.UUID) (*LedgerTotals, error) {

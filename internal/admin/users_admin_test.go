@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -431,4 +432,102 @@ func TestUserActionToStatus(t *testing.T) {
 	if _, ok := userActionToStatus("hack"); ok {
 		t.Fatal("aksi tak dikenal tidak boleh lolos")
 	}
+}
+
+func merchantsRouter(h *Handler, adminID uuid.UUID) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.PATCH("/admin/merchants/:id/status", func(c *gin.Context) {
+		c.Set("user_id", adminID.String())
+		h.UpdateMerchantStatus(c)
+	})
+	return r
+}
+
+// TestHandler_UpdateMerchantStatus_RequireTwoFA: tanpa X-Admin-2FA-Token -> 401 UNAUTHORIZED_2FA
+func TestHandler_UpdateMerchantStatus_RequireTwoFA(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mr.Set(lockoutKeyPrefix+testAdminID.String(), "0")
+	mDB.ExpectQuery("FROM admin_lockouts WHERE admin_id").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(false))
+
+	h := newTestHandler(t, mDB, mr)
+	router := merchantsRouter(h, testAdminID)
+
+	req := httptest.NewRequest(http.MethodPatch, "/admin/merchants/"+testMerchID.String()+"/status", strings.NewReader(`{"action":"verify"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "UNAUTHORIZED_2FA")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestHandler_UpdateMerchantStatus_InvalidTwoFA: token salah -> 401 + recordFailedAttempt
+func TestHandler_UpdateMerchantStatus_InvalidTwoFA(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mr.Set(lockoutKeyPrefix+testAdminID.String(), "0")
+	mDB.ExpectQuery("FROM admin_lockouts WHERE admin_id").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(false))
+	mDB.ExpectExec("INSERT INTO admin_lockouts").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+
+	h := newTestHandler(t, mDB, mr)
+	router := merchantsRouter(h, testAdminID)
+
+	req := httptest.NewRequest(http.MethodPatch, "/admin/merchants/"+testMerchID.String()+"/status", strings.NewReader(`{"action":"verify"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(admin2FASecretHeader, "wrong-token")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "UNAUTHORIZED_2FA")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestHandler_UpdateMerchantStatus_Success: 2FA valid -> 200, response {success:true, data:{merchant_id, status, updated_at}}
+func TestHandler_UpdateMerchantStatus_Success(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mr.Set(lockoutKeyPrefix+testAdminID.String(), "0")
+	mDB.ExpectQuery("FROM admin_lockouts WHERE admin_id").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(false))
+	mDB.ExpectExec("UPDATE admin_lockouts SET failed_attempts").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE food_merchants").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(time.Now()))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+
+	h := newTestHandler(t, mDB, mr)
+	router := merchantsRouter(h, testAdminID)
+
+	req := httptest.NewRequest(http.MethodPatch, "/admin/merchants/"+testMerchID.String()+"/status", strings.NewReader(`{"action":"verify"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(admin2FASecretHeader, "admin-2fa-secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "\"success\":true")
+	assert.Contains(t, w.Body.String(), "merchant_id")
+	assert.Contains(t, w.Body.String(), "status")
+	assert.Contains(t, w.Body.String(), "updated_at")
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }

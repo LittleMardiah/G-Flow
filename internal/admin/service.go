@@ -912,6 +912,69 @@ func (s *Service) UpdateUserStatus(ctx context.Context, req UserStatusRequest) (
 	return &UserStatusResult{UserID: req.UserID, Status: newStatus, UpdatedAt: updatedAt}, nil
 }
 
+// MerchantStatusRequest adalah input operasi update status merchant.
+type MerchantStatusRequest struct {
+	MerchantID uuid.UUID
+	AdminID    uuid.UUID
+	Action     string // verify | reject | suspend
+	Reason     string // opsional
+}
+
+// MerchantStatusResult adalah output operasi update status merchant.
+type MerchantStatusResult struct {
+	MerchantID uuid.UUID `json:"merchant_id"`
+	Status     string    `json:"status"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+var ErrMerchantNotFound = errors.New("merchant tidak ditemukan")
+
+// UpdateMerchantStatus menjalankan aksi admin ke status food_merchants dalam satu transaksi.
+func (s *Service) UpdateMerchantStatus(ctx context.Context, req MerchantStatusRequest) (*MerchantStatusResult, error) {
+	actionToStatus := map[string]string{
+		"verify":  "ACTIVE",
+		"reject":  "CLOSED",
+		"suspend": "SUSPENDED",
+	}
+	newStatus, ok := actionToStatus[req.Action]
+	if !ok {
+		return nil, ErrInvalidAction
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Set statement timeout 3000ms
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
+		s.logger.Warn("failed to set statement_timeout", "error", err)
+	}
+
+	updatedAt, err := s.repo.UpdateMerchantStatus(ctx, tx, req.MerchantID, newStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrMerchantNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	details := map[string]any{"status": newStatus}
+	if req.Reason != "" {
+		details["reason"] = req.Reason
+	}
+	if err := s.repo.CreateAdminActionLog(ctx, tx, req.AdminID, "merchant_"+req.Action, "food_merchants", &req.MerchantID, nil, details); err != nil {
+		s.logger.Warn("failed to write admin action log", "admin_id", req.AdminID, "action", req.Action, "error", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return &MerchantStatusResult{MerchantID: req.MerchantID, Status: newStatus, UpdatedAt: updatedAt}, nil
+}
+
 func refundWalletOf(entries []LedgerEntry) uuid.UUID {
 	for _, e := range entries {
 		if e.EntryType == "DEBIT" {

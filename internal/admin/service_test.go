@@ -1088,3 +1088,122 @@ func TestUpdateUserStatus_Ban_RevokeCalled(t *testing.T) {
 	// +1s grace (TD-174 STEP D-FIX): cutoff = time.Now()+1 detik, jadi bisa after+1.
 	assert.LessOrEqual(t, until, after+1)
 }
+
+// ===== UpdateMerchantStatus tests (TD-178 STEP A) =====
+
+func expectUpdateMerchantStatusSetup(mDB pgxmock.PgxPoolIface) {
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE food_merchants").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(time.Now()))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+}
+
+func TestUpdateMerchantStatus_Verify_Success(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE food_merchants").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(time.Now()))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+
+	svc := newSvc(t, mDB)
+	res, err := svc.UpdateMerchantStatus(context.Background(), MerchantStatusRequest{
+		MerchantID: testMerchID,
+		AdminID:    testAdminID,
+		Action:     "verify",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateMerchantStatus_Reject_Success(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE food_merchants").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(time.Now()))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+
+	svc := newSvc(t, mDB)
+	res, err := svc.UpdateMerchantStatus(context.Background(), MerchantStatusRequest{
+		MerchantID: testMerchID,
+		AdminID:    testAdminID,
+		Action:     "reject",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "CLOSED", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateMerchantStatus_Suspend_Success(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE food_merchants").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(time.Now()))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+
+	svc := newSvc(t, mDB)
+	res, err := svc.UpdateMerchantStatus(context.Background(), MerchantStatusRequest{
+		MerchantID: testMerchID,
+		AdminID:    testAdminID,
+		Action:     "suspend",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "SUSPENDED", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateMerchantStatus_InvalidAction(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	svc := newSvc(t, mDB)
+	_, err = svc.UpdateMerchantStatus(context.Background(), MerchantStatusRequest{
+		MerchantID: testMerchID,
+		AdminID:    testAdminID,
+		Action:     "bogus",
+	})
+	require.ErrorIs(t, err, ErrInvalidAction)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateMerchantStatus_NotFound(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("UPDATE food_merchants").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}))
+	// No commit expected on error
+
+	svc := newSvc(t, mDB)
+	_, err = svc.UpdateMerchantStatus(context.Background(), MerchantStatusRequest{
+		MerchantID: testMerchID,
+		AdminID:    testAdminID,
+		Action:     "verify",
+	})
+	require.ErrorIs(t, err, ErrMerchantNotFound)
+	// Rollback happens in defer
+}

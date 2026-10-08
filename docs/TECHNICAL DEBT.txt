@@ -4296,7 +4296,7 @@ Solusi     : Tambah admin route `PATCH /api/v1/admin/merchants/:id/status` body
              service + repository + audit log (admin_actions). 2FA validation
              (mirror reversal, TD-114/2FA pattern). Test.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-08, sesi TD-178)
 Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), ROADMAP 04
              §4.2.3 (admin user management pattern), FOOD_MERCHANTS.status
              schema (migrations/005)
@@ -4355,8 +4355,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 173 item (TD-051 di-reserve/skip)
-                                       (63 FIXED + 44 CLOSED + 8 DEFERRED + 58 OPEN = 173)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 174 item (TD-051 di-reserve/skip)
+                                       (64 FIXED + 44 CLOSED + 8 DEFERRED + 58 OPEN = 174)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4670,7 +4670,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 173 item (TD-051 di-reserve/skip)
               mengonfirmasi sum Prioritas = sum Status = 156 (V3 sesi ini).
               Tidak ada kode yang diubah — register dokumentasi saja. Tidak
               commit (R10).]
-- RENDAH  : 32 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157, TD-163)
+- RENDAH  : 33 item (TD-016 s/d TD-019, TD-021, TD-022, TD-032 s/d TD-034, TD-041 s/d TD-044, TD-046, TD-055, TD-056, TD-057, TD-064, TD-084, TD-086, TD-099, TD-102, TD-105, TD-116, TD-117, TD-119, TD-136, TD-140, TD-149, TD-152, TD-157, TD-163, TD-180)
               [32 pada 2026-09-29 (sesi TD-163): TD-163 (DOKUMENTASI —
              docs/schema_clean.sql:13 + docs/DATABASE SCHEMA.txt:33 masih
              tulis wallet_type_enum hanya 5 label, DB aktual 8) adalah entry
@@ -4689,8 +4689,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 173 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 63 item, 44 item CLOSED (FIXED/CLOSED 107), 8 item DEFERRED,
-        58 item OPEN.  [63 + 44 + 8 + 58 = 173 = TOTAL]
+STATUS: ✅ FIXED 64 item, 44 item CLOSED (FIXED/CLOSED 108), 8 item DEFERRED,
+        58 item OPEN.  [64 + 44 + 8 + 58 = 174 = TOTAL]
         [63/44/8/58 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E-3 — TD-179
         entry baru): TIDAK ada entry yang ditutup. TD-179 (KODE / KONSISTENSI
         — path PATCH status food `PATCH /food-orders/:id` (main.go:260, tanpa
@@ -4945,7 +4945,7 @@ REKOMENDASI:
    - ❌ OPEN                              : 58 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-179 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [63 + 44 + 8 + 58 = 173 = TOTAL]
+     [64 + 44 + 8 + 58 = 174 = TOTAL]
      [Perubahan 2026-10-08 sesi E2E demo (BLOK 1E-3) — TD-179 (KODE /
      KONSISTENSI — path PATCH status food = `PATCH /food-orders/:id`
      (main.go:260, tanpa `/status`), ride = `PATCH /rides/:order_id/status`
@@ -4989,6 +4989,7 @@ REKOMENDASI:
      (c) KONSISTEN: 63 + 44 + 8 + 57 = 172 = TOTAL. Parser atas 172 field `ID :`
          SESUDAH edit mengonfirmasi kedua sum = 172 (V1 sesi ini). Tidak ada
          kode yang diubah — register dokumentasi saja. Tidak commit (R10).]
+             [OVERRIDE-1] Prompt salah tulis "SEDANG 91→92, RENDAH 32" — koreksi faktual: SEDANG TETAP 91 (TD-178 close Prioritas SEDANG tidak geser bucket), RENDAH 32→33 (+TD-180 RENDAH). Parser case-sensitive verified: 8+42+91+33=174 = 64+44+8+58=174.]
      [Perubahan 2026-10-08 sesi E2E demo — TD-177 (BACKEND / FITUR — tidak ada
      endpoint global `GET /admin/ledger/verify` tanpa wallet_id; admin hanya
      bisa verify per-wallet via `GET /admin/ledger/verify/:wallet_id`, sehingga
@@ -8646,6 +8647,14 @@ CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1E-3):
 - TD-179 log BARU (path inconsistency food vs ride).
 - FIXED 63 tetap, OPEN 57→58, SEDANG 90→91, TOTAL 172→173.
 
+========================================================================
+CHANGELOG — 2026-10-08 (sesi TD-178, admin merchant approve endpoint):
+- Implementasi endpoint PATCH /api/v1/admin/merchants/:id/status (verify/reject/suspend) + 2FA + lockout.
+- Service + repository + handler + route registered.
+- Audit trail ke admin_action_logs (bukan admin_actions — TD-180 log).
+- Test: 5 service + 3 handler PASS.
+- TD-180 log BARU (doc drift admin_actions → admin_action_logs).
+- FIXED 63→64, OPEN 58 TETAP, SEDANG 91 TETAP, RENDAH 32→33 (+TD-180), TOTAL 173→174.
 [OVERRIDE-1] Prompt salah: "API_CONTRACT.txt §8.4" (Bukti d).
 Kenyataan (bukti file:line): file-nya docs/API CONTRACT.txt (spasi, tanpa
 underscore) — baris 955-958 §8.4 = "PATCH /food-orders/{order_id}/status";
@@ -8661,4 +8670,14 @@ Semua bukti (a)-(f) di TD-179 diambil dari grep/sed langsung, bukan asumsi.
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
 =====
+
+ID         : TD-180
+Kategori   : DOKUMENTASI
+Judul      : docs/DATABASE SCHEMA.txt (v10.4) refer tabel `admin_actions`, code actual = `admin_action_logs` (migration 010). Doc drift R2.
+Dampak     : Developer/integrator baru baca doc → cari table `admin_actions` yang tidak ada → kebingungan. Live DB verify: `\d admin_actions` = error, `\dt` list hanya `admin_action_logs`.
+Bukti      : (a) docs/DATABASE SCHEMA.txt §24 "ADMIN_ACTIONS TABLE" — `CREATE TABLE admin_actions (...)`. (b) migrations/010_admin_lockouts.up.sql:26 — `CREATE TABLE IF NOT EXISTS admin_action_logs`. (c) Live DB `\dt` = `admin_action_logs` + `admin_lockouts` (no `admin_actions`). (d) Grep `admin_actions` di migrations/*.sql = 0 hasil (hanya di doc).
+Solusi     : Update docs/DATABASE SCHEMA.txt (rename `admin_actions` → `admin_action_logs`) ATAU tambahkan note "renamed since v10.4 → lihat migration 010". Pilih satu, konsisten dengan doc sync policy.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : TD-178 (temuan sesi ini, R8 — dicatat tidak diperbaiki), migration 010
 

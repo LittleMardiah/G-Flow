@@ -3,9 +3,9 @@
 // Handler memetakan request HTTP POST /api/v1/admin/transactions/{id}/reverse
 // menjadi panggilan Service.ReverseTransaction dengan penerapan keamanan:
 //
-//	1. Autentikasi (AuthMiddleware) + RBAC role admin — dipasang di main.go.
-//	2. Validasi 2FA header X-Admin-2FA-Token (simulasi MVP).
-//	3. Lockout akun setelah 3x kegagalan 2FA (15 menit).
+//  1. Autentikasi (AuthMiddleware) + RBAC role admin — dipasang di main.go.
+//  2. Validasi 2FA header X-Admin-2FA-Token (simulasi MVP).
+//  3. Lockout akun setelah 3x kegagalan 2FA (15 menit).
 //
 // Error code:
 //
@@ -150,13 +150,82 @@ func (h *Handler) ReverseTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"reversal_id": result.ReversalID,
+			"reversal_id":    result.ReversalID,
 			"transaction_id": transactionID,
 			"refunded":       result.Refunded,
 			"shortfall":      result.Shortfall,
 			"has_sweep":      result.HasSweep,
 		},
 	})
+}
+
+// UpdateMerchantStatus mengubah status food_merchants dengan 2FA + lockout.
+func (h *Handler) UpdateMerchantStatus(c *gin.Context) {
+	merchantIDStr := c.Param("id")
+	merchantID, err := uuid.Parse(merchantIDStr)
+	if err != nil || merchantIDStr == "" {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_MERCHANT_ID", "merchant id tidak valid")
+		return
+	}
+
+	adminIDStr := c.GetString("user_id")
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil || adminIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "tidak dapat mengidentifikasi admin")
+		return
+	}
+
+	locked, err := h.checkLockout(c.Request.Context(), adminID)
+	if err != nil {
+		h.logger.Warn("lockout check failed", "admin_id", adminID, "error", err)
+	}
+	if locked {
+		writeError(c, http.StatusTooManyRequests, "LOCKOUT", "akun terkunci karena terlalu banyak percobaan 2FA; coba lagi 15 menit lagi")
+		return
+	}
+
+	twoFAToken := c.GetHeader(admin2FASecretHeader)
+	if twoFAToken == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "header X-Admin-2FA-Token wajib diisi")
+		return
+	}
+	if !h.twoFA.Validate(twoFAToken) {
+		_, _ = h.recordFailedAttempt(c.Request.Context(), adminID)
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
+		return
+	}
+	h.resetAttempts(c.Request.Context(), adminID)
+
+	var body struct {
+		Action string `json:"action" binding:"required"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "format body tidak valid")
+		return
+	}
+
+	result, err := h.svc.UpdateMerchantStatus(c.Request.Context(), MerchantStatusRequest{
+		MerchantID: merchantID,
+		AdminID:    adminID,
+		Action:     body.Action,
+		Reason:     body.Reason,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidAction):
+			writeError(c, http.StatusBadRequest, "INVALID_ACTION", "aksi tidak valid")
+			return
+		case errors.Is(err, ErrMerchantNotFound):
+			writeError(c, http.StatusNotFound, "MERCHANT_NOT_FOUND", "merchant tidak ditemukan")
+			return
+		default:
+			h.logger.Error("admin update merchant status failed", "admin_id", adminID, "merchant_id", merchantID, "action", body.Action, "error", err)
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "gagal mengubah status merchant")
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
 // GetTransaction GET /admin/transactions/:id
