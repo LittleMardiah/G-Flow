@@ -2725,7 +2725,17 @@ Solusi     : Set EXPIRE lockoutDuration setelah INCR (atau sliding window
              baru (skip) atau cukup andalkan EXPIRE Redis sebagai sumber
              kebenaran threshold.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-08, sesi TD-154)
+Note       :
+             * Implementasi: internal/admin/lockout.go — di `recordFailedAttempt`, EXPIRE di-set HANYA saat `attempts == 1` (fixed window 15m). INCR ke-2+ tidak me-reset TTL → attacker tidak bisa slide-extend.
+             * Doc comment di file header diupdate (sebelumnya klaim "INCR, TTL" tanpa implementasi — R2 violation).
+             * Test BARU di internal/admin/login_lockout_test.go:
+               - TestAdminLogin_AttemptCounterHasTTL: attempt 1 → TTL 14-15m → FastForward 15m+1s → counter expired → user bisa login lagi.
+               - TestAdminLogin_AttemptCounterFixedWindow: attempt1 TTL 15m → FF 10m → attempt2 TTL sisa ~5m (BUKAN reset 15m) → FF 5m+1s → attempt3 = fresh window, counter "1", no lockout.
+             * Mutation check verified non-vacuous (2 mutation):
+               - Expire dihapus → Test1 FAIL ("0s" ≠ ≥14m).
+               - `attempts >= 1` (sliding) → Test2 FAIL ("15m0s" ≥ "5m0s").
+             * File diubah: internal/admin/lockout.go + internal/admin/login_lockout_test.go.
 Referensi  : TD-114 (temuan OpenCode)
 
 ID         : TD-155
@@ -4356,7 +4366,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
-                                       (65 FIXED + 52 CLOSED + 14 DEFERRED + 44 OPEN = 175)
+                                       (66 FIXED + 52 CLOSED + 14 DEFERRED + 43 OPEN = 175)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4415,6 +4425,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
             bergerak hanya bucket Status: FIXED 44 → 45, OPEN 87 → 86.
             Lihat [OVERRIDE-4].]
 - SEDANG  : 92 item (TD-011 s/d TD-015, TD-026, TD-031, TD-035 s/d TD-037, TD-045, TD-047, TD-048, TD-052, TD-053, TD-054, TD-062, TD-063, TD-065, TD-066, TD-073, TD-075, TD-076, TD-081, TD-082, TD-083, TD-085, TD-093, TD-094, TD-095, TD-096, TD-097, TD-101, TD-103, TD-107, TD-108, TD-109, TD-110, TD-111, TD-112, TD-113, TD-115, TD-118, TD-121, TD-122, TD-123, TD-124, TD-126, TD-127, TD-129, TD-130, TD-131, TD-132, TD-133, TD-134, TD-135, TD-137, TD-138, TD-139, TD-141, TD-142, TD-143, TD-144, TD-145, TD-146, TD-147, TD-148, TD-150, TD-151, TD-153, TD-154, TD-155, TD-156, TD-159, TD-160, TD-161, TD-162, TD-164, TD-165, TD-166, TD-168, TD-169, TD-170, TD-171, TD-172, TD-173, TD-175, TD-176, TD-177, TD-178, TD-179, TD-181)
+           [92 tetap pada 2026-10-08 (sesi TD-154, Redis attempt counter TTL fix): TD-154 berubah Status OPEN → ✅ FIXED, tapi `Prioritas :` tetap SEDANG — bucket SEDANG tidak bergerak (preseden TD-178/181). Bucket Status: FIXED 65→66, OPEN 44→43, SEDANG 92 tetap, RENDAH 33 tetap, TOTAL 175 tetap. KONSISTEN: 66+52+14+43=175 = 8+42+92+33=175.]
            [91 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E-3): TD-179 entry
            BARU (KODE / KONSISTENSI — path PATCH status food `PATCH
            /food-orders/:id` (main.go:260) vs ride `PATCH
@@ -4689,8 +4700,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 65 item, 52 item CLOSED (FIXED/CLOSED 117), 14 item DEFERRED,
-        44 item OPEN.  [65 + 52 + 14 + 44 = 175 = TOTAL]
+STATUS: ✅ FIXED 66 item, 52 item CLOSED (FIXED/CLOSED 118), 14 item DEFERRED,
+        43 item OPEN.  [66 + 52 + 14 + 43 = 175 = TOTAL]
         [52/14/44 pada 2026-10-08 (sesi triage-v4 — prune 8 DROP + 6 DEFER):
         8 entry OPEN → ✅ CLOSED (TD-116, TD-159, TD-139, TD-117, TD-056,
         TD-043, TD-064, TD-084) dan 6 entry OPEN → 🔵 DEFERRED (TD-130,
@@ -4965,17 +4976,17 @@ REKOMENDASI:
 
 3. RINGKASAN STATUS TERKINI (2026-10-08, sesi triage-v4 — prune 8 DROP → CLOSED + 6 DEFER → DEFERRED):
    - Total hutang teridentifikasi      : 175 item (TD-051 di-reserve/skip; 175 item aktif terdaftar).
-   - ✅ FIXED                           : 65 item
+   - ✅ FIXED                           : 66 item
    - CLOSED                             : 52 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08)
-   - FIXED/CLOSED                       : 117 item
+   - FIXED/CLOSED                       : 118 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 44 item (sisa setelah triage-v4 = SEDANG 34 + RENDAH 10;
+   - ❌ OPEN                              : 43 item (sisa setelah triage-v4 = SEDANG 34 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
       [65 + 52 + 14 + 44 = 175 = TOTAL]
       [Perubahan 2026-10-08 sesi triage-v4 (prune 8 DROP + 6 DEFER) — audit 58 OPEN
@@ -8747,6 +8758,13 @@ CHANGELOG — 2026-10-08 (sesi triage-v4, prune 8 DROP + 6 DEFER):
 - 6 DEFER: TD-130, TD-134, TD-162, TD-161, TD-065, TD-175.
 - Shortlist 10 DO disiapkan (eksekusi sesi berikutnya): TD-154, TD-173, TD-109, TD-082, TD-054, TD-155, TD-176, TD-073, TD-177, TD-101.
 - FIXED 65 tetap, CLOSED 44→52, DEFERRED 8→14, OPEN 58→44, TOTAL 175 tetap.
+========================================================================
+CHANGELOG — 2026-10-08 (sesi TD-154, Redis attempt counter TTL fix):
+- internal/admin/lockout.go: Expire(attemptKey, 15m) hanya saat `attempts == 1` (fixed window). Attacker tidak bisa slide-extend.
+- Doc comment header diupdate (R2 violation: klaim TTL tanpa implementasi).
+- 2 test BARU: TestAdminLogin_AttemptCounterHasTTL + FixedWindow.
+- Mutation check non-vacuous: (A) Expire dihapus → FAIL; (B) sliding `>=1` → FAIL.
+- FIXED 65→66, OPEN 44→43, SEDANG 92 tetap, RENDAH 33 tetap, TOTAL 175 tetap.
 ========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================

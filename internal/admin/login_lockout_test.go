@@ -342,3 +342,102 @@ func TestServiceLogin_NoLockoutGuard(t *testing.T) {
 	assert.Equal(t, testAdminID, res.UserID)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
+
+// TestAdminLogin_AttemptCounterHasTTL (TD-154): counter percobaan wajib punya
+// TTL 15 menit. Tanpa EXPIRE key hidup selamanya dan policy efektif menjadi
+// "3x gagal sejak reset terakhir", bukan "3x dalam 15 menit".
+func TestAdminLogin_AttemptCounterHasTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	attemptKey := attemptKeyPrefix + testAdminID.String()
+
+	// Percobaan pertama -> INCR return 1 -> EXPIRE 15 menit di-set.
+	expectFailedLoginAttempt(t, mDB, adminEmailPlain, "admin", false)
+	h := newTestHandler(t, mDB, mr)
+	w := doLogin(loginRouter(h), loginBody(adminEmailPlain, wrongPasswordPlain))
+	assert.Equal(t, 401, w.Code, "attempt 1 harus 401")
+
+	_, ok := mrGet(mr, attemptKey)
+	require.True(t, ok, "counter attempts harus ter-set setelah 1x gagal")
+	ttl := mr.TTL(attemptKey)
+	assert.GreaterOrEqual(t, ttl, 14*time.Minute, "TTL counter harus mendekati 15 menit")
+	assert.LessOrEqual(t, ttl, 15*time.Minute, "TTL counter tidak boleh melebihi 15 menit")
+
+	// Lewati jendela 15 menit -> counter expired (key hilang) dan admin
+	// bisa login lagi.
+	mr.FastForward(lockoutDuration + time.Second)
+	_, stillThere := mrGet(mr, attemptKey)
+	assert.False(t, stillThere, "counter harus expired setelah jendela 15 menit")
+
+	mDB.ExpectQuery(regexpLoginUserQuery).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(mockLoginUserRow(testAdminID, adminEmailPlain, "admin", "ACTIVE", mustHash(t, testPassword)))
+	expectNotLocked(mDB)
+	mDB.ExpectExec(regexpResetAttemptsQuery).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	h = newTestHandler(t, mDB, mr)
+	w = doLogin(loginRouter(h), loginBody(adminEmailPlain, testPassword))
+	assert.Equal(t, 200, w.Code, "admin harus bisa login lagi setelah counter expired")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestAdminLogin_AttemptCounterFixedWindow (TD-154): jendela counter bersifat
+// FIXED, bukan sliding. Attempt ke-2 tidak me-reset TTL sehingga attacker
+// tidak bisa memperpanjang window dengan terus-menerus INCR.
+func TestAdminLogin_AttemptCounterFixedWindow(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	attemptKey := attemptKeyPrefix + testAdminID.String()
+
+	// Attempt 1 -> TTL 15 menit.
+	expectFailedLoginAttempt(t, mDB, adminEmailPlain, "admin", false)
+	h := newTestHandler(t, mDB, mr)
+	w := doLogin(loginRouter(h), loginBody(adminEmailPlain, wrongPasswordPlain))
+	assert.Equal(t, 401, w.Code, "attempt 1 harus 401")
+	ttl1 := mr.TTL(attemptKey)
+	assert.GreaterOrEqual(t, ttl1, 14*time.Minute, "attempt 1 harus set TTL 15 menit")
+	assert.LessOrEqual(t, ttl1, 15*time.Minute, "TTL attempt 1 tidak boleh > 15 menit")
+
+	// Majukan 10 menit -> sisa jendela 5 menit.
+	mr.FastForward(10 * time.Minute)
+	ttlMid := mr.TTL(attemptKey)
+	assert.GreaterOrEqual(t, ttlMid, 4*time.Minute, "sisa jendela setelah 10 menit harus ~5 menit")
+	assert.LessOrEqual(t, ttlMid, 5*time.Minute, "sisa jendela setelah 10 menit harus ~5 menit")
+
+	// Attempt 2 -> TTL JANGAN di-reset (harus tetap sisa ~5 menit, bukan 15 menit).
+	expectFailedLoginAttempt(t, mDB, adminEmailPlain, "admin", false)
+	h = newTestHandler(t, mDB, mr)
+	w = doLogin(loginRouter(h), loginBody(adminEmailPlain, wrongPasswordPlain))
+	assert.Equal(t, 401, w.Code, "attempt 2 harus 401")
+
+	attempts, ok := mrGet(mr, attemptKey)
+	require.True(t, ok, "counter harus ada di attempt 2")
+	assert.Equal(t, "2", attempts, "counter harus 2 setelah dua kegagalan")
+	ttl2 := mr.TTL(attemptKey)
+	assert.Greater(t, ttl2, 4*time.Minute, "TTL tidak boleh di-reset ke 15 menit (fixed window)")
+	assert.LessOrEqual(t, ttl2, 5*time.Minute, "TTL harus sisa jendela (~5 menit)")
+
+	// Lewati sisa jendela -> counter expired. Percobaan ke-3 = jendela FRESH
+	// (counter mulai dari 1), jadi TIDAK boleh mengunci.
+	mr.FastForward(5*time.Minute + time.Second)
+	_, stillThere := mrGet(mr, attemptKey)
+	require.False(t, stillThere, "counter harus expired setelah jendela asli habis")
+
+	expectFailedLoginAttempt(t, mDB, adminEmailPlain, "admin", false)
+	h = newTestHandler(t, mDB, mr)
+	w = doLogin(loginRouter(h), loginBody(adminEmailPlain, wrongPasswordPlain))
+	assert.Equal(t, 401, w.Code, "attempt setelah expired harus 401 (fresh window)")
+
+	fresh, ok := mrGet(mr, attemptKey)
+	require.True(t, ok, "counter baru dibuat dengan jendela fresh")
+	assert.Equal(t, "1", fresh, "counter harus mulai dari 1 lagi, bukan 3 (lockout)")
+	_, locked := mrGet(mr, lockoutKeyPrefix+testAdminID.String())
+	assert.False(t, locked, "jendela fresh belum boleh mengunci akun")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}

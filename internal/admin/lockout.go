@@ -7,6 +7,7 @@
 //
 // Penyimpanan lockout bersifat DUAL-WRITE:
 //   - Redis (L1): counter percobaan (INCR, TTL) + lock flag (TTL 15 menit).
+//     Counter TTL 15 menit (fixed window, TD-154): EXPIRE hanya saat INCR=1.
 //   - PostgreSQL (L2): tabel admin_lockouts (persisten, fallback & audit).
 //
 // checkLockout mengevaluasi hasil Redis secara langsung (FIXED v4.23) sebelum
@@ -27,7 +28,7 @@ import (
 
 const (
 	maxFailedAttempts = 3
-	lockoutDuration    = 15 * time.Minute
+	lockoutDuration   = 15 * time.Minute
 
 	lockoutKeyPrefix     = "admin:lockout:"
 	attemptKeyPrefix     = "admin:2fa_attempts:"
@@ -197,6 +198,16 @@ func (h *Handler) recordFailedAttempt(ctx context.Context, adminID uuid.UUID) (i
 		h.logger.Warn("Redis write failed/timeout, falling back to PostgreSQL for attempt counter",
 			"admin_id", adminID, "error", err)
 		return h.recordFailedAttemptPG(ctx, adminID)
+	}
+
+	// TD-154: set EXPIRE hanya saat counter baru dibuat (fixed window 15 menit).
+	// Attacker tidak bisa memperpanjang window dengan terus INCR — karena TTL
+	// tidak di-reset di attempt ke-2+.
+	if attempts == 1 {
+		if err := h.redis.Expire(ctx, attemptKey, lockoutDuration).Err(); err != nil {
+			h.logger.Warn("Redis set EXPIRE on attempt counter failed",
+				"admin_id", adminID, "error", err)
+		}
 	}
 
 	// Path normal Redis: tetap UPSERT PostgreSQL agar baris persisten ada.
