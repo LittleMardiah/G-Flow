@@ -127,6 +127,14 @@ func (m *mockFoodService) GetMerchantItems(ctx context.Context, merchantID, user
 	return args.Get(0).([]*ItemResponse), args.Error(1)
 }
 
+func (m *mockFoodService) GetMerchantItem(ctx context.Context, merchantID, itemID, userID uuid.UUID) (*ItemResponse, error) {
+	args := m.Called(ctx, merchantID, itemID, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ItemResponse), args.Error(1)
+}
+
 func (m *mockFoodService) CreateFoodOrder(ctx context.Context, req CreateFoodOrderRequest) (*CreateFoodOrderResponse, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
@@ -246,7 +254,7 @@ func TestHandler_GetMerchant(t *testing.T) {
 	h2.GetMerchant(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
 
-svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String(), "", gin.Param{Key: "id", Value: fMerchID.String()})
+	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/merchants/"+fMerchID.String(), "", gin.Param{Key: "id", Value: fMerchID.String()})
 	svc3.On("GetMerchant", mock.Anything, fMerchID).Return(nil, ErrMerchantNotFound)
 	h3 := NewHandler(svc3)
 	h3.GetMerchant(c3)
@@ -504,7 +512,7 @@ func TestHandler_UpdateFoodOrderStatus(t *testing.T) {
 	h2.UpdateFoodOrderStatus(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
 
-svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"bad"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"bad"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c3.Set("user_id", fMerchID.String())
 	svc3.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything).Return(nil, ErrInvalidTransition)
 	h3 := NewHandler(svc3)
@@ -774,5 +782,104 @@ func TestHandler_AcceptFoodOrder_CodeForError(t *testing.T) {
 	assert.Equal(t, "USER_NOT_FOUND", codeForError(ErrUserNotFound))
 }
 
+func TestHandler_GetMerchantItem(t *testing.T) {
+	mID := uuid.New()
+	itID := uuid.New()
+	ownID := uuid.New()
 
+	itemAvail := &ItemResponse{ID: itID, MerchantID: mID, Name: "Ayam", IsAvailable: true}
+	itemUnavail := &ItemResponse{ID: itID, MerchantID: mID, Name: "Ayam", IsAvailable: false}
 
+	t.Run("owner view available -> 200", func(t *testing.T) {
+		svc := new(mockFoodService)
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/api/v1/merchants/:id/items/:item_id", func(c *gin.Context) {
+			c.Set("user_id", ownID.String())
+			NewHandler(svc).GetMerchantItem(c)
+		})
+		svc.On("GetMerchantItem", mock.Anything, mID, itID, ownID).Return(itemAvail, nil)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/merchants/"+mID.String()+"/items/"+itID.String(), nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("owner view unavailable -> 200", func(t *testing.T) {
+		svc := new(mockFoodService)
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/api/v1/merchants/:id/items/:item_id", func(c *gin.Context) {
+			c.Set("user_id", ownID.String())
+			NewHandler(svc).GetMerchantItem(c)
+		})
+		svc.On("GetMerchantItem", mock.Anything, mID, itID, ownID).Return(itemUnavail, nil)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/merchants/"+mID.String()+"/items/"+itID.String(), nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("customer/anon view available -> 200", func(t *testing.T) {
+		svc := new(mockFoodService)
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/api/v1/merchants/:id/items/:item_id", func(c *gin.Context) {
+			NewHandler(svc).GetMerchantItem(c)
+		})
+		// anon -> userID uuid.Nil
+		svc.On("GetMerchantItem", mock.Anything, mID, itID, uuid.Nil).Return(itemAvail, nil)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/merchants/"+mID.String()+"/items/"+itID.String(), nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("customer/anon view unavailable -> 404 ITEM_NOT_FOUND", func(t *testing.T) {
+		svc := new(mockFoodService)
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/api/v1/merchants/:id/items/:item_id", func(c *gin.Context) {
+			NewHandler(svc).GetMerchantItem(c)
+		})
+		svc.On("GetMerchantItem", mock.Anything, mID, itID, uuid.Nil).Return(nil, ErrItemNotFound)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/merchants/"+mID.String()+"/items/"+itID.String(), nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("item not found -> 404 ITEM_NOT_FOUND", func(t *testing.T) {
+		svc := new(mockFoodService)
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/api/v1/merchants/:id/items/:item_id", func(c *gin.Context) {
+			NewHandler(svc).GetMerchantItem(c)
+		})
+		svc.On("GetMerchantItem", mock.Anything, mID, itID, uuid.Nil).Return(nil, ErrItemNotFound)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/merchants/"+mID.String()+"/items/"+itID.String(), nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		svc.AssertExpectations(t)
+	})
+
+	t.Run("item wrong merchant (item.MerchantID != path merchant) -> 404 ITEM_NOT_FOUND", func(t *testing.T) {
+		svc := new(mockFoodService)
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.GET("/api/v1/merchants/:id/items/:item_id", func(c *gin.Context) {
+			NewHandler(svc).GetMerchantItem(c)
+		})
+		svc.On("GetMerchantItem", mock.Anything, mID, itID, uuid.Nil).Return(nil, ErrItemNotFound)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/merchants/"+mID.String()+"/items/"+itID.String(), nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		svc.AssertExpectations(t)
+	})
+}

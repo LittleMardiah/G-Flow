@@ -224,6 +224,7 @@ func main() {
 	{
 		catalog.GET("/merchants", foodHandler.GetMerchants)
 		catalog.GET("/merchants/:id/items", foodHandler.GetMerchantItems)
+		catalog.GET("/merchants/:id/items/:item_id", foodHandler.GetMerchantItem)
 	}
 
 	// G-Food: merchant onboarding & catalog management (Task 3.2).

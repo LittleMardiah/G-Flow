@@ -45,6 +45,7 @@ type FoodService interface {
 	// Task 3.3 — Catalog Discovery (3.3.1/3.3.2).
 	SearchMerchants(ctx context.Context, category, search string, lat, lng float64) ([]*MerchantSearchResult, error)
 	GetMerchantItems(ctx context.Context, merchantID, userID uuid.UUID) ([]*ItemResponse, error)
+	GetMerchantItem(ctx context.Context, merchantID, itemID, userID uuid.UUID) (*ItemResponse, error)
 
 	// Task 3.3 — Food Order Creation, Status Update, Retrieval & History.
 	CreateFoodOrder(ctx context.Context, req CreateFoodOrderRequest) (*CreateFoodOrderResponse, error)
@@ -629,6 +630,28 @@ func (h *Handler) GetMerchantItems(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// GetMerchantItem GET /api/v1/merchants/:id/items/:item_id
+// Auth: optional. Customer view detail item; owner view all status.
+func (h *Handler) GetMerchantItem(c *gin.Context) {
+	merchantID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_MERCHANT_ID", "invalid merchant id")
+		return
+	}
+	itemID, err := uuid.Parse(c.Param("item_id"))
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_ITEM_ID", "invalid item id")
+		return
+	}
+	userID, _ := userIDFromContext(c)
+	item, err := h.svc.GetMerchantItem(c.Request.Context(), merchantID, itemID, userID)
+	if err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": item})
 }
 
 // createFoodOrderRequestBody input JSON dari POST /food-orders (ROADMAP 3.3.3).

@@ -370,8 +370,8 @@ func fItem() *Item {
 func fValidOrderReq(paymentMethod, idemKey string) CreateFoodOrderRequest {
 	return CreateFoodOrderRequest{
 		UserID: fCustID, MerchantID: fMerchID, DeliveryAddress: "Jl. B",
-		PaymentMethod: paymentMethod,
-		Items:         []FoodOrderItemRequest{{ItemID: fItemID, Quantity: 2}},
+		PaymentMethod:  paymentMethod,
+		Items:          []FoodOrderItemRequest{{ItemID: fItemID, Quantity: 2}},
 		IdempotencyKey: idemKey,
 	}
 }
@@ -2010,4 +2010,73 @@ func TestAcceptFoodOrder_RedisInvalidCached(t *testing.T) {
 	svc := NewService(new(mockRepo), nil, rdb, new(mockLedger))
 	_, err := svc.AcceptFoodOrder(context.Background(), AcceptFoodOrderRequest{OrderID: fOrderID, DriverID: fDriverID, IdempotencyKey: "k"})
 	assert.ErrorIs(t, err, ErrInvalidCachedResponse)
+}
+
+func TestService_GetMerchantItem(t *testing.T) {
+	mID := uuid.New()
+	itID := uuid.New()
+	ownID := uuid.New()
+
+	t.Run("owner view available -> ok", func(t *testing.T) {
+		r := new(mockRepo)
+		r.On("GetItemByID", mock.Anything, itID).Return(&Item{ID: itID, MerchantID: mID, IsAvailable: true}, nil)
+		r.On("GetMerchantByID", mock.Anything, mID).Return(&Merchant{ID: mID, UserID: ownID}, nil)
+		svc := NewService(r, nil, nil, new(mockLedger))
+		res, err := svc.GetMerchantItem(context.Background(), mID, itID, ownID)
+		assert.NoError(t, err)
+		assert.Equal(t, itID, res.ID)
+		r.AssertExpectations(t)
+	})
+
+	t.Run("owner view unavailable -> ok", func(t *testing.T) {
+		r := new(mockRepo)
+		r.On("GetItemByID", mock.Anything, itID).Return(&Item{ID: itID, MerchantID: mID, IsAvailable: false}, nil)
+		r.On("GetMerchantByID", mock.Anything, mID).Return(&Merchant{ID: mID, UserID: ownID}, nil)
+		svc := NewService(r, nil, nil, new(mockLedger))
+		res, err := svc.GetMerchantItem(context.Background(), mID, itID, ownID)
+		assert.NoError(t, err)
+		assert.False(t, res.IsAvailable)
+		r.AssertExpectations(t)
+	})
+
+	t.Run("customer/anon view available -> ok", func(t *testing.T) {
+		r := new(mockRepo)
+		r.On("GetItemByID", mock.Anything, itID).Return(&Item{ID: itID, MerchantID: mID, IsAvailable: true}, nil)
+		svc := NewService(r, nil, nil, new(mockLedger))
+		// anon
+		res, err := svc.GetMerchantItem(context.Background(), mID, itID, uuid.Nil)
+		assert.NoError(t, err)
+		assert.True(t, res.IsAvailable)
+		r.AssertExpectations(t)
+	})
+
+	t.Run("customer/anon view unavailable -> 404", func(t *testing.T) {
+		r := new(mockRepo)
+		r.On("GetItemByID", mock.Anything, itID).Return(&Item{ID: itID, MerchantID: mID, IsAvailable: false}, nil)
+		svc := NewService(r, nil, nil, new(mockLedger))
+		res, err := svc.GetMerchantItem(context.Background(), mID, itID, uuid.Nil)
+		assert.ErrorIs(t, err, ErrItemNotFound)
+		assert.Nil(t, res)
+		r.AssertExpectations(t)
+	})
+
+	t.Run("item not found -> 404", func(t *testing.T) {
+		r := new(mockRepo)
+		r.On("GetItemByID", mock.Anything, itID).Return(nil, ErrItemNotFound)
+		svc := NewService(r, nil, nil, new(mockLedger))
+		res, err := svc.GetMerchantItem(context.Background(), mID, itID, uuid.Nil)
+		assert.ErrorIs(t, err, ErrItemNotFound)
+		assert.Nil(t, res)
+		r.AssertExpectations(t)
+	})
+
+	t.Run("item wrong merchant -> 404", func(t *testing.T) {
+		r := new(mockRepo)
+		r.On("GetItemByID", mock.Anything, itID).Return(&Item{ID: itID, MerchantID: uuid.New(), IsAvailable: true}, nil)
+		svc := NewService(r, nil, nil, new(mockLedger))
+		res, err := svc.GetMerchantItem(context.Background(), mID, itID, uuid.Nil)
+		assert.ErrorIs(t, err, ErrItemNotFound)
+		assert.Nil(t, res)
+		r.AssertExpectations(t)
+	})
 }

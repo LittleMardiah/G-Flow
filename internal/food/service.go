@@ -696,6 +696,32 @@ func (s *Service) GetItems(ctx context.Context, merchantID, userID uuid.UUID) ([
 	return out, nil
 }
 
+// GetMerchantItem mengembalikan detail satu item milik merchant.
+// Akses: public (customer view) + owner (merchant).
+//   - Item harus milik merchant tsb (merchant_id match) → else ErrItemNotFound (404).
+//   - Non-owner: hanya item is_available=true → item unavailable dianggap 404
+//     (jangan bocorkan keberadaan item unpublished).
+//   - Owner: boleh lihat item unavailable juga (untuk manage catalog).
+func (s *Service) GetMerchantItem(ctx context.Context, merchantID, itemID, userID uuid.UUID) (*ItemResponse, error) {
+	item, err := s.repo.GetItemByID(ctx, itemID)
+	if err != nil {
+		return nil, err // ErrItemNotFound
+	}
+	if item.MerchantID != merchantID {
+		return nil, ErrItemNotFound // 404, jangan bocorkan
+	}
+	isOwner := false
+	if userID != uuid.Nil {
+		if _, err := s.loadOwnedMerchant(ctx, merchantID, userID); err == nil {
+			isOwner = true
+		}
+	}
+	if !isOwner && !item.IsAvailable {
+		return nil, ErrItemNotFound
+	}
+	return toItemResponse(item), nil
+}
+
 // ---- helpers ----
 
 func validLatLng(lat, lng float64) bool {
