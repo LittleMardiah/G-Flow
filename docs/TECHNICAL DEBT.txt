@@ -450,7 +450,7 @@ Judul      : docs/UI UX/DESIGN ADMIN WEB.md:995 stale — menyebut route
              /admin/login + isi deskripsi klinik (dari project lain,
              kemungkinan DentFlow). Perlu cleanup/rewrite untuk G-Flow.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, low-ROI non-visible)
 
 ID         : TD-044
 Kategori   : DOKUMENTASI
@@ -661,7 +661,7 @@ Judul      : Migration 015_seed_admin_e2e.up.sql menaruh test data E2E di
 Solusi     : Pindah ke scripts/seed_e2e.sql yang hanya dijalankan di CI job
              E2E (bukan migration runner prod).
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, user-skip deploy)
 
 ID         : TD-057
 Kategori   : KODE
@@ -834,7 +834,7 @@ Dampak     : Testing/dev manual sulit; data awal tidak konsisten antar environme
 Solusi     : scripts/seed + fixtures.go (mirip migration seed_merchants.sql).
 Estimasi   : 1-2 jam
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, low-ROI fixtures test)
 Referensi  : audit_r01.log (GAP list #11; usulan TD-064)
 
 ID         : TD-065
@@ -847,7 +847,7 @@ Solusi     : Putuskan satu standar (header X-Idempotency-Key) + sinkron openapi/
             CONTRACT/mobile.
 Estimasi   : 1-2 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage-v4 2026-10-08, spek LOCKED konflik)
 Referensi  : audit_r01.log (GAP list #7; usulan TD-065)
 
 ID         : TD-066
@@ -1163,7 +1163,7 @@ Dampak     : Data awal untuk dev/test send order tidak tersedia.
 Solusi     : Seed send order (scripts/seed, pola seed_merchants.sql).
 Estimasi   : 1-2 jam
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, low-ROI seed dummy)
 Referensi  : audit_r03.log (GAP-8, 3.1c; usulan TD-065)
 
 ID         : TD-085
@@ -1771,7 +1771,7 @@ Judul      : gofmt -l flag internal/wallet/http_integration_test.go
              (pre-existing, bukan regression TD-058).
 Solusi     : gofmt -w pada file.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, gofmt clean — fixed di commit 984667e)
 Referensi  : TD-058 SS1 (temuan OpenCode)
 
 ID         : TD-117
@@ -1782,7 +1782,7 @@ Dampak     : Load DB naik di traffic tinggi. Low impact untuk MVP/localhost.
 Solusi     : Redis cache balance:{walletID} dengan TTL + invalidasi
              post-commit di TopUp/Transfer/UpdateWalletStatus.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, user-skip — Referensi TD-059 SS3)
 Referensi  : TD-059 SS3 (skip by user)
 
 ID         : TD-118
@@ -2038,7 +2038,7 @@ Dampak     : Fee CASH tidak masuk wallet driver via ledger; konsisten
 Solusi     : Keputusan bisnis — debit wallet customer langsung, ATAU
              catat sebagai overdue_debt, ATAU keep offline dengan dokumentasi.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage-v4 2026-10-08, keputusan bisnis cash cancel fee)
 Referensi  : TD-068 (temuan OpenCode)
 
 ID         : TD-131
@@ -2219,7 +2219,7 @@ Solusi     : Salah satu: (a) ubah index jadi (user_id, voucher_id,
              per_user_limit & dokumentasi single-use, (c) refactor
              skema user_vouchers (add status HISTORY rows).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage-v4 2026-10-08, keputusan skema voucher per_user_limit)
 Referensi  : TD-070 (temuan OpenCode)
 
 ID         : TD-135
@@ -2301,7 +2301,7 @@ Solusi     : Isolate DB per package (schema terpisah atau transaksi rollback),
              ATAU pytest-style setup/teardown global, ATAU jalankan
              sequential dengan --parallel 1 + DB reset.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, duplikat TD-159)
 Referensi  : Merchant S3 (temuan OpenCode)
 
 ID         : TD-140
@@ -2969,7 +2969,7 @@ Solusi     : Beri tiap integration suite schema/database sendiri (mis.
 Estimasi   : 2-4 jam (kalau Pisah DB per paket) / 30 menit (`-p 1` +
              dokumentasi)
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (triage-v4 2026-10-08, solusi -p 1 sudah di ci.yml:148, commit 7edae01)
 Referensi  : TD-158 (ketemu saat verifikasi sesi TD-158 — tidak dalam scope
              TD-158, dicatat sesuai R8), TD-150 (coupling test integrasi
              ↔ auto-create wallet auth)
@@ -3110,7 +3110,7 @@ Solusi     : Script reseed idempotent: DELETE wallet sistem lama +
              `SELECT id FROM wallets WHERE user_id IS NULL` ke CI supaya
              drift ketahuan otomatis.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage-v4 2026-10-08, butuh destructive reseed dev DB)
 Referensi  : TD-132 (temuan OpenCode), TD-056 (seed E2E di migrations),
              TD-159 (semua integration suite reset saldo wallet sistem —
              closely related)
@@ -3160,7 +3160,7 @@ Solusi     : Jangan andalkan saldo yang tak terbatas. Pilih salah satu:
              subsidi mendekati -1.000.000 supaya tidak menunggu sampai
              order benar-benar mentok.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage-v4 2026-10-08, keputusan skema + migration)
 Referensi  : TD-132 (temuan OpenCode, wallet subsidi baru lahir di
              migration 019), TD-069 (shortfall delta fare), TD-058
              (settlement ride)
@@ -4207,7 +4207,7 @@ Solusi     : Investigate Turbopack font caching di CI (Next.js 16 +
              disable Turbopack di production build, (d) retry mechanism di
              step build.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : 🔵 DEFERRED (triage-v4 2026-10-08, butuh arahan Turbopack)
 Referensi  : TD-167 (temuan sesi ini, di luar scope fix), CI run
              37623565814 (7edae01) vs 37629375406 (984667e)
 
@@ -4356,7 +4356,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
-                                       (65 FIXED + 44 CLOSED + 8 DEFERRED + 58 OPEN = 175)
+                                       (65 FIXED + 52 CLOSED + 14 DEFERRED + 44 OPEN = 175)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4689,8 +4689,22 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 65 item, 44 item CLOSED (FIXED/CLOSED 109), 8 item DEFERRED,
-        58 item OPEN.  [65 + 44 + 8 + 58 = 175 = TOTAL]
+STATUS: ✅ FIXED 65 item, 52 item CLOSED (FIXED/CLOSED 117), 14 item DEFERRED,
+        44 item OPEN.  [65 + 52 + 14 + 44 = 175 = TOTAL]
+        [52/14/44 pada 2026-10-08 (sesi triage-v4 — prune 8 DROP + 6 DEFER):
+        8 entry OPEN → ✅ CLOSED (TD-116, TD-159, TD-139, TD-117, TD-056,
+        TD-043, TD-064, TD-084) dan 6 entry OPEN → 🔵 DEFERRED (TD-130,
+        TD-134, TD-162, TD-161, TD-065, TD-175) — semua approve User tanpa
+        reclass. Delta Status: FIXED 65 tetap, CLOSED 44 → 52 (+8), DEFERRED
+        8 → 14 (+6), OPEN 58 → 44 (−14), TOTAL tetap 175 (tidak ada entry
+        baru). Bucket Prioritas TIDAK bergerak — close/defer hanya mengubah
+        field `Status :`, 14 entry tetap di `Prioritas :`-nya (preseden
+        TD-106, TD-178, TD-181): KRITIS 8, TINGGI 42, SEDANG 92, RENDAH 33.
+        KONSISTEN: 65 + 52 + 14 + 44 = 175 = TOTAL dan 8 + 42 + 92 + 33 =
+        175 = TOTAL. Parser SESUDAH edit (regex case-sensitive `^Status\s*:`,
+        tanpa .upper()): 175 field `ID :` = 175 field `Prioritas :` = 175
+        field `Status :` ber-bucket → kedua sum = 175 (V1 sesi ini).
+        Register dokumentasi saja, tidak ada kode diubah. Tidak commit (R10).]
         [65/44/8/58 pada 2026-10-08 (sesi TD-181 close): TD-181 (TESTING —
         internal/admin integration test pakai pgxmock sehingga class bug
         SQLSTATE 42P08 lolos) Status OPEN → ✅ FIXED (2026-10-08, sesi
@@ -4949,19 +4963,39 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-08, sesi TD-181 — close TD-181, real-DB integration test):
+3. RINGKASAN STATUS TERKINI (2026-10-08, sesi triage-v4 — prune 8 DROP → CLOSED + 6 DEFER → DEFERRED):
    - Total hutang teridentifikasi      : 175 item (TD-051 di-reserve/skip; 175 item aktif terdaftar).
    - ✅ FIXED                           : 65 item
-   - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
+   - CLOSED                             : 52 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
-                                          2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
-   - FIXED/CLOSED                       : 109 item
-   - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 58 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-181 — masih ada
-                                          TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
-                                          TD-052 s/d TD-057, dst/).
-     [65 + 44 + 8 + 58 = 175 = TOTAL]
+                                          2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
+                                          + 8 via triage-v4 2026-10-08)
+   - FIXED/CLOSED                       : 117 item
+   - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
+                                          TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
+                                          TD-175 via triage-v4 2026-10-08).
+   - ❌ OPEN                              : 44 item (sisa setelah triage-v4 = SEDANG 34 + RENDAH 10;
+                                          masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
+      [65 + 52 + 14 + 44 = 175 = TOTAL]
+      [Perubahan 2026-10-08 sesi triage-v4 (prune 8 DROP + 6 DEFER) — audit 58 OPEN
+      (SEDANG 42 + RENDAH 16) via git log 30 commit + per-TD grep, lalu User approve:
+      (a) 8 DROP → ✅ CLOSED: TD-116 (gofmt clean — fixed di commit 984667e), TD-159
+          (solusi -p 1 sudah di ci.yml:148, commit 7edae01), TD-139 (duplikat TD-159),
+          TD-117 (user-skip — Referensi TD-059 SS3), TD-056 (user-skip deploy),
+          TD-043 (low-ROI non-visible), TD-064 (low-ROI fixtures test), TD-084
+          (low-ROI seed dummy). 6 OPEN → 🔵 DEFERRED: TD-130 (keputusan bisnis cash
+          cancel fee), TD-134 (keputusan skema voucher per_user_limit), TD-162 (keputusan
+          skema + migration), TD-161 (butuh destructive reseed dev DB), TD-065 (spek LOCKED
+          konflik), TD-175 (butuh arahan Turbopack).
+      (b) Delta: FIXED 65 TETAP, CLOSED 44 → 52 (+8), DEFERRED 8 → 14 (+6), OPEN 58 → 44
+          (−14), TOTAL 175 TETAP (tidak ada entry baru). Sisa OPEN 44 = SEDANG 34 +
+          RENDAH 10. Bucket Prioritas TETAP: KRITIS 8, TINGGI 42, SEDANG 92, RENDAH 33
+          → 8 + 42 + 92 + 33 = 175 = TOTAL (close tidak geser Prioritas — preseden
+          TD-106/178/181).
+      (c) KONSISTEN: 65 + 52 + 14 + 44 = 175 = TOTAL. Parser SESUDAH edit (case-sensitive
+          regex `^Status\s*:` tanpa .upper()) mengonfirmasi kedua sum = 175 (V1 sesi ini).
+          Register dokumentasi saja, tidak ada kode diubah. Tidak commit (R10).]
      [Perubahan 2026-10-08 sesi TD-181 (close) — TD-181 (TESTING, `Prioritas :
      SEDANG`) Status OPEN → ✅ FIXED (2026-10-08, sesi TD-181): file BARU
      internal/admin/repository_integration_test.go (tag `integration`) berisi
@@ -8706,6 +8740,13 @@ CHANGELOG — 2026-10-08 (sesi TD-181, real-DB integration test):
 - Mutation check verified non-vacuous: revert `$1::varchar` → FAIL 42P08 → restore → PASS.
 - Fix gap TD-167 untuk admin package (sebelumnya pgxmock only).
 - FIXED 64→65, OPEN 59→58, SEDANG 92 tetap, RENDAH 33 tetap, TOTAL 175 tetap.
+========================================================================
+CHANGELOG — 2026-10-08 (sesi triage-v4, prune 8 DROP + 6 DEFER):
+- Audit 58 OPEN (SEDANG 42 + RENDAH 16). Cross-check git log 30 commit + per-TD grep.
+- 8 DROP → CLOSED: TD-116, TD-159, TD-139, TD-117, TD-056, TD-043, TD-064, TD-084.
+- 6 DEFER: TD-130, TD-134, TD-162, TD-161, TD-065, TD-175.
+- Shortlist 10 DO disiapkan (eksekusi sesi berikutnya): TD-154, TD-173, TD-109, TD-082, TD-054, TD-155, TD-176, TD-073, TD-177, TD-101.
+- FIXED 65 tetap, CLOSED 44→52, DEFERRED 8→14, OPEN 58→44, TOTAL 175 tetap.
 ========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
