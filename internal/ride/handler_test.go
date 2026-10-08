@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -1062,4 +1065,120 @@ func TestUserIDFromContext(t *testing.T) {
 	id, ok := userIDFromContext(c)
 	assert.True(t, ok)
 	assert.Equal(t, svcCustomerID, id)
+}
+
+// ---- GetRideHistory validasi ?status= (TD-173, mirror TD-164) ----
+
+// TestHandler_GetRidesHistory_InvalidStatus: setiap `?status=` di luar
+// whitelist validRideStatuses harus 400 INVALID_REQUEST. Test ini mengunci
+// root cause TD-173: sebelum whitelist, label tak dikenal diteruskan mentah
+// (hanya ToUpper) ke query, cast ke order_status_enum PostgreSQL gagal
+// (SQLSTATE 22P02) dan handler membalas 500 INTERNAL_SERVER_ERROR dengan
+// pesan yang membocorkan nama enum DB.
+func TestHandler_GetRidesHistory_InvalidStatus(t *testing.T) {
+	invalidStatuses := []string{
+		"INVALID",
+		"invalid",                 // lowercase: ToUpper diterapkan tapi tetap di luar enum
+		"foo_bar",                 // label acak
+		"SEARCHING_DRIVER_EXTRA",  // mirip label valid tapi bukan enum
+		"COMPLETED; DROP TABLE x", // percobaan injeksi, bukan label enum
+	}
+
+	for _, badStatus := range invalidStatuses {
+		t.Run(badStatus, func(t *testing.T) {
+			svc := new(mockRideService)
+			h := NewHandler(svc)
+
+			_, c, w := setupGin()
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?status="+url.QueryEscape(badStatus), nil)
+			c.Set("user_id", svcCustomerID.String())
+
+			h.GetRideHistory(c)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			var out struct {
+				Success bool `json:"success"`
+				Error   struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+			assert.False(t, out.Success)
+			assert.Equal(t, "INVALID_REQUEST", out.Error.Code)
+			// Nama enum/kolom PostgreSQL tidak boleh bocor ke client (TD-173).
+			assert.NotContains(t, w.Body.String(), "order_status_enum")
+			assert.NotContains(t, w.Body.String(), "22P02")
+			// Service TIDAK boleh dipanggil: label tidak boleh sampai ke query.
+			svc.AssertNotCalled(t, "GetRidesHistory",
+				mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// TestHandler_GetRidesHistory_ValidStatuses_Accepted: seluruh label pada
+// validRideStatuses harus lolos whitelist dan diteruskan apa adanya ke
+// service. Mengunci sinkronisasi whitelist dengan label enum di
+// migrations/004_ride_orders.up.sql (8 nilai).
+func TestHandler_GetRidesHistory_ValidStatuses_Accepted(t *testing.T) {
+	require.Len(t, validRideStatuses, 8, "whitelist harus sinkron dengan order_status_enum (8 label)")
+
+	for _, validStatus := range validRideStatuses {
+		t.Run(validStatus, func(t *testing.T) {
+			svc := new(mockRideService)
+			h := NewHandler(svc)
+
+			svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 1, 20, validStatus).
+				Return([]RideOrder{}, 0, nil).Once()
+
+			_, c, w := setupGin()
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides?status="+validStatus, nil)
+			c.Set("user_id", svcCustomerID.String())
+
+			h.GetRideHistory(c)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			svc.AssertExpectations(t)
+		})
+	}
+}
+
+// TestHandler_GetRidesHistory_EmptyStatus_Accepted: `?status=` tidak dikirim
+// (atau kosong) = tanpa filter — tetap 200 dan diteruskan apa adanya.
+func TestHandler_GetRidesHistory_EmptyStatus_Accepted(t *testing.T) {
+	svc := new(mockRideService)
+	h := NewHandler(svc)
+
+	svc.On("GetRidesHistory", mock.Anything, svcCustomerID, 1, 20, "").
+		Return([]RideOrder{}, 0, nil).Once()
+
+	_, c, w := setupGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/rides", nil)
+	c.Set("user_id", svcCustomerID.String())
+
+	h.GetRideHistory(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+// TestStatusForError_PgInvalidTextRepresentation: unit test langsung atas
+// mapping 22P02 -> 400 / INVALID_REQUEST (jaring pengaman lapis kedua TD-173).
+func TestStatusForError_PgInvalidTextRepresentation(t *testing.T) {
+	err := fmt.Errorf("query orders: %w",
+		&pgconn.PgError{Code: "22P02", Message: `invalid input value for enum order_status_enum: "INVALID"`})
+
+	assert.Equal(t, http.StatusBadRequest, statusForError(err))
+	assert.Equal(t, "INVALID_REQUEST", codeForError(err))
+	assert.NotContains(t, publicErrorMessage(err), "order_status_enum")
+}
+
+// TestStatusForError_PgErrorLain_Tetap500: mapping 22P02 TIDAK boleh melebar
+// ke SQLSTATE lain — error database yang genuinely internal tetap 500.
+func TestStatusForError_PgErrorLain_Tetap500(t *testing.T) {
+	for _, code := range []string{"23505", "42P01", "55P03", "08006"} {
+		err := &pgconn.PgError{Code: code, Message: "db detail"}
+		assert.Equal(t, http.StatusInternalServerError, statusForError(err), "SQLSTATE %s", code)
+		assert.Equal(t, "INTERNAL_SERVER_ERROR", codeForError(err), "SQLSTATE %s", code)
+	}
 }

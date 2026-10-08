@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
@@ -26,6 +27,34 @@ type RideService interface {
 	UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error)
 	GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error)
 	GetRidesHistory(ctx context.Context, customerID uuid.UUID, page, pageSize int, status string) ([]RideOrder, int, error)
+}
+
+// validRideStatuses adalah whitelist label order_status_enum yang boleh
+// dikirim client sebagai filter query di GET /rides (TD-173).
+//
+// Sifat daftar ini = cerminan label PostgreSQL enum `order_status_enum`
+// di migrations/004_ride_orders.up.sql: CREATED, SEARCHING_DRIVER,
+// DRIVER_ASSIGNED, DRIVER_ARRIVED, TRIP_STARTED, COMPLETED, CANCELLED,
+// SETTLED (8 nilai).
+//
+// PENTING (TD-173): nilai `status` dari client sebelumnya diteruskan mentah
+// (hanya strings.ToUpper) ke query, sehingga label di luar daftar ini
+// menggagalkan cast text -> enum di PostgreSQL (SQLSTATE 22P02) dan berakhir
+// sebagai 500 + pesan error DB yang membocorkan nama enum ke client.
+var validRideStatuses = []string{
+	"CREATED", "SEARCHING_DRIVER", "DRIVER_ASSIGNED", "DRIVER_ARRIVED",
+	"TRIP_STARTED", "COMPLETED", "CANCELLED", "SETTLED",
+}
+
+// isValidRideStatus memberi tahu apakah label (sudah uppercase) ada di
+// whitelist validRideStatuses.
+func isValidRideStatus(s string) bool {
+	for _, valid := range validRideStatuses {
+		if s == valid {
+			return true
+		}
+	}
+	return false
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -402,10 +431,15 @@ func (h *Handler) GetRideHistory(c *gin.Context) {
 	}
 
 	status := strings.ToUpper(c.Query("status"))
+	if status != "" && !isValidRideStatus(status) {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST",
+			"status must be one of: "+strings.Join(validRideStatuses, ", "))
+		return
+	}
 
 	orders, total, err := h.svc.GetRidesHistory(c.Request.Context(), userID, page, pageSize, status)
 	if err != nil {
-		writeError(c, statusForError(err), codeForError(err), err.Error())
+		writeError(c, statusForError(err), codeForError(err), publicErrorMessage(err))
 		return
 	}
 
@@ -506,6 +540,8 @@ func statusForError(err error) int {
 	case errors.Is(err, ErrInvalidStatus),
 		errors.Is(err, ErrInvalidPagination):
 		return http.StatusBadRequest
+	case isPgInvalidTextRepresentation(err):
+		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}
@@ -556,6 +592,8 @@ func codeForError(err error) string {
 		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidPagination):
 		return "INVALID_REQUEST"
+	case isPgInvalidTextRepresentation(err):
+		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidTransition):
 		return "INVALID_STATUS_TRANSITION"
 	case errors.Is(err, ErrNotAllowed):
@@ -577,6 +615,43 @@ func codeForError(err error) string {
 	default:
 		return "INTERNAL_SERVER_ERROR"
 	}
+}
+
+// pgInvalidTextRepresentation adalah SQLSTATE PostgreSQL untuk "invalid text
+// representation" — termasuk kegagalan cast ke tipe ENUM dengan label yang
+// tidak dikenal (mis. `order_status = $2` dengan $2 = "INVALID").
+const pgInvalidTextRepresentation = "22P02"
+
+// isPgInvalidTextRepresentation memberi tahu apakah err adalah
+// *pgconn.PgError dengan SQLSTATE 22P02.
+//
+// Ini jaring pengaman (catch-all) lapisan kedua untuk TD-173: whitelist di
+// handler.GetRideHistory (validRideStatuses) sudah menolak label tak dikenal
+// sebelum query, tapi label enum bisa saja ditambah migration berikutnya atau
+// query lain bisa mem-bind nilai tak tervalidasi. Tanpa mapping ini, 22P02
+// jatuh ke default 500 + err.Error() yang membocorkan nama enum.
+func isPgInvalidTextRepresentation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgInvalidTextRepresentation
+}
+
+// publicErrorMessage mengembalikan pesan error yang aman dikirim ke client.
+//
+// Error database mentah (*pgconn.PgError) tidak pernah diteruskan apa adanya:
+// pesan PostgreSQL membocorkan detail skema internal (nama enum
+// `order_status_enum`, nama kolom/constraint, dan sebagian query-nya) —
+// persis kebocoran yang dilaporkan TD-173 (mirror TD-164). Error domain
+// milik service (ErrOrderNotFound, ErrInvalidPagination, ...) aman untuk
+// ditampilkan apa adanya.
+func publicErrorMessage(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == pgInvalidTextRepresentation {
+			return "invalid value for one of the request parameters"
+		}
+		return "internal server error"
+	}
+	return err.Error()
 }
 
 // writeError menulis error response sesuai format API_CONTRACT:
