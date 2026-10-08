@@ -4356,7 +4356,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
-                                       (64 FIXED + 44 CLOSED + 8 DEFERRED + 59 OPEN = 175)
+                                       (65 FIXED + 44 CLOSED + 8 DEFERRED + 58 OPEN = 175)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4689,8 +4689,24 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 175 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 64 item, 44 item CLOSED (FIXED/CLOSED 108), 8 item DEFERRED,
-        59 item OPEN.  [64 + 44 + 8 + 59 = 175 = TOTAL]
+STATUS: ✅ FIXED 65 item, 44 item CLOSED (FIXED/CLOSED 109), 8 item DEFERRED,
+        58 item OPEN.  [65 + 44 + 8 + 58 = 175 = TOTAL]
+        [65/44/8/58 pada 2026-10-08 (sesi TD-181 close): TD-181 (TESTING —
+        internal/admin integration test pakai pgxmock sehingga class bug
+        SQLSTATE 42P08 lolos) Status OPEN → ✅ FIXED (2026-10-08, sesi
+        TD-181) setelah file BARU internal/admin/repository_integration_test.go
+        (tag `integration`) menambah 3 test UpdateMerchantStatus real DB
+        (Regression42P08, NotFound, RejectDoesNotSetVerifiedAt) + mutation
+        check non-vacuous. Delta Status: FIXED 64 → 65, OPEN 59 → 58, CLOSED 44
+        dan DEFERRED 8 tetap, TOTAL tetap 175 (tidak ada entry baru). Bucket
+        Prioritas TIDAK bergerak — TD-181 tetap `Prioritas : SEDANG` (bucket
+        mengikuti `Prioritas :`, bukan `Status :`; preseden TD-178 dan TD-168
+        yang sama-sama FIXED tapi tetap terdaftar di SEDANG): KRITIS 8, TINGGI
+        42, SEDANG 92, RENDAH 33. KONSISTEN: 65 + 44 + 8 + 58 = 175 = TOTAL dan
+        8 + 42 + 92 + 33 = 175 = TOTAL. Parser SESUDAH edit (regex
+        case-sensitive `^Status\s*:`, tanpa .upper()): 175 field `ID :` = 175
+        field `Prioritas :` = 175 field `Status :` ber-bucket → kedua sum = 175
+        (V1 sesi ini). Tidak commit (R10).]
         [63/44/8/58 pada 2026-10-08 (sesi E2E demo prep, BLOK 1E-3 — TD-179
         entry baru): TIDAK ada entry yang ditutup. TD-179 (KODE / KONSISTENSI
         — path PATCH status food `PATCH /food-orders/:id` (main.go:260, tanpa
@@ -4933,19 +4949,29 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-08, sesi TD-178 verify + fix 42P08 — TD-181 entry baru):
+3. RINGKASAN STATUS TERKINI (2026-10-08, sesi TD-181 — close TD-181, real-DB integration test):
    - Total hutang teridentifikasi      : 175 item (TD-051 di-reserve/skip; 175 item aktif terdaftar).
-   - ✅ FIXED                           : 64 item
+   - ✅ FIXED                           : 65 item
    - CLOSED                             : 44 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah)
-   - FIXED/CLOSED                       : 108 item
+   - FIXED/CLOSED                       : 109 item
    - DEFERRED                           : 8 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090, TD-098, TD-100).
-   - ❌ OPEN                              : 59 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-181 — masih ada
+   - ❌ OPEN                              : 58 item (bukan hanya TD-058 s/d TD-173, TD-175 s/d TD-181 — masih ada
                                           TD-022, TD-026, TD-031 s/d TD-037, TD-042 s/d TD-048,
                                           TD-052 s/d TD-057, dst/).
-     [64 + 44 + 8 + 59 = 175 = TOTAL]
+     [65 + 44 + 8 + 58 = 175 = TOTAL]
+     [Perubahan 2026-10-08 sesi TD-181 (close) — TD-181 (TESTING, `Prioritas :
+     SEDANG`) Status OPEN → ✅ FIXED (2026-10-08, sesi TD-181): file BARU
+     internal/admin/repository_integration_test.go (tag `integration`) berisi
+     3 test UpdateMerchantStatus real DB (Regression42P08, NotFound,
+     RejectDoesNotSetVerifiedAt) + mutation check non-vacuous.
+     (b) Delta: FIXED 64 → 65, OPEN 59 → 58, CLOSED 44 dan DEFERRED 8 tetap,
+     TOTAL 175 tetap (tidak ada entry baru). Bucket Prioritas TETAP: KRITIS 8,
+     TINGGI 42, SEDANG 92, RENDAH 33 → 8 + 42 + 92 + 33 = 175 = TOTAL.
+     (c) KONSISTEN: 65 + 44 + 8 + 58 = 175 = TOTAL. Parser SESUDAH edit
+     mengonfirmasi kedua sum = 175 (V1 sesi ini). Tidak commit (R10).]
      [Perubahan 2026-10-08 sesi E2E demo (BLOK 1E-3) — TD-179 (KODE /
      KONSISTENSI — path PATCH status food = `PATCH /food-orders/:id`
      (main.go:260, tanpa `/status`), ride = `PATCH /rides/:order_id/status`
@@ -8674,6 +8700,13 @@ CHANGELOG — 2026-10-08 (sesi TD-178 verify + fix 42P08):
 - TD-181 log BARU: admin integration test pakai pgxmock (tag `integration` tidak execute real DB → class bug SQL lolos).
 - FIXED 64 tetap, OPEN 58→59, SEDANG 91→92, RENDAH 33 tetap, TOTAL 174→175.
 ========================================================================
+========================================================================
+CHANGELOG — 2026-10-08 (sesi TD-181, real-DB integration test):
+- File BARU internal/admin/repository_integration_test.go (tag `integration`): 3 test UpdateMerchantStatus (Regression42P08, NotFound, RejectDoesNotSetVerifiedAt).
+- Mutation check verified non-vacuous: revert `$1::varchar` → FAIL 42P08 → restore → PASS.
+- Fix gap TD-167 untuk admin package (sebelumnya pgxmock only).
+- FIXED 64→65, OPEN 59→58, SEDANG 92 tetap, RENDAH 33 tetap, TOTAL 175 tetap.
+========================================================================
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
 =====
@@ -8695,6 +8728,15 @@ Dampak     : (1) E2E 2026-10-08: TD-178 endpoint 500 SQLSTATE 42P08 lolos dari t
 Bukti      : (a) `internal/admin/service_revoke_integration_test.go:47` — `pgxmock.NewPool()` (in-memory). (b) File `:1` — `//go:build integration` (tag) tapi tidak butuh DSN/PG. (c) Server log E2E: `ERROR: inconsistent types deduced for parameter $1 (SQLSTATE 42P08)` di `UpdateMerchantStatus` (repository.go:713 pre-fix 314de8c). (d) Bandingkan internal/ride/integration_test.go:1 (build tag) + :60 (setupPool pakai DATABASE_URL real). (e) `go test -tags integration ./internal/admin/` PASS — fake PASS karena mock.
 Solusi     : (1) Tambah `internal/admin/repository_integration_test.go` (tag `integration`) eksekusi SQL real: setupPool dari DATABASE_URL, test UpdateMerchantStatus happy + not-found + verify→ACTIVE. (2) Atau rewrite existing `service_revoke_integration_test.go` — ganti pgxmock dengan real pool. (3) Audit file `*_integration_test.go` lain apakah pakai pgxmock. (4) CI `go-integration` (TD-167) sudah jalan — begitu test real DB ditambah, regression gate aktif.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-08, sesi TD-181)
+Note       : * Implementasi: file BARU internal/admin/repository_integration_test.go (build tag `integration`).
+             * Helper setupAdminPool mirror pattern internal/ride/integration_test.go:58 (baca DATABASE_URL, skip kalau kosong).
+             * 3 test real DB (bukan pgxmock):
+               - Regression42P08: UPDATE status='ACTIVE' → no error, verified_at NOT NULL.
+               - NotFound: pgx.ErrNoRows.
+               - RejectDoesNotSetVerifiedAt: status='CLOSED' → verified_at unchanged (truncate UTC 1s).
+             * Mutation check verified non-vacuous: revert `$1::varchar` → FAIL SQLSTATE 42P08 → restore → PASS.
+             * Regression gate: TD-167 CI `go-integration` akan jalankan test ini → 42P08 tidak bisa lolos lagi.
+             * File diubah: internal/admin/repository_integration_test.go (BARU).
 Referensi  : TD-178 (temuan sesi ini, R8), TD-167 (go-integration job), commit 314de8c
 
