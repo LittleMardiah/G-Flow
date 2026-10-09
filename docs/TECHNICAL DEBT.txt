@@ -9037,6 +9037,42 @@ Referensi  : TD-054 (backend enforce 2FA, sesi ini), TD-178 (pattern
 
 
 
+ID         : TD-183
+Kategori   : BACKEND / FITUR
+Judul      : Withdrawal endpoint (POST /wallets/:id/withdrawal + PATCH
+             /admin/withdrawals/:id/approve) tidak ada di code meski
+             dispesifikasikan P0 di API CONTRACT §6.4 + §10.4. FIXED.
+Dampak     : (1) Driver/merchant tidak bisa withdrawal via API — gap
+             fungsional P0. (2) Mobile driver_app earnings_screen placeholder
+             "belum tersedia di phase ini". (3) openapi.yaml spec ada
+             tapi code kosong.
+Bukti      : Sebelum fix (2026-10-09): grep -rniE "withdrawal"
+             --include="*.go" . = 0 match. API CONTRACT §6.4 line 473-517
+             + §10.4 line 1251-1280. migrations/ 0 match — tabel
+             withdrawal_requests belum ada.
+Solusi     : DONE (2026-10-10, sesi TD-183). 9 commit f101428..94a006a:
+             - migration 020_withdrawal_requests.up.sql + scripts register
+             - repository: Insert/Get/List + UpdateWithdrawalStatus (CAS) +
+               GetWithdrawalForUpdate (FOR UPDATE) +
+               GetLedgerEntryIDByReference
+             - service user-side: RequestWithdrawal (limit Rp10rb-Rp10jt,
+               wallet ACTIVE, saldo cukup, idempotency key required)
+             - service admin: ApproveWithdrawal (COMPLETED/REJECTED/FAILED,
+               ledger DEBIT wallet -> CREDIT SYSTEM_BANK_GATEWAY,
+               lockWalletsAsc sebelum CreateLedgerEntries, CAS PENDING)
+             - handler user: POST /wallets/:id/withdrawal +
+               GET /wallets/:id/withdrawals
+             - handler admin: PATCH /admin/withdrawals/:id/approve
+               (2FA + lockout mirror ReverseTransaction)
+             - integration test: 6/6 PASS
+             Bug via integration test: SQLSTATE 42P08 ($1 dipakai di
+             SET status + CASE WHEN, PG infer konflik) — fix $1::varchar.
+             Pattern sama TD-178 (UpdateMerchantStatus).
+Prioritas  : TINGGI
+Status     : ✅ FIXED (2026-10-10, sesi TD-183)
+Referensi  : API CONTRACT §6.4 + §10.4, PRD F003, DATABASE_SCHEMA §7,
+             TD-178 (pattern 42P08)
+
 ========================================================================
 CHANGELOG — 2026-10-09 (sesi TD-054, admin 2FA untuk UpdateUserStatus):
 - Backend: internal/admin/handler.go UpdateUserStatus + 2FA + lockout block
