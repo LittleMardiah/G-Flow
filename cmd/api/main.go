@@ -299,6 +299,7 @@ func main() {
 		adminGroup.GET("/users/:id", adminHandler.GetUserDetail)
 		adminGroup.PATCH("/users/:id/:action", adminHandler.UpdateUserStatus)
 		adminGroup.PATCH("/merchants/:id/status", adminHandler.UpdateMerchantStatus)
+		adminGroup.PATCH("/withdrawals/:id/approve", adminHandler.ApproveWithdrawal)
 	}
 
 	// Jalankan background worker flush lokasi driver (2.6) sebagai goroutine.

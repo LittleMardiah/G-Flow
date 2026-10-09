@@ -33,6 +33,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/g-flow/g-flow/internal/auth"
+	"github.com/g-flow/g-flow/internal/wallet"
 )
 
 // Handler menerima request HTTP terkait administrasi.
@@ -700,4 +701,76 @@ func writeAccountLockedError(c *gin.Context, err error) {
 			"details": gin.H{"retry_after": retryAfterSeconds},
 		},
 	})
+}
+
+// ApproveWithdrawal PATCH /api/v1/admin/withdrawals/:id/approve
+// TD-183. Body: {"status": "COMPLETED"|"REJECTED"|"FAILED"}.
+// 2FA + lockout WAJIB (mirror ReverseTransaction).
+func (h *Handler) ApproveWithdrawal(c *gin.Context) {
+	adminIDStr := c.GetString("user_id")
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "tidak dapat mengidentifikasi admin")
+		return
+	}
+	locked, err := h.checkLockout(c.Request.Context(), adminID)
+	if err != nil {
+		h.logger.Warn("lockout check failed", "admin_id", adminID, "error", err)
+	}
+	if locked {
+		writeError(c, http.StatusTooManyRequests, "LOCKOUT", "akun terkunci karena terlalu banyak percobaan 2FA; coba lagi 15 menit lagi")
+		return
+	}
+	twoFAToken := c.GetHeader(admin2FASecretHeader)
+	if twoFAToken == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "header X-Admin-2FA-Token wajib diisi")
+		return
+	}
+	if !h.twoFA.Validate(twoFAToken) {
+		_, _ = h.recordFailedAttempt(c.Request.Context(), adminID)
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
+		return
+	}
+	h.resetAttempts(c.Request.Context(), adminID)
+
+	idStr := c.Param("id")
+	withdrawalID, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(c, http.StatusUnprocessableEntity, "INVALID_WITHDRAWAL_ID", "withdrawal id tidak valid")
+		return
+	}
+
+	var body struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "format body tidak valid")
+		return
+	}
+
+	result, err := h.svc.ApproveWithdrawal(c.Request.Context(), WithdrawalApprovalRequest{
+		WithdrawalID: withdrawalID,
+		AdminID:      adminID,
+		NewStatus:    body.Status,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, wallet.ErrWithdrawalNotFound):
+			writeError(c, http.StatusNotFound, "WITHDRAWAL_NOT_FOUND", "pengajuan tidak ditemukan")
+		case errors.Is(err, wallet.ErrInvalidStatus):
+			writeError(c, http.StatusBadRequest, "INVALID_STATUS", "status tidak valid atau sudah final")
+		default:
+			h.logger.Error("admin approve withdrawal failed", "admin_id", adminID, "withdrawal_id", withdrawalID, "error", err)
+			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "gagal memproses approval")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"withdrawal_id": result.ID,
+		"status":        result.Status,
+		"amount":        result.Amount,
+		"bank_account":  result.BankAccountNumber,
+		"approved_at":   result.CompletedAt,
+	}})
 }
