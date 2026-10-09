@@ -61,3 +61,6 @@ test-results/
 # Task logs & prompts (temporary)
 task_*.log
 prompt_*.txt
+
+# Go binary output (from `go build ./cmd/api`)
+/api

@@ -1081,3 +1081,24 @@ func clawbackDescription(walletType string) string {
 func validEmail(email string) bool {
 	return strings.Contains(email, "@") && strings.Contains(email, ".")
 }
+
+// WithdrawalApprovalRequest adalah input admin approve/reject pengajuan.
+// Proxy ke wallet.Service.ApproveWithdrawal (S8b-1 wire + S8b-3 wrapper).
+type WithdrawalApprovalRequest struct {
+	WithdrawalID uuid.UUID
+	AdminID      uuid.UUID
+	NewStatus    string // COMPLETED | REJECTED | FAILED
+}
+
+// ApproveWithdrawal mem-proxy ke wallet.Service.ApproveWithdrawal.
+// 2FA + lockout dicek di handler layer (S8b-4), bukan di sini.
+func (s *Service) ApproveWithdrawal(ctx context.Context, req WithdrawalApprovalRequest) (*wallet.WithdrawalRequest, error) {
+	if s.walletSvc == nil {
+		return nil, errors.New("admin: wallet service tidak tersedia")
+	}
+	return s.walletSvc.ApproveWithdrawal(ctx, wallet.ApproveWithdrawalInput{
+		WithdrawalID: req.WithdrawalID,
+		AdminID:      req.AdminID,
+		NewStatus:    req.NewStatus,
+	})
+}
