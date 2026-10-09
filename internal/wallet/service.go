@@ -139,6 +139,10 @@ type MyWallet struct {
 type WalletRepo interface {
 	GetByUserIDAndType(ctx context.Context, userID uuid.UUID, walletType string) (*Wallet, error)
 	GetByID(ctx context.Context, walletID uuid.UUID) (*Wallet, error)
+
+	// TD-183 withdrawal (user-side)
+	InsertWithdrawal(ctx context.Context, w *WithdrawalRequest) (*WithdrawalRequest, error)
+	ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error)
 	GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
 	GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error)
 	ListLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string, limit, offset int) ([]LedgerEntry, error)
@@ -879,4 +883,83 @@ func (s *Service) redisSet(ctx context.Context, userID uuid.UUID, key string, st
 type redisCache struct {
 	State    string          `json:"state"`
 	Response json.RawMessage `json:"response"`
+}
+
+// -----------------------------------------------------------------------------
+// Withdrawal (user-side) — TD-183
+// -----------------------------------------------------------------------------
+
+const (
+	MinWithdrawalAmount     = 10000
+	MaxWithdrawalAmount     = 10000000
+	WithdrawalStatusPending = "PENDING"
+)
+
+var (
+	ErrWithdrawalNotEligible   = errors.New("only driver and merchant can request withdrawal")
+	ErrWithdrawalAmountTooLow  = errors.New("withdrawal amount below minimum")
+	ErrWithdrawalAmountTooHigh = errors.New("withdrawal amount above maximum")
+)
+
+// RequestWithdrawalInput adalah input user-side withdrawal request.
+type RequestWithdrawalInput struct {
+	UserID            uuid.UUID
+	UserType          string
+	WalletID          uuid.UUID
+	Amount            decimal.Decimal
+	BankName          string
+	BankAccountNumber string
+	BankAccountName   string
+	IdempotencyKey    string
+}
+
+// RequestWithdrawal membuat pengajuan withdrawal baru (status PENDING).
+// Validasi: user_type driver/merchant, amount range, wallet ACTIVE, saldo cukup.
+func (s *Service) RequestWithdrawal(ctx context.Context, in RequestWithdrawalInput) (*WithdrawalRequest, error) {
+	if in.UserType != "driver" && in.UserType != "merchant" {
+		return nil, ErrWithdrawalNotEligible
+	}
+	if in.IdempotencyKey == "" {
+		return nil, errors.New("idempotency key is required")
+	}
+	amt := in.Amount
+	if amt.LessThan(decimal.NewFromInt(MinWithdrawalAmount)) {
+		return nil, ErrWithdrawalAmountTooLow
+	}
+	if amt.GreaterThan(decimal.NewFromInt(MaxWithdrawalAmount)) {
+		return nil, ErrWithdrawalAmountTooHigh
+	}
+
+	wallet, err := s.repo.GetByID(ctx, in.WalletID)
+	if err != nil {
+		return nil, err
+	}
+	if wallet.UserID != in.UserID {
+		return nil, ErrWalletNotFound
+	}
+	if wallet.Status != WalletStatusActive {
+		return nil, ErrWalletInactive
+	}
+	if wallet.Balance.LessThan(amt) {
+		return nil, ErrInsufficientBalance
+	}
+
+	fee := decimal.Zero
+	netAmount := amt.Sub(fee)
+
+	return s.repo.InsertWithdrawal(ctx, &WithdrawalRequest{
+		UserID:            in.UserID,
+		WalletID:          in.WalletID,
+		Amount:            amt,
+		Fee:               fee,
+		NetAmount:         netAmount,
+		BankName:          in.BankName,
+		BankAccountNumber: in.BankAccountNumber,
+		BankAccountName:   in.BankAccountName,
+	})
+}
+
+// ListWithdrawals mengembalikan pengajuan user, terbaru dulu.
+func (s *Service) ListWithdrawals(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error) {
+	return s.repo.ListWithdrawalsByUser(ctx, userID, limit, offset)
 }

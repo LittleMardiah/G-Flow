@@ -38,6 +38,21 @@ func (m *mockRepo) GetByID(ctx context.Context, walletID uuid.UUID) (*Wallet, er
 	}
 	return args.Get(0).(*Wallet), args.Error(1)
 }
+func (m *mockRepo) InsertWithdrawal(ctx context.Context, w *WithdrawalRequest) (*WithdrawalRequest, error) {
+	args := m.Called(ctx, w)
+	if r := args.Get(0); r != nil {
+		return r.(*WithdrawalRequest), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *mockRepo) ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if r := args.Get(0); r != nil {
+		return r.([]WithdrawalRequest), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
 
 func (m *mockRepo) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error) {
 	args := m.Called(ctx, walletID)

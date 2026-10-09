@@ -20,6 +20,7 @@ import (
 var (
 	ErrWalletNotFound      = errors.New("wallet not found")
 	ErrWalletAlreadyExists = errors.New("wallet already exists for this user")
+	ErrWithdrawalNotFound  = errors.New("withdrawal tidak ditemukan")
 )
 
 // Wallet adalah representasi baris tabel wallets.
@@ -331,4 +332,117 @@ func (r *Repository) CountLedgerEntries(ctx context.Context, walletID uuid.UUID,
 	}
 
 	return total, nil
+}
+
+// WithdrawalRequest adalah representasi satu baris withdrawal_requests.
+// Response DTO memetakan Status PENDING -> PENDING_APPROVAL di handler layer
+// (lihat comment migration 020).
+type WithdrawalRequest struct {
+	ID                uuid.UUID       `json:"id"`
+	UserID            uuid.UUID       `json:"user_id"`
+	WalletID          uuid.UUID       `json:"wallet_id"`
+	Amount            decimal.Decimal `json:"amount"`
+	Fee               decimal.Decimal `json:"fee"`
+	NetAmount         decimal.Decimal `json:"net_amount"`
+	BankName          string          `json:"bank_name"`
+	BankAccountNumber string          `json:"bank_account_number"`
+	BankAccountName   string          `json:"bank_account_name"`
+	Status            string          `json:"status"`
+	RequestedAt       time.Time       `json:"requested_at"`
+	ProcessedAt       *time.Time      `json:"processed_at,omitempty"`
+	CompletedAt       *time.Time      `json:"completed_at,omitempty"`
+	LedgerEntryID     *uuid.UUID      `json:"ledger_entry_id,omitempty"`
+	AdminNotes        *string         `json:"admin_notes,omitempty"`
+	RejectionReason   *string         `json:"rejection_reason,omitempty"`
+}
+
+const withdrawalColumns = `id, user_id, wallet_id, amount, fee, net_amount,
+    bank_name, bank_account_number, bank_account_name, status,
+    requested_at, processed_at, completed_at, ledger_entry_id,
+    admin_notes, rejection_reason`
+
+// InsertWithdrawal menyimpan pengajuan withdrawal baru (status PENDING).
+// Caller WAJIB memastikan wallet aktif + saldo cukup (dilakukan di Service).
+func (r *Repository) InsertWithdrawal(ctx context.Context, w *WithdrawalRequest) (*WithdrawalRequest, error) {
+	var out WithdrawalRequest
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO withdrawal_requests (
+			user_id, wallet_id, amount, fee, net_amount,
+			bank_name, bank_account_number, bank_account_name, status
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING')
+		RETURNING `+withdrawalColumns+`
+	`, w.UserID, w.WalletID, w.Amount, w.Fee, w.NetAmount,
+		w.BankName, w.BankAccountNumber, w.BankAccountName).Scan(
+		&out.ID, &out.UserID, &out.WalletID, &out.Amount, &out.Fee,
+		&out.NetAmount, &out.BankName, &out.BankAccountNumber,
+		&out.BankAccountName, &out.Status, &out.RequestedAt,
+		&out.ProcessedAt, &out.CompletedAt, &out.LedgerEntryID,
+		&out.AdminNotes, &out.RejectionReason,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetWithdrawalByID membaca satu pengajuan. ErrWithdrawalNotFound bila tidak ada.
+func (r *Repository) GetWithdrawalByID(ctx context.Context, id uuid.UUID) (*WithdrawalRequest, error) {
+	var out WithdrawalRequest
+	err := r.db.QueryRow(ctx, `
+		SELECT `+withdrawalColumns+`
+		FROM withdrawal_requests WHERE id = $1
+	`, id).Scan(
+		&out.ID, &out.UserID, &out.WalletID, &out.Amount, &out.Fee,
+		&out.NetAmount, &out.BankName, &out.BankAccountNumber,
+		&out.BankAccountName, &out.Status, &out.RequestedAt,
+		&out.ProcessedAt, &out.CompletedAt, &out.LedgerEntryID,
+		&out.AdminNotes, &out.RejectionReason,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWithdrawalNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListWithdrawalsByUser mengembalikan pengajuan user, terbaru dulu.
+// limit <= 0 -> default 20; max 100.
+func (r *Repository) ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT `+withdrawalColumns+`
+		FROM withdrawal_requests
+		WHERE user_id = $1
+		ORDER BY requested_at DESC
+		LIMIT $2 OFFSET $3
+	`, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WithdrawalRequest
+	for rows.Next() {
+		var w WithdrawalRequest
+		if err := rows.Scan(
+			&w.ID, &w.UserID, &w.WalletID, &w.Amount, &w.Fee,
+			&w.NetAmount, &w.BankName, &w.BankAccountNumber,
+			&w.BankAccountName, &w.Status, &w.RequestedAt,
+			&w.ProcessedAt, &w.CompletedAt, &w.LedgerEntryID,
+			&w.AdminNotes, &w.RejectionReason,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
 }
