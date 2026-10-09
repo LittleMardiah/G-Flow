@@ -143,6 +143,9 @@ type WalletRepo interface {
 	// TD-183 withdrawal (user-side)
 	InsertWithdrawal(ctx context.Context, w *WithdrawalRequest) (*WithdrawalRequest, error)
 	ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error)
+	GetWithdrawalForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*WithdrawalRequest, error)
+	UpdateWithdrawalStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, expectedStatus, newStatus string, ledgerEntryID *uuid.UUID) (int64, error)
+	GetLedgerEntryIDByReference(ctx context.Context, tx pgx.Tx, refType string, refID uuid.UUID, entryType string) (uuid.UUID, error)
 	GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error)
 	GetWalletOwner(ctx context.Context, walletID uuid.UUID) (uuid.UUID, error)
 	ListLedgerEntries(ctx context.Context, walletID uuid.UUID, refType string, limit, offset int) ([]LedgerEntry, error)
@@ -962,4 +965,78 @@ func (s *Service) RequestWithdrawal(ctx context.Context, in RequestWithdrawalInp
 // ListWithdrawals mengembalikan pengajuan user, terbaru dulu.
 func (s *Service) ListWithdrawals(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error) {
 	return s.repo.ListWithdrawalsByUser(ctx, userID, limit, offset)
+}
+
+// ApproveWithdrawalInput adalah input admin approve/reject pengajuan.
+type ApproveWithdrawalInput struct {
+	WithdrawalID uuid.UUID
+	AdminID      uuid.UUID
+	NewStatus    string // COMPLETED | REJECTED | FAILED
+	Reason       string
+}
+
+// ApproveWithdrawal memproses pengajuan withdrawal (status PENDING).
+// COMPLETED: bikin ledger DEBIT wallet -> CREDIT SYSTEM_BANK_GATEWAY,
+// query ledger_entry_id DEBIT by reference, set status + link. REJECTED/FAILED:
+// set status saja (tanpa ledger). Idempoten by CAS (expectedStatus=PENDING).
+// 2FA + lockout dicek di handler layer (S7).
+func (s *Service) ApproveWithdrawal(ctx context.Context, in ApproveWithdrawalInput) (*WithdrawalRequest, error) {
+	if in.NewStatus != "COMPLETED" && in.NewStatus != "REJECTED" && in.NewStatus != "FAILED" {
+		return nil, ErrInvalidStatus
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	w, err := s.repo.GetWithdrawalForUpdate(ctx, tx, in.WithdrawalID)
+	if err != nil {
+		return nil, err
+	}
+	if w.Status != WithdrawalStatusPending {
+		return nil, ErrInvalidStatus
+	}
+
+	var ledgerEntryID *uuid.UUID
+	if in.NewStatus == "COMPLETED" {
+		bankID, err := s.systemWalletID(ctx, tx, WalletTypeSystemBankGateway)
+		if err != nil {
+			return nil, err
+		}
+		entries := []LedgerEntry{
+			{WalletID: w.WalletID, EntryType: EntryDebit, Amount: w.Amount,
+				ReferenceType: "WITHDRAWAL", ReferenceID: w.ID,
+				Description: "WITHDRAWAL - DEBIT wallet"},
+			{WalletID: bankID, EntryType: EntryCredit, Amount: w.Amount,
+				ReferenceType: "WITHDRAWAL", ReferenceID: w.ID,
+				Description: "WITHDRAWAL - CREDIT SYSTEM_BANK_GATEWAY"},
+		}
+		if err := s.ledger.CreateLedgerEntries(ctx, tx, entries); err != nil {
+			return nil, err
+		}
+		// Query ledger_entry_id DEBIT by reference (bukan dari return).
+		lid, err := s.repo.GetLedgerEntryIDByReference(ctx, tx, "WITHDRAWAL", w.ID, EntryDebit)
+		if err != nil {
+			return nil, err
+		}
+		ledgerEntryID = &lid
+	}
+
+	rows, err := s.repo.UpdateWithdrawalStatus(ctx, tx, in.WithdrawalID, WithdrawalStatusPending, in.NewStatus, ledgerEntryID)
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		return nil, ErrInvalidStatus
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	w.Status = in.NewStatus
+	w.LedgerEntryID = ledgerEntryID
+	return w, nil
 }

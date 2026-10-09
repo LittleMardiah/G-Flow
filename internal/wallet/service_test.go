@@ -53,6 +53,23 @@ func (m *mockRepo) ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID, 
 	}
 	return nil, args.Error(1)
 }
+func (m *mockRepo) GetWithdrawalForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*WithdrawalRequest, error) {
+	args := m.Called(ctx, tx, id)
+	if r := args.Get(0); r != nil {
+		return r.(*WithdrawalRequest), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *mockRepo) UpdateWithdrawalStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, expectedStatus, newStatus string, ledgerEntryID *uuid.UUID) (int64, error) {
+	args := m.Called(ctx, tx, id, expectedStatus, newStatus, ledgerEntryID)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *mockRepo) GetLedgerEntryIDByReference(ctx context.Context, tx pgx.Tx, refType string, refID uuid.UUID, entryType string) (uuid.UUID, error) {
+	args := m.Called(ctx, tx, refType, refID, entryType)
+	return args.Get(0).(uuid.UUID), args.Error(1)
+}
 
 func (m *mockRepo) GetBalance(ctx context.Context, walletID uuid.UUID) (decimal.Decimal, error) {
 	args := m.Called(ctx, walletID)

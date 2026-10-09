@@ -446,3 +446,61 @@ func (r *Repository) ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID
 	}
 	return out, rows.Err()
 }
+
+// UpdateWithdrawalStatus mengubah status pengajuan (CAS by expectedStatus)
+// dan opsional set completed_at/ledger_entry_id. Return rows affected.
+// Caller WAJIB menjalankan dalam transaksi + sudah memegang lock via
+// GetWithdrawalForUpdate.
+func (r *Repository) UpdateWithdrawalStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, expectedStatus, newStatus string, ledgerEntryID *uuid.UUID) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE withdrawal_requests
+		SET status = $1,
+		    completed_at = CASE WHEN $1 = 'COMPLETED' THEN NOW() ELSE completed_at END,
+		    processed_at = COALESCE(processed_at, NOW()),
+		    ledger_entry_id = COALESCE($3, ledger_entry_id)
+		WHERE id = $2 AND status = $4
+	`, newStatus, id, ledgerEntryID, expectedStatus)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// GetWithdrawalForUpdate memuat pengajuan dengan FOR UPDATE (dalam transaksi).
+func (r *Repository) GetWithdrawalForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*WithdrawalRequest, error) {
+	var out WithdrawalRequest
+	err := tx.QueryRow(ctx, `
+		SELECT `+withdrawalColumns+`
+		FROM withdrawal_requests WHERE id = $1
+		FOR UPDATE
+	`, id).Scan(
+		&out.ID, &out.UserID, &out.WalletID, &out.Amount, &out.Fee,
+		&out.NetAmount, &out.BankName, &out.BankAccountNumber,
+		&out.BankAccountName, &out.Status, &out.RequestedAt,
+		&out.ProcessedAt, &out.CompletedAt, &out.LedgerEntryID,
+		&out.AdminNotes, &out.RejectionReason,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWithdrawalNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetLedgerEntryIDByReference mencari id ledger entry berdasar reference
+// (dipakai untuk link ledger_entry_id ke withdrawal_requests).
+func (r *Repository) GetLedgerEntryIDByReference(ctx context.Context, tx pgx.Tx, refType string, refID uuid.UUID, entryType string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `
+		SELECT id FROM ledger_entries
+		WHERE reference_type = $1 AND reference_id = $2 AND entry_type = $3
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, refType, refID, entryType).Scan(&id)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
