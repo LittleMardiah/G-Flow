@@ -285,7 +285,7 @@ func TestAdminLogin_LockoutFallbackToPostgresWhenRedisDown(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgmockRowsWithLockedUntil(time.Now().Add(10 * time.Minute)))
 
-	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil)
+	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil, nil)
 	h := NewHandler(svc, mDB, rdb, testLogger(), NewStaticTwoFactorValidator(""), newTestJWT())
 	w := doLogin(loginRouter(h), loginBody(adminEmailPlain, testPassword))
 
@@ -335,7 +335,7 @@ func TestServiceLogin_NoLockoutGuard(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(mockLoginUserRow(testAdminID, adminEmailPlain, "admin", "ACTIVE", mustHash(t, testPassword)))
 
-	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil)
+	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil, nil)
 	res, err := svc.Login(context.Background(), adminEmailPlain, testPassword)
 
 	require.NoError(t, err)

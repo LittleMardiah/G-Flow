@@ -42,6 +42,7 @@ func newSvc(t *testing.T, mDB pgxmock.PgxPoolIface) *Service {
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		nil,
+		nil,
 	)
 }
 
@@ -207,6 +208,7 @@ func newTestHandler(t *testing.T, mDB pgxmock.PgxPoolIface, mr *miniredis.Minire
 		NewRepository(mDB),
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 		nil,
 	)
 	return NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
@@ -810,7 +812,7 @@ func TestRecordFailedAttempt_Fallback(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
-	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	attempts, err := h.recordFailedAttempt(context.Background(), testAdminID)
 	require.NoError(t, err)
@@ -834,7 +836,7 @@ func TestRecordFailedAttempt_LocksViaRedis(t *testing.T) {
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	attempts, err := h.recordFailedAttempt(context.Background(), testAdminID)
 	require.NoError(t, err)
@@ -860,7 +862,7 @@ func TestCheckLockout_RedisErrorFallback(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"locked"}).AddRow(true))
 
-	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	h := NewHandler(svc, mDB, rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), NewStaticTwoFactorValidator(""), newTestJWT())
 	locked, err := h.checkLockout(context.Background(), testAdminID)
 	require.NoError(t, err)
@@ -920,6 +922,7 @@ func newSvcWithBlacklist(t *testing.T, mDB pgxmock.PgxPoolIface, rdb *redis.Clie
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		auth.NewBlacklistService(rdb),
+		nil,
 	)
 }
 

@@ -51,6 +51,7 @@ func TestIntegrationAdmin_RevokeUserBefore_ImmediateRevoke(t *testing.T) {
 		mDB,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		blacklist,
+		nil,
 	)
 
 	ctx := context.Background()

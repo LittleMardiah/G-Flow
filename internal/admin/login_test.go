@@ -64,7 +64,7 @@ func doLogin(router http.Handler, body string) *httptest.ResponseRecorder {
 
 func newLoginHandler(t *testing.T, mDB pgxmock.PgxPoolIface) *Handler {
 	t.Helper()
-	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil)
+	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil, nil)
 	return NewHandler(svc, mDB, nil, testLogger(), NewStaticTwoFactorValidator(""), newTestJWT())
 }
 
@@ -242,7 +242,7 @@ func TestServiceLogin_InvalidEmail(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 
-	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil)
+	svc := NewService(NewRepository(mDB), mDB, testLogger(), nil, nil)
 	_, err = svc.Login(context.Background(), "bukan-email", "password")
 	require.ErrorIs(t, err, ErrInvalidCredentials)
 	assert.NoError(t, mDB.ExpectationsWereMet())
