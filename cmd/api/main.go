@@ -72,8 +72,8 @@ func main() {
 	// Wire up dependencies wallet.
 	repo := wallet.NewRepository(pool)
 	ledger := wallet.NewLedgerService(pool)
-	svc := wallet.NewService(repo, ledger, rdb, pool)
-	handler := wallet.NewHandler(svc)
+	walletService := wallet.NewService(repo, ledger, rdb, pool)
+	handler := wallet.NewHandler(walletService)
 
 	// Wire up dependencies ride (F004 booking).
 	rideRepository := ride.NewRepository(pool)
@@ -129,7 +129,7 @@ func main() {
 	// TD-023 (FIXED STEP 1B): secret 2FA dibaca dari env ADMIN_2FA_SECRET;
 	// fail-fast (panic) saat ENV=production dan secret kosong.
 	adminRepository := admin.NewRepository(pool)
-	adminService := admin.NewService(adminRepository, pool, slog.Default(), blacklistService)
+	adminService := admin.NewService(adminRepository, pool, slog.Default(), blacklistService, walletService)
 	adminTwoFA := admin.NewStaticTwoFactorValidator(os.Getenv("ADMIN_2FA_SECRET"))
 	adminHandler := admin.NewHandler(adminService, pool, rdb, slog.Default(), adminTwoFA, jwtService)
 

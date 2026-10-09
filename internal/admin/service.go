@@ -40,6 +40,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/g-flow/g-flow/internal/auth"
+	"github.com/g-flow/g-flow/internal/wallet"
 )
 
 // Reference type / description constants untuk journal reversal.
@@ -136,11 +137,12 @@ type Service struct {
 	// blacklist menangani user-level token revocation (TD-174). Nil = revoke
 	// nonaktif (dipakai oleh test yang tidak menguji revoke).
 	blacklist *auth.BlacklistService
+	walletSvc *wallet.Service
 }
 
 // NewService membuat Service reversal baru.
-func NewService(repo *Repository, db DB, logger *slog.Logger, blacklist *auth.BlacklistService) *Service {
-	return &Service{repo: repo, db: db, logger: logger, blacklist: blacklist}
+func NewService(repo *Repository, db DB, logger *slog.Logger, blacklist *auth.BlacklistService, walletSvc *wallet.Service) *Service {
+	return &Service{repo: repo, db: db, logger: logger, blacklist: blacklist, walletSvc: walletSvc}
 }
 
 // setLockoutGuard menyuntikkan implementasi lockout ke Service. Dipanggil
