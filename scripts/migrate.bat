@@ -71,6 +71,11 @@ if errorlevel 1 exit /b 1
 :: SYSTEM_PLATFORM. JANGAN tambahkan --single-transaction: nilai enum baru
 :: tidak boleh dipakai di transaksi yang sama dengan ALTER TYPE ADD VALUE.
 psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\019_add_platform_subsidy_wallet.up.sql
+:: Migration 020 - withdrawal_requests (TD-183). Tabel request penarikan +
+:: status enum PENDING/PROCESSING/COMPLETED/FAILED/REJECTED (DB source of
+:: truth); API memetakan PENDING ke PENDING_APPROVAL. Idempotency di app
+:: layer (body idempotency_key), bukan schema.
+psql %DATABASE_URL% -v ON_ERROR_STOP=1 -f migrations\020_withdrawal_requests.up.sql
 if errorlevel 1 exit /b 1
 
 echo Migrations completed.
