@@ -4335,7 +4335,7 @@ Solusi     : Tambah handler `GET /admin/ledger/verify` (global) mirror per-walle
              response `{total_debit, total_credit, diff, is_balanced,
              checked_at}`. Repository query direct DB SUM tanpa limit. + test.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-09, sesi TD-177)
 Referensi  : E2E verify 2026-10-08 (temuan di luar scope demo prep, R8), TD-091
              (tidak terkait, hanya contoh referensi), PRD Success Metric "Ledger
              Balance Discrepancy: Rp 0"
@@ -8930,6 +8930,41 @@ CHANGELOG — 2026-10-09 (sesi TD-109, wontfix 403 by design):
 - Keputusan: WONTFIX — 403 tetap (bukan uniform 404) karena UUID v4 non-enumerable + rate limit + konsistensi UpdateStatus + spec compliance §3.2 + zero risk.
 - FIXED 67 tetap, CLOSED 52→53, OPEN 42→41, SEDANG 92 tetap, TOTAL 175 tetap.
 ========================================================================
+========================================================================
+CHANGELOG — 2026-10-09 (sesi TD-177, global ledger verify):
+- Backend: `GET /api/v1/admin/ledger/verify` (tanpa wallet_id) ditambah.
+  Response: {total_debit, total_credit, discrepancy, status,
+  unbalanced_reference_count, checked_at}. Status BALANCED jika
+  discrepancy==0 DAN unbalanced_reference_count==0. Mirror per-wallet.
+- Code: internal/admin/repository.go (VerifyGlobalLedger + GlobalLedgerTotals),
+  internal/admin/service.go (VerifyGlobalLedger + GlobalBalanceVerification),
+  internal/admin/handler.go (VerifyLedgerGlobal),
+  cmd/api/main.go (route), internal/admin/ledger_admin_test.go (6 test).
+- Coverage: internal/admin 83.1% (6 test TD-177 baru).
+- Delta register: FIXED 69 → 70, OPEN 40 → 39, TOTAL 176 tetap.
+
+[INCIDENT-1 — sesi TD-177 fix PERTAMA (2026-10-09) — reviewer + OpenCode]
+  Kronologi:
+  1. Prompt reviewer 5-file overload (langgar spirit §16.3 prompt kecil).
+  2. OpenCode hapus 314 lines dari service.go saat re-add method (blast radius).
+  3. OpenCode klaim "V1-V5 no new errors" + "pre-existing unrelated symbols"
+     TANPA raw output — melanggar R3.1.
+  4. Verifikasi A/B (git stash + go build) mengungkap klaim PALSU — HEAD build
+     CLEAN, working tree broken.
+  Recovery:
+  - Session-2: git checkout service.go + fix 2 error sisa (fmt import +
+    re-insert VerifyGlobalLedger via python3 exact-match, assert-safe).
+  - Session-3: tambah 1 test coverage gap (Query2Error) + close TD-177.
+  - Session-4 (part-2): regex re.split salah → OpenCode STOP + LAPOR +
+    propose fix (R9 compliance). Reviewer acknowledge prompt salah.
+  Lesson (§16.6 spirit):
+  - Prompt fix = 1 file per prompt. Prompt besar = blast radius besar.
+  - WAJIB "paste RAW output" per command (R3.1).
+  - Verifikasi A/B (git stash) sebagai standar saat klaim "pre-existing".
+  - Regex re.split dengan capture group TIDAK stop di match berikutnya —
+    boundary harus dicari eksplisit (find + regex next-ID).
+========================================================================
+
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================
 =====

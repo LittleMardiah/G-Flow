@@ -11,6 +11,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,6 +30,7 @@ func ledgerRouter(h *Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/admin/ledger", h.GetLedgerList)
+	r.GET("/admin/ledger/verify", h.VerifyLedgerGlobal)
 	r.GET("/admin/ledger/verify/:wallet_id", h.VerifyLedger)
 	r.POST("/admin/ledger/export", h.ExportLedger)
 	return r
@@ -345,5 +347,124 @@ func TestExportLedger_InvalidBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "INVALID_REQUEST")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestVerifyLedgerGlobal_Handler_Balanced(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT COALESCE").WillReturnRows(
+		pgxmock.NewRows([]string{"d", "c"}).AddRow("100.00", "100.00"))
+	mDB.ExpectQuery("SELECT COUNT").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/ledger/verify", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `"success":true`)
+	assert.Contains(t, body, `"status":"BALANCED"`)
+	assert.Contains(t, body, `"discrepancy":0`)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestVerifyLedgerGlobal_Handler_MismatchSum(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT COALESCE").WillReturnRows(
+		pgxmock.NewRows([]string{"d", "c"}).AddRow("150.00", "100.00"))
+	mDB.ExpectQuery("SELECT COUNT").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/ledger/verify", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `"status":"MISMATCH"`)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestVerifyLedgerGlobal_Handler_UnbalancedReference(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT COALESCE").WillReturnRows(
+		pgxmock.NewRows([]string{"d", "c"}).AddRow("100.00", "100.00"))
+	mDB.ExpectQuery("SELECT COUNT").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(int64(1)))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/ledger/verify", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `"status":"MISMATCH"`)
+	assert.Contains(t, body, `"unbalanced_reference_count":1`)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestVerifyLedgerGlobal_Handler_EmptyLedger(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT COALESCE").WillReturnRows(
+		pgxmock.NewRows([]string{"d", "c"}).AddRow("0", "0"))
+	mDB.ExpectQuery("SELECT COUNT").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/ledger/verify", nil))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, `"status":"BALANCED"`)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestVerifyLedgerGlobal_Handler_RepoError(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT COALESCE").WillReturnError(fmt.Errorf("db down"))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/ledger/verify", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "INTERNAL_SERVER_ERROR")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TestVerifyLedgerGlobal_Handler_Query2Error: query 2 (COUNT unbalanced) error
+// → 500. Covering gap: sebelumnya hanya query 1 error yang di-test (TD-177).
+func TestVerifyLedgerGlobal_Handler_Query2Error(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	mDB.ExpectQuery("SELECT COALESCE").WillReturnRows(
+		pgxmock.NewRows([]string{"d", "c"}).AddRow("100.00", "100.00"))
+	mDB.ExpectQuery("SELECT COUNT").WillReturnError(fmt.Errorf("query2 fail"))
+
+	h := newTestHandler(t, mDB, nil)
+	router := ledgerRouter(h)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/ledger/verify", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "INTERNAL_SERVER_ERROR")
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }

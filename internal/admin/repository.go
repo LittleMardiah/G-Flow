@@ -745,5 +745,41 @@ func (r *Repository) VerifyWalletLedger(ctx context.Context, walletID uuid.UUID)
 	if err != nil {
 		return nil, err
 	}
-	return &LedgerTotals{WalletBalance: balance, TotalDebit: debit, TotalCredit: credit}, nil
+	return &LedgerTotals{TotalDebit: debit, TotalCredit: credit, WalletBalance: balance}, nil
+}
+
+// VerifyGlobalLedger menghitung total DEBIT/CREDIT global (is_reversed=FALSE)
+// dan jumlah reference_id yang tidak seimbang (debit_sum != credit_sum).
+// Dipakai GET /admin/ledger/verify (TD-177).
+type GlobalLedgerTotals struct {
+	TotalDebit               decimal.Decimal
+	TotalCredit              decimal.Decimal
+	UnbalancedReferenceCount int64
+}
+
+func (r *Repository) VerifyGlobalLedger(ctx context.Context) (*GlobalLedgerTotals, error) {
+	var totals GlobalLedgerTotals
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN entry_type = 'DEBIT'  AND is_reversed = FALSE THEN amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN entry_type = 'CREDIT' AND is_reversed = FALSE THEN amount ELSE 0 END), 0)
+		FROM ledger_entries
+	`).Scan(&totals.TotalDebit, &totals.TotalCredit)
+	if err != nil {
+		return nil, err
+	}
+	err = r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT reference_id
+			FROM ledger_entries
+			WHERE is_reversed = FALSE AND reference_id IS NOT NULL
+			GROUP BY reference_id
+			HAVING SUM(CASE WHEN entry_type = 'DEBIT'  THEN amount ELSE 0 END) !=
+			       SUM(CASE WHEN entry_type = 'CREDIT' THEN amount ELSE 0 END)
+		) sub
+	`).Scan(&totals.UnbalancedReferenceCount)
+	if err != nil {
+		return nil, err
+	}
+	return &totals, nil
 }

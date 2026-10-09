@@ -446,6 +446,18 @@ func (h *Handler) VerifyLedger(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
+// VerifyLedgerGlobal GET /admin/ledger/verify (TD-177) — integritas
+// ledger global (tanpa wallet_id). Mirror VerifyLedger per-wallet.
+func (h *Handler) VerifyLedgerGlobal(c *gin.Context) {
+	result, err := h.svc.VerifyGlobalLedger(c.Request.Context())
+	if err != nil {
+		h.logger.Error("verify ledger global failed", "error", err)
+		writeError(c, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "gagal verifikasi ledger global")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
 // ExportLedger POST /admin/ledger/export
 // Menerima filter JSON (sama seperti E1) dan mengembalikan file CSV
 // (Content-Type: text/csv, filename ledger-export-<timestamp>.csv).

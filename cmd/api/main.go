@@ -289,6 +289,7 @@ func main() {
 		adminGroup.GET("/transactions/:id", adminHandler.GetTransaction)
 		adminGroup.POST("/transactions/:id/reverse", adminHandler.ReverseTransaction)
 		adminGroup.GET("/ledger", adminHandler.GetLedgerList)
+		adminGroup.GET("/ledger/verify", adminHandler.VerifyLedgerGlobal)
 		adminGroup.GET("/ledger/verify/:wallet_id", adminHandler.VerifyLedger)
 		adminGroup.POST("/ledger/export", adminHandler.ExportLedger)
 		adminGroup.GET("/users", adminHandler.GetUsers)

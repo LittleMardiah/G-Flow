@@ -726,6 +726,41 @@ func (s *Service) VerifyLedger(ctx context.Context, walletID uuid.UUID) (*Balanc
 	}, nil
 }
 
+// GlobalBalanceVerification adalah payload GET /admin/ledger/verify (TD-177):
+// integritas ledger global tanpa wallet_id. Naming mengikuti per-wallet
+// (discrepancy + status).
+type GlobalBalanceVerification struct {
+	TotalDebit               jsonDecimal `json:"total_debit"`
+	TotalCredit              jsonDecimal `json:"total_credit"`
+	Discrepancy              jsonDecimal `json:"discrepancy"`
+	Status                   string      `json:"status"`
+	UnbalancedReferenceCount int64       `json:"unbalanced_reference_count"`
+	CheckedAt                string      `json:"checked_at"`
+}
+
+// VerifyGlobalLedger memverifikasi integritas ledger global (TD-177).
+// Discrepancy = total_debit - total_credit. Status BALANCED jika
+// discrepancy == 0 DAN unbalanced_reference_count == 0.
+func (s *Service) VerifyGlobalLedger(ctx context.Context) (*GlobalBalanceVerification, error) {
+	totals, err := s.repo.VerifyGlobalLedger(ctx)
+	if err != nil {
+		return nil, err
+	}
+	discrepancy := totals.TotalDebit.Sub(totals.TotalCredit)
+	status := "BALANCED"
+	if !discrepancy.IsZero() || totals.UnbalancedReferenceCount > 0 {
+		status = "MISMATCH"
+	}
+	return &GlobalBalanceVerification{
+		TotalDebit:               jsonDecimal(totals.TotalDebit),
+		TotalCredit:              jsonDecimal(totals.TotalCredit),
+		Discrepancy:              jsonDecimal(discrepancy),
+		Status:                   status,
+		UnbalancedReferenceCount: totals.UnbalancedReferenceCount,
+		CheckedAt:                time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
 // ExportLedger menghasilkan CSV (baris header + seluruh entry sesuai filter,
 // tanpa pagination) untuk POST /admin/ledger/export (E3).
 func (s *Service) ExportLedger(ctx context.Context, f LedgerFilter) ([]byte, error) {
