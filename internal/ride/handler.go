@@ -363,7 +363,7 @@ func (h *Handler) GetRide(c *gin.Context) {
 		driver = &rideDriverResponse{
 			ID:           order.DriverID,
 			Name:         order.DriverName,
-			PhoneMasked:  order.DriverPhone,
+			PhoneMasked:  maskDriverPhone(order.DriverPhone),
 			VehicleType:  order.DriverVehicleType,
 			VehiclePlate: order.DriverVehiclePlate,
 		}

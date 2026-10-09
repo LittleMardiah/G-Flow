@@ -2537,8 +2537,16 @@ Solusi     : Mask di layer handler/DTO (defense-in-depth) — tetap baca dari
              order.DriverPhone mentah, atau sediakan accessor terpusat.
              Jangan andalkan satu-satunya mask di service.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-10, sesi TD-146)
 Referensi  : TD-113 (temuan OpenCode)
+
+Note       : FIXED 2026-10-10 (sesi TD-146). Handler GetRide kini memanggil
+             maskDriverPhone(order.DriverPhone) di rideDriverResponse
+             (internal/ride/handler.go:366) — defense-in-depth: masking
+             dilakukan di service layer (svc.GetOrder service.go:535) DAN di
+             handler layer. Kalau service di-refactor tanpa masking, handler
+             tetap aman.
+
 
 ID         : TD-147
 Kategori   : TESTING
