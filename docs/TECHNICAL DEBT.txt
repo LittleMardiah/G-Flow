@@ -1188,8 +1188,13 @@ Dampak     : Spam/abuse POST /food-orders & /send-orders; risiko DoS/cek abuse.
 Solusi     : Rate limiting per user (Redis) di endpoint order food & send.
 Estimasi   : 2-3 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-10, sesi TD-083)
 Referensi  : audit_r03.log (GAP-7, 3.3c; usulan TD-062)
+Note       : FIXED 2026-10-10 (sesi TD-083). Sama middleware
+             internal/middleware/rate_limit.go dipakai untuk wrap
+             POST /api/v1/food-orders (20 req/min) + POST /api/v1/send-orders
+             (20 req/min). Per IP (bukan per user) — sesuai judul TD (order
+             submit abuse protection).
 
 ID         : TD-084
 Kategori   : HYGIENE
@@ -2813,8 +2818,16 @@ Solusi     : Token bucket per-IP di admin login (mirror TD-083 pattern untuk
              pakai remote addr socket atau set allowlist proxy dulu supaya
              IP tidak bisa dipalsukan lewat header.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-10, sesi TD-155)
 Referensi  : TD-114 (temuan OpenCode)
+Note       : FIXED 2026-10-10 (sesi TD-155). internal/middleware/rate_limit.go
+             (Redis INCR fixed-window) + wire ke POST /api/v1/admin/login
+             (10 req/min per IP). Fail-open kalau Redis error. Header
+             X-RateLimit-Limit/Remaining/Reset. Error 429 RATE_LIMIT_EXCEEDED
+             dengan details (limit, window_seconds, reset_at).
+             Design decision: c.ClientIP() (Gin default) tanpa SetTrustedProxies
+             — kalau deploy behind proxy, tambah TD terpisah untuk konfigurasi
+             trusted proxy (per CEK S11a: repo belum punya SetTrustedProxies).
 
 ID         : TD-156
 Kategori   : TESTING
