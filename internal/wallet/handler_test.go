@@ -75,6 +75,21 @@ func (m *mockWalletService) UpdateWalletStatus(ctx context.Context, walletID uui
 	}
 	return args.Get(0).(*UpdateWalletStatusResult), args.Error(1)
 }
+func (m *mockWalletService) RequestWithdrawal(ctx context.Context, in RequestWithdrawalInput) (*WithdrawalRequest, error) {
+	args := m.Called(ctx, in)
+	if r := args.Get(0); r != nil {
+		return r.(*WithdrawalRequest), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *mockWalletService) ListWithdrawals(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error) {
+	args := m.Called(ctx, userID, limit, offset)
+	if r := args.Get(0); r != nil {
+		return r.([]WithdrawalRequest), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
 
 func init() {
 	gin.SetMode(gin.TestMode)

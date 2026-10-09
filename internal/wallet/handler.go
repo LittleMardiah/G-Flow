@@ -29,6 +29,10 @@ type WalletService interface {
 	GetWalletHistory(ctx context.Context, userID uuid.UUID, walletID uuid.UUID, referenceType string, page, pageSize int) (*WalletHistory, error)
 	ProcessTopUpWebhook(ctx context.Context, txnID uuid.UUID) error
 	UpdateWalletStatus(ctx context.Context, walletID uuid.UUID, adminID uuid.UUID, newStatus string, reason string) (*UpdateWalletStatusResult, error)
+
+	// TD-183 withdrawal (user-side)
+	RequestWithdrawal(ctx context.Context, in RequestWithdrawalInput) (*WithdrawalRequest, error)
+	ListWithdrawals(ctx context.Context, userID uuid.UUID, limit, offset int) ([]WithdrawalRequest, error)
 }
 
 // validWalletTypes adalah whitelist label wallet_type yang boleh diminta
@@ -450,6 +454,10 @@ func statusForError(err error) int {
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, ErrIdempotencyInProgress):
 		return http.StatusConflict
+	case errors.Is(err, ErrWithdrawalNotEligible):
+		return http.StatusForbidden
+	case errors.Is(err, ErrWithdrawalAmountTooLow), errors.Is(err, ErrWithdrawalAmountTooHigh):
+		return http.StatusUnprocessableEntity
 	case errors.Is(err, ErrWalletInactive):
 		return http.StatusForbidden
 	case errors.Is(err, ErrWalletNotOwned):
@@ -479,6 +487,12 @@ func codeForError(err error) string {
 		return "SELF_TRANSFER_NOT_ALLOWED"
 	case errors.Is(err, ErrIdempotencyInProgress):
 		return "IDEMPOTENCY_IN_PROGRESS"
+	case errors.Is(err, ErrWithdrawalNotEligible):
+		return "WITHDRAWAL_NOT_ELIGIBLE"
+	case errors.Is(err, ErrWithdrawalAmountTooLow):
+		return "WITHDRAWAL_AMOUNT_TOO_LOW"
+	case errors.Is(err, ErrWithdrawalAmountTooHigh):
+		return "WITHDRAWAL_AMOUNT_TOO_HIGH"
 	case errors.Is(err, ErrWalletInactive):
 		return "WALLET_INACTIVE"
 	case errors.Is(err, ErrWalletNotOwned):
@@ -548,4 +562,101 @@ func writeError(c *gin.Context, status int, code string, message string) {
 			"message": message,
 		},
 	})
+}
+
+// -----------------------------------------------------------------------------
+// Withdrawal (user-side) — TD-183
+// -----------------------------------------------------------------------------
+
+type withdrawalRequestBody struct {
+	Amount            decimal.Decimal `json:"amount" binding:"required"`
+	BankName          string          `json:"bank_name" binding:"required"`
+	BankAccountNumber string          `json:"bank_account_number" binding:"required"`
+	BankAccountName   string          `json:"bank_account_name" binding:"required"`
+	IdempotencyKey    string          `json:"idempotency_key" binding:"required"`
+}
+
+type withdrawalResponse struct {
+	WithdrawalID uuid.UUID       `json:"withdrawal_id"`
+	UserID       uuid.UUID       `json:"user_id"`
+	Amount       decimal.Decimal `json:"amount"`
+	Status       string          `json:"status"`
+	BankAccount  string          `json:"bank_account"`
+	BankName     string          `json:"bank_name"`
+	RequestedAt  time.Time       `json:"requested_at"`
+	Message      string          `json:"message"`
+}
+
+// Withdrawal POST /wallets/:wallet_id/withdrawal (TD-183, API CONTRACT §6.4).
+// Response status = PENDING_APPROVAL (DTO), DB simpan PENDING.
+func (h *Handler) Withdrawal(c *gin.Context) {
+	walletID, err := uuid.Parse(c.Param("wallet_id"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_WALLET_ID", "invalid wallet_id")
+		return
+	}
+	var body withdrawalRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+	userType := c.GetString("user_type")
+
+	result, err := h.svc.RequestWithdrawal(c.Request.Context(), RequestWithdrawalInput{
+		UserID:            userID,
+		UserType:          userType,
+		WalletID:          walletID,
+		Amount:            body.Amount,
+		BankName:          body.BankName,
+		BankAccountNumber: body.BankAccountNumber,
+		BankAccountName:   body.BankAccountName,
+		IdempotencyKey:    body.IdempotencyKey,
+	})
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": withdrawalResponse{
+		WithdrawalID: result.ID,
+		UserID:       result.UserID,
+		Amount:       result.Amount,
+		Status:       "PENDING_APPROVAL",
+		BankAccount:  result.BankAccountNumber,
+		BankName:     result.BankName,
+		RequestedAt:  result.RequestedAt,
+		Message:      "Withdrawal pending admin approval",
+	}})
+}
+
+// ListWithdrawals GET /wallets/:wallet_id/withdrawals (TD-183).
+// Ownership dicek dari wallet (GetByID) di service-side kalau perlu; endpoint
+// ini return pengajuan userID sendiri.
+func (h *Handler) ListWithdrawals(c *gin.Context) {
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	items, err := h.svc.ListWithdrawals(c.Request.Context(), userID, pageSize, offset)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
 }

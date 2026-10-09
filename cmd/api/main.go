@@ -208,6 +208,9 @@ func main() {
 		api.GET("/wallets/:wallet_id/history", auth.RBACMiddleware("customer", "driver", "merchant"), handler.GetWalletHistory)
 		// TD-059: admin update status wallet — RBAC admin (aktif/suspend/freeze).
 		api.PATCH("/wallets/:wallet_id/status", auth.RBACMiddleware("admin"), handler.UpdateWalletStatus)
+		// TD-183 user-side withdrawal (driver/merchant only)
+		api.POST("/wallets/:wallet_id/withdrawal", auth.RBACMiddleware("driver", "merchant"), handler.Withdrawal)
+		api.GET("/wallets/:wallet_id/withdrawals", auth.RBACMiddleware("driver", "merchant"), handler.ListWithdrawals)
 		// Driver update lokasi: auth wajib + role driver.
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
 		// Driver available orders (TD-009): auth wajib + role driver.
