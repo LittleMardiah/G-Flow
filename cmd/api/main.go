@@ -179,7 +179,9 @@ func main() {
 	r.POST("/api/v1/auth/login", authHandler.Login)
 
 	// Admin login publik (tanpa auth): khusus role admin, divalidasi di Service.
-	r.POST("/api/v1/admin/login", adminHandler.AdminLogin)
+	r.POST("/api/v1/admin/login",
+		middleware.RateLimit(rdb, 10, time.Minute, "ratelimit:admin-login"),
+		adminHandler.AdminLogin)
 
 	// Driver location: cari driver terdekat → auth optional / publik.
 	// Lat/lng/radius diambil dari query param; tidak butuh identitas user.
@@ -258,7 +260,9 @@ func main() {
 	// driver tertunjuk (ownership divalidasi di Service).
 	foodOrders := r.Group("/api/v1/food-orders", middleware.AuthMiddleware(jwtService, blacklistService))
 	{
-		foodOrders.POST("", auth.RBACMiddleware("customer"), foodHandler.CreateFoodOrder)
+		foodOrders.POST("",
+			middleware.RateLimit(rdb, 20, time.Minute, "ratelimit:food-order"),
+			auth.RBACMiddleware("customer"), foodHandler.CreateFoodOrder)
 		foodOrders.GET("", auth.RBACMiddleware("customer"), foodHandler.GetFoodOrderHistory)
 		foodOrders.GET("/:id", foodHandler.GetFoodOrder)
 		foodOrders.PATCH("/:id", foodHandler.UpdateFoodOrderStatus)
@@ -271,7 +275,9 @@ func main() {
 	// tertunjuk (ownership divalidasi di Service).
 	sendOrders := r.Group("/api/v1/send-orders", middleware.AuthMiddleware(jwtService, blacklistService))
 	{
-		sendOrders.POST("", auth.RBACMiddleware("customer"), sendHandler.CreateSendOrder)
+		sendOrders.POST("",
+			middleware.RateLimit(rdb, 20, time.Minute, "ratelimit:send-order"),
+			auth.RBACMiddleware("customer"), sendHandler.CreateSendOrder)
 		sendOrders.GET("", auth.RBACMiddleware("customer"), sendHandler.GetSendOrderHistory)
 		sendOrders.GET("/:id", sendHandler.GetSendOrder)
 		sendOrders.PATCH("/:id", sendHandler.UpdateSendOrderStatus)
