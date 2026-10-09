@@ -972,7 +972,6 @@ type ApproveWithdrawalInput struct {
 	WithdrawalID uuid.UUID
 	AdminID      uuid.UUID
 	NewStatus    string // COMPLETED | REJECTED | FAILED
-	Reason       string
 }
 
 // ApproveWithdrawal memproses pengajuan withdrawal (status PENDING).
@@ -1003,6 +1002,11 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, in ApproveWithdrawalInp
 	if in.NewStatus == "COMPLETED" {
 		bankID, err := s.systemWalletID(ctx, tx, WalletTypeSystemBankGateway)
 		if err != nil {
+			return nil, err
+		}
+		// Lock wallet + bank dengan urutan deterministik (ORDER BY id ASC)
+		// sebelum CreateLedgerEntries — mirror TopUp (service.go:269).
+		if err := lockWalletsAsc(ctx, tx, w.WalletID, bankID); err != nil {
 			return nil, err
 		}
 		entries := []LedgerEntry{
