@@ -454,8 +454,8 @@ func (r *Repository) ListWithdrawalsByUser(ctx context.Context, userID uuid.UUID
 func (r *Repository) UpdateWithdrawalStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, expectedStatus, newStatus string, ledgerEntryID *uuid.UUID) (int64, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE withdrawal_requests
-		SET status = $1,
-		    completed_at = CASE WHEN $1 = 'COMPLETED' THEN NOW() ELSE completed_at END,
+		SET status = $1::varchar,
+		    completed_at = CASE WHEN $1::varchar = 'COMPLETED' THEN NOW() ELSE completed_at END,
 		    processed_at = COALESCE(processed_at, NOW()),
 		    ledger_entry_id = COALESCE($3, ledger_entry_id)
 		WHERE id = $2 AND status = $4
