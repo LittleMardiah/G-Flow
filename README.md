@@ -250,7 +250,6 @@ Detail lengkap: [`docs/BLUEPRINT ROADMAP.txt`](./docs/BLUEPRINT%20ROADMAP.txt) d
 | Jenis | Portfolio project |
 | Backend | Production Ready (belum deployed ke hosting publik) |
 | Frontend | Landing page deployed di Vercel |
-| Lisensi | MIT |
 | Repo | [github.com/LittleMardiah/G-Flow](https://github.com/LittleMardiah/G-Flow) |
 
 ---
