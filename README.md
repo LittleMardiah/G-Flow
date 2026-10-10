@@ -6,7 +6,7 @@ Super-app ecosystem **G-Flow** — satu platform untuk **ride-hailing (G-Ride)**
 Dibangun sebagai **modular monolith backend (Go)** di atas **PostgreSQL (Supabase)** & **Redis**,
 dengan 3 aplikasi mobile (**Flutter**), admin panel web (**Next.js**), dan landing page (**Next.js**).
 
-> **Live Demo:** [https://g-flow-tau.vercel.app](https://g-flow-tau.vercel.app)
+> **Live Demo:** [...]
 
 > **Status:** Portfolio Project — V1.0-MVP (Production Ready, backend belum deployed)
 
