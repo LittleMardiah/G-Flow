@@ -158,10 +158,10 @@ var (
 
 	// Voucher discount (TD-070). ErrVoucherNotFound dideklarasikan di
 	// repository.go (dikembalikan saat scan baris voucher tidak ditemukan).
-	ErrVoucherInvalid      = errors.New("voucher is not valid for ride service")
-	ErrVoucherExpired      = errors.New("voucher has expired or not yet valid")
-	ErrVoucherMinOrder     = errors.New("order amount does not meet voucher minimum")
-	ErrVoucherPerUserLimit = errors.New("voucher per-user usage limit reached")
+	ErrVoucherInvalid       = errors.New("voucher is not valid for ride service")
+	ErrVoucherExpired       = errors.New("voucher has expired or not yet valid")
+	ErrVoucherMinOrder      = errors.New("order amount does not meet voucher minimum")
+	ErrVoucherPerUserLimit  = errors.New("voucher per-user usage limit reached")
 	ErrVoucherQuotaExceeded = errors.New("voucher total quota exhausted")
 )
 
@@ -233,7 +233,7 @@ type Repo interface {
 	SystemWalletID(ctx context.Context, q Querier, walletType string) (uuid.UUID, error)
 
 	GetDriver(ctx context.Context, driverID uuid.UUID) (*Driver, error)
-	GetDriverBalance(ctx context.Context, driverID uuid.UUID) (decimal.Decimal, error)
+	GetDriverBalance(ctx context.Context, q Querier, driverID uuid.UUID) (decimal.Decimal, error)
 	LockDriverUserForAccept(ctx context.Context, q Querier, driverID uuid.UUID) (*Driver, error)
 	LockOrderForAccept(ctx context.Context, q Querier, orderID uuid.UUID) error
 	AssignDriver(ctx context.Context, q Querier, orderID uuid.UUID, driverID uuid.UUID) (bool, error)
@@ -624,14 +624,6 @@ func (s *Service) AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID u
 		return nil, ErrDriverBusy
 	}
 
-	balance, err := s.repo.GetDriverBalance(ctx, driverID)
-	if err != nil {
-		return nil, err
-	}
-	if balance.LessThan(driver.MinBalanceThreshold) {
-		return nil, ErrInsufficientDriverBalance
-	}
-
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -656,6 +648,16 @@ func (s *Service) AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID u
 	}
 	if lockedDriver.WorkingStatus != workingStatusIdle {
 		return nil, ErrDriverBusy
+	}
+
+	// TD-105: baca balance DI DALAM tx setelah lock users (race window
+	// dihapus). Pakai lockedDriver.MinBalanceThreshold (authoritative).
+	balance, err := s.repo.GetDriverBalance(ctx, tx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	if balance.LessThan(lockedDriver.MinBalanceThreshold) {
+		return nil, ErrInsufficientDriverBalance
 	}
 
 	// Lock order tunggal dengan FOR UPDATE NOWAIT + guard status.

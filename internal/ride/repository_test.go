@@ -598,7 +598,7 @@ func TestRepository_GetDriverBalance_Success(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(50000)))
 
 	repo := NewRepository(mDB)
-	b, err := repo.GetDriverBalance(context.Background(), repoDriverID)
+	b, err := repo.GetDriverBalance(context.Background(), mDB, repoDriverID)
 	assert.NoError(t, err)
 	assert.Equal(t, decimal.NewFromInt(50000), b)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -612,7 +612,7 @@ func TestRepository_GetDriverBalance_NotFound(t *testing.T) {
 		WillReturnError(pgx.ErrNoRows)
 
 	repo := NewRepository(mDB)
-	_, err = repo.GetDriverBalance(context.Background(), repoDriverID)
+	_, err = repo.GetDriverBalance(context.Background(), mDB, repoDriverID)
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }

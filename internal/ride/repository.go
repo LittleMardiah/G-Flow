@@ -607,9 +607,9 @@ func (r *Repository) GetDriver(ctx context.Context, driverID uuid.UUID) (*Driver
 
 // GetDriverBalance mengambil saldo wallet driver (wallet_type='DRIVER').
 // Mengembalikan ErrWalletNotFound jika wallet driver belum ada.
-func (r *Repository) GetDriverBalance(ctx context.Context, driverID uuid.UUID) (decimal.Decimal, error) {
+func (r *Repository) GetDriverBalance(ctx context.Context, q Querier, driverID uuid.UUID) (decimal.Decimal, error) {
 	var balance decimal.Decimal
-	err := r.db.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT balance FROM wallets
 		WHERE user_id = $1 AND wallet_type = 'DRIVER'
 	`, driverID).Scan(&balance)

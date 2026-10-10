@@ -118,8 +118,8 @@ func (m *mockRepo) GetDriver(ctx context.Context, driverID uuid.UUID) (*Driver, 
 	return args.Get(0).(*Driver), args.Error(1)
 }
 
-func (m *mockRepo) GetDriverBalance(ctx context.Context, driverID uuid.UUID) (decimal.Decimal, error) {
-	args := m.Called(ctx, driverID)
+func (m *mockRepo) GetDriverBalance(ctx context.Context, q Querier, driverID uuid.UUID) (decimal.Decimal, error) {
+	args := m.Called(ctx, q, driverID)
 	return args.Get(0).(decimal.Decimal), args.Error(1)
 }
 
@@ -811,7 +811,7 @@ func TestAcceptOrder_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
@@ -881,7 +881,10 @@ func TestAcceptOrder_InsufficientDriverBalance(t *testing.T) {
 	mDB, _ := pgxmock.NewPool()
 
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.NewFromInt(50000)), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(10000), nil)
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
+	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.NewFromInt(50000)), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, svcDriverID).Return(decimal.NewFromInt(10000), nil)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.AcceptOrder(context.Background(), svcOrderID, svcDriverID)
@@ -902,7 +905,7 @@ func TestAcceptOrder_RaceCondition(t *testing.T) {
 
 	// Driver pertama sukses.
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
 		Return(svcDriver(workingStatusIdle, decimal.Zero), nil).Once()
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).Return(nil).Once()
@@ -913,7 +916,7 @@ func TestAcceptOrder_RaceCondition(t *testing.T) {
 	// Driver kedua: lock tidak tersedia → conflict 503/ErrLockTimeout.
 	repo.On("GetDriver", mock.Anything, driver2).Return(
 		&Driver{ID: driver2, UserType: userTypeDriver, Status: "ACTIVE", WorkingStatus: workingStatusIdle, MinBalanceThreshold: decimal.Zero}, nil)
-	repo.On("GetDriverBalance", mock.Anything, driver2).Return(decimal.NewFromInt(100000), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, driver2).Return(decimal.NewFromInt(100000), nil)
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, driver2).
 		Return(svcDriver(workingStatusIdle, decimal.Zero), nil).Once()
 	repo.On("LockOrderForAccept", mock.Anything, mock.Anything, svcOrderID).
@@ -949,7 +952,7 @@ func TestAcceptOrder_OrderNotSearching(t *testing.T) {
 	mDB, _ := pgxmock.NewPool()
 
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
@@ -970,7 +973,7 @@ func TestAcceptOrder_AssignFailed(t *testing.T) {
 	assert.NoError(t, err)
 
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
@@ -994,7 +997,6 @@ func TestAcceptOrder_LockRevalidatesBusy(t *testing.T) {
 	// berubah BUSY (di-assign order lain). Re-validasi DI BAWAH LOCK harus
 	// menolak (409) — ini mencegah double assign (TD-071).
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).
@@ -2048,7 +2050,7 @@ func TestAcceptOrder_LockOrderGetError(t *testing.T) {
 	assert.NoError(t, err)
 
 	repo.On("GetDriver", mock.Anything, svcDriverID).Return(svcDriver(workingStatusIdle, decimal.Zero), nil)
-	repo.On("GetDriverBalance", mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
+	repo.On("GetDriverBalance", mock.Anything, mock.Anything, svcDriverID).Return(decimal.NewFromInt(100000), nil)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockDriverUserForAccept", mock.Anything, mock.Anything, svcDriverID).

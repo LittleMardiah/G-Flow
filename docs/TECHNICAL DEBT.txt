@@ -1513,8 +1513,26 @@ Dampak     : Potensi mismatch validasi balance (race window).
 Solusi     : Pindahkan GetDriverBalance ke dalam tx setelah
              LockDriverUserForAccept (under-lock).
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-10, sesi TD-105)
 Referensi  : TD-071 (commit)
+
+Note       : FIXED 2026-10-10 (sesi TD-105). GetDriverBalance dipindah dari
+             pre-tx ke DALAM tx setelah LockDriverUserForAccept — race window
+             dihapus. Balance dibaca under-lock (authoritative: pakai
+             lockedDriver.MinBalanceThreshold).
+
+             Code changes:
+             - repository.go:~610: GetDriverBalance signature +q Querier
+             - service.go:~236: interface WalletRepo mirror
+             - service.go:~655: panggilan GetDriverBalance(ctx, tx, driverID)
+               setelah LockDriverUserForAccept
+             - service.go:~630: remove pre-tx balance block
+             - service_test.go: mock wrapper forward ctx,q,driverID
+               + 8 expectation 3-arg + 2 stale expectation cleanup
+             - repository_test.go:~601,:615: pass mDB sebagai Querier
+
+             Full suite internal/ride PASS (FULL_TEST_RC=0).
+
 
 ID         : TD-106
 Kategori   : TESTING
