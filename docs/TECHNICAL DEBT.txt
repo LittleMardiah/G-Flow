@@ -2285,8 +2285,26 @@ Dampak     : Kalau quota habis, error muncul dari trigger DB di tengah
 Solusi     : Pre-check remaining quota di service sebelum InsertUserVoucher
              (mirror per-user-limit pre-check).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-10, sesi TD-135)
 Referensi  : TD-070 (temuan OpenCode)
+
+Note       : FIXED 2026-10-10 (sesi TD-135). Pre-check total_quota di service
+             layer (mirror per-user-limit pre-check yang sudah ada di line
+             ~399): early-exit dengan ErrVoucherQuotaExceeded sebelum
+             InsertOrder + InsertUserVoucher. Cegah rollback mahal + pesan
+             error DB trigger yang kurang friendly.
+
+             Code changes:
+             - service.go:~165: +ErrVoucherQuotaExceeded
+             - service.go:~401: pre-check voucher.UsedCount >= *TotalQuota
+             - handler.go:~544 (statusForError): +case → 422
+             - handler.go:~626 (codeForError): +case → "VOUCHER_QUOTA_EXCEEDED"
+             - service_test.go:~2637: TestBookRide_VoucherQuotaExceeded
+               (PASS + regression TestBookRide_Voucher* PASS)
+
+             Trigger voucher_usage_update tetap jadi guard final
+             (defense-in-depth).
+
 
 ID         : TD-136
 Kategori   : DOKUMENTASI

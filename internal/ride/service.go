@@ -162,6 +162,7 @@ var (
 	ErrVoucherExpired      = errors.New("voucher has expired or not yet valid")
 	ErrVoucherMinOrder     = errors.New("order amount does not meet voucher minimum")
 	ErrVoucherPerUserLimit = errors.New("voucher per-user usage limit reached")
+	ErrVoucherQuotaExceeded = errors.New("voucher total quota exhausted")
 )
 
 // BookRideRequest input untuk operasi booking ride.
@@ -396,6 +397,12 @@ func (s *Service) BookRide(ctx context.Context, req BookRideRequest) (*BookRideR
 
 	// Pre-check per_user_limit (early exit sebelum menulis order). Trigger DB
 	// validate_per_user_limit tetap menjadi guard final (defense-in-depth).
+	// Pre-check total_quota (TD-135): mirror per-user pre-check supaya
+	// quota habis tidak sampai menulis order + hold escrow + rollback.
+	if voucher != nil && voucher.TotalQuota != nil && voucher.UsedCount >= *voucher.TotalQuota {
+		return nil, ErrVoucherQuotaExceeded
+	}
+
 	if voucher != nil && voucherDiscount.IsPositive() {
 		usage, err := s.repo.CountUserVoucherUsage(ctx, tx, req.UserID, voucher.ID)
 		if err != nil {

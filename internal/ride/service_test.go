@@ -2639,6 +2639,42 @@ func TestBookRide_VoucherPerUserLimit(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+func TestBookRide_VoucherQuotaExceeded(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "book-key-vquota"
+	req := svcValidReq(PaymentMethodWallet, idemKey)
+	code := "RIDE20"
+	req.VoucherCode = &code
+
+	// voucher helper default: TotalQuota nil, UsedCount=1.
+	// Kita set quota habis (UsedCount == TotalQuota) untuk trigger TD-135
+	// pre-check (early exit sebelum InsertOrder + InsertUserVoucher).
+	voucher := svcVoucher(voucherDiscountPct, decimal.NewFromInt(20), nil, decimal.Zero, 1)
+	quota := 1
+	voucher.TotalQuota = &quota
+	voucher.UsedCount = 1
+
+	repo.On("GetCustomer", mock.Anything, svcCustomerID).Return(svcCustomer(decimal.Zero), nil)
+	repo.On("GetWalletByUserAndType", mock.Anything, svcCustomerID, WalletTypeCustomer).Return(svcWallet(decimal.NewFromInt(200000)), nil)
+	repo.On("GetVoucherByCode", mock.Anything, code).Return(voucher, nil)
+	// CountUserVoucherUsage TIDAK disetup: pre-check quota harus fire DULU.
+
+	setupBookRideDB(mDB, idemKey)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err = svc.BookRide(context.Background(), req)
+
+	assert.ErrorIs(t, err, ErrVoucherQuotaExceeded)
+	repo.AssertNotCalled(t, "CountUserVoucherUsage")
+	repo.AssertNotCalled(t, "InsertOrder")
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 // PERCENTAGE dengan max_discount: diskon dibatasi (est×50% = jauh di atas
 // 5.000) → discount_amount = 5.000, escrow = est − 5.000.
 func TestBookRide_VoucherMaxDiscountCap(t *testing.T) {

@@ -540,7 +540,8 @@ func statusForError(err error) int {
 		errors.Is(err, ErrVoucherInvalid),
 		errors.Is(err, ErrVoucherExpired),
 		errors.Is(err, ErrVoucherMinOrder),
-		errors.Is(err, ErrVoucherPerUserLimit):
+		errors.Is(err, ErrVoucherPerUserLimit),
+		errors.Is(err, ErrVoucherQuotaExceeded):
 		return http.StatusUnprocessableEntity
 	case errors.Is(err, ErrIdempotencyInProgress),
 		errors.Is(err, ErrDriverBusy),
@@ -622,6 +623,8 @@ func codeForError(err error) string {
 		return "VOUCHER_MIN_ORDER_NOT_MET"
 	case errors.Is(err, ErrVoucherPerUserLimit):
 		return "VOUCHER_PER_USER_LIMIT"
+	case errors.Is(err, ErrVoucherQuotaExceeded):
+		return "VOUCHER_QUOTA_EXCEEDED"
 	case errors.Is(err, ErrIdempotencyInProgress):
 		return "IDEMPOTENCY_IN_PROGRESS"
 	case errors.Is(err, ErrInvalidCachedResponse):
