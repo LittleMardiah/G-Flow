@@ -162,6 +162,7 @@ var (
 	ErrVoucherExpired       = errors.New("voucher has expired or not yet valid")
 	ErrVoucherMinOrder      = errors.New("order amount does not meet voucher minimum")
 	ErrVoucherPerUserLimit  = errors.New("voucher per-user usage limit reached")
+	ErrNoShowTooEarly       = errors.New("no-show requires >=5 minutes wait after DRIVER_ARRIVED")
 	ErrVoucherQuotaExceeded = errors.New("voucher total quota exhausted")
 )
 
@@ -247,6 +248,8 @@ type Repo interface {
 
 	// Fase lanjutan F005/F006: transisi status, cancel, auto-cancel & settlement.
 	LockOrderForUpdate(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error)
+	SetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) error
+	GetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) (*time.Time, error)
 	GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, error)
 	CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error)
 	CompleteOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus string, actualFare, driverEarning, platformCommission decimal.Decimal) (bool, error)
@@ -801,6 +804,12 @@ func (s *Service) UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequ
 		if !ok {
 			return nil, ErrInvalidTransition
 		}
+		// TD-129: catat waktu tiba untuk no-show rule.
+		if req.Status == statusDriverArrived {
+			if err := s.repo.SetArrivedAt(ctx, tx, locked.ID); err != nil {
+				return nil, err
+			}
+		}
 		if err := s.repo.InsertEvent(ctx, tx, RideOrderEvent{
 			OrderID:     locked.ID,
 			FromStatus:  &from,
@@ -850,6 +859,14 @@ func (s *Service) cancelOrderTx(ctx context.Context, tx pgx.Tx, order *RideOrder
 		}
 		if order.Status != statusDriverArrived {
 			return nil, ErrInvalidTransition
+		}
+		// TD-129: no-show hanya valid jika >=5 menit sejak DRIVER_ARRIVED.
+		arrivedAt, err := s.repo.GetArrivedAt(ctx, tx, order.ID)
+		if err != nil {
+			return nil, err
+		}
+		if arrivedAt == nil || time.Since(*arrivedAt) < 5*time.Minute {
+			return nil, ErrNoShowTooEarly
 		}
 	case reasonDriverEmergency:
 		if order.DriverID == nil || *order.DriverID != req.UserID {

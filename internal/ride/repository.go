@@ -530,6 +530,17 @@ func (r *Repository) CancelOrder(ctx context.Context, q Querier, orderID uuid.UU
 
 // CompleteOrder menandai order COMPLETED sekaligus mengisi actual_fare,
 // driver_earning dan platform_commission (CAS dengan guard status).
+func (r *Repository) SetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) error {
+	_, err := q.Exec(ctx, `UPDATE ride_orders SET arrived_at = NOW() WHERE id = $1`, orderID)
+	return err
+}
+
+func (r *Repository) GetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) (*time.Time, error) {
+	var t *time.Time
+	err := q.QueryRow(ctx, `SELECT arrived_at FROM ride_orders WHERE id = $1`, orderID).Scan(&t)
+	return t, err
+}
+
 func (r *Repository) CompleteOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus string,
 	actualFare, driverEarning, platformCommission decimal.Decimal) (bool, error) {
 	tag, err := q.Exec(ctx, `

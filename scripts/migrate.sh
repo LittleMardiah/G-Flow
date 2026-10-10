@@ -77,5 +77,6 @@ psql $DATABASE_URL -v ON_ERROR_STOP=1 -f migrations/019_add_platform_subsidy_wal
 # API memetakan PENDING -> PENDING_APPROVAL. Idempotency di app layer
 # (body idempotency_key), bukan schema.
 psql $DATABASE_URL -v ON_ERROR_STOP=1 -f migrations/020_withdrawal_requests.up.sql
+psql $DATABASE_URL -v ON_ERROR_STOP=1 -f migrations/021_ride_arrived_at.up.sql
 
 echo "Migrations completed."

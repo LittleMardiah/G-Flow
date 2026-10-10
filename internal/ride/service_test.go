@@ -164,6 +164,19 @@ func (m *mockRepo) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockRepo) SetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) error {
+	args := m.Called(ctx, q, orderID)
+	return args.Error(0)
+}
+
+func (m *mockRepo) GetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) (*time.Time, error) {
+	args := m.Called(ctx, q, orderID)
+	if r := args.Get(0); r != nil {
+		return r.(*time.Time), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 func (m *mockRepo) CompleteOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus string, actualFare, driverEarning, platformCommission decimal.Decimal) (bool, error) {
 	args := m.Called(ctx, q, orderID, fromStatus, actualFare, driverEarning, platformCommission)
 	return args.Bool(0), args.Error(1)
@@ -1248,6 +1261,9 @@ func TestCancelOrder_FeeArrivedWallet(t *testing.T) {
 // → fee 10.000 dari customer, kompensasi penuh ke driver.
 func TestCancelOrder_NoShow(t *testing.T) {
 	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow)
+	// TD-129: driver menunggu > 5 menit (valid no-show).
+	arrivedAt := time.Now().Add(-6 * time.Minute)
+	repo.On("GetArrivedAt", mock.Anything, mock.Anything, svcOrderID).Return(&arrivedAt, nil)
 	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverArrived, reasonNoShow,
 		decimal.NewFromInt(10000)).Return(true, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
@@ -1267,6 +1283,26 @@ func TestCancelOrder_NoShow(t *testing.T) {
 }
 
 // NO_SHOW hanya boleh dari driver tertunjuk (customer dilarang memicu no-show).
+// TD-129: NO_SHOW ditolak kalau < 5 menit sejak DRIVER_ARRIVED.
+func TestCancelOrder_NoShowTooEarly(t *testing.T) {
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow)
+	// GetArrivedAt return 2 menit lalu (< 5 min threshold).
+	arrivedAt := time.Now().Add(-2 * time.Minute)
+	repo.On("GetArrivedAt", mock.Anything, mock.Anything, svcOrderID).Return(&arrivedAt, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow,
+	})
+	assert.ErrorIs(t, err, ErrNoShowTooEarly)
+	// Early-exit: no refund, no audit (bukti path NoShowTooEarly).
+	repo.AssertNotCalled(t, "CancelOrder")
+	repo.AssertNotCalled(t, "SystemWalletID")
+	repo.AssertNotCalled(t, "GetWalletByUserAndType")
+	repo.AssertNotCalled(t, "ResetDriverIdle")
+	repo.AssertNotCalled(t, "InsertEvent")
+}
+
 func TestCancelOrder_NoShowNotDriver(t *testing.T) {
 	repo := new(mockRepo)
 	lgr := new(mockLedger)
@@ -1390,6 +1426,8 @@ func TestUpdateRideStatus_SimpleTransition(t *testing.T) {
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("TransitionStatus", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, statusDriverArrived).Return(true, nil)
+	// TD-129: DRIVER_ARRIVED trigger SetArrivedAt.
+	repo.On("SetArrivedAt", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	mDB.ExpectBegin()

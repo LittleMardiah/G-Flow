@@ -2098,8 +2098,32 @@ Dampak     : Driver bisa abuse no-show (cancel cepat tanpa tunggu customer
 Solusi     : Tambah kolom arrived_at (migration), set saat PATCH status
              DRIVER_ARRIVED, validasi NO_SHOW hanya jika now - arrived_at > 5 min.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-10, sesi TD-129)
 Referensi  : TD-068 (temuan OpenCode)
+
+Note       : FIXED 2026-10-10 (sesi TD-129). No-show rule di-enforce:
+             driver hanya boleh NO_SHOW cancel jika >=5 menit sejak DRIVER_ARRIVED.
+
+             Code changes:
+             - migrations/021_ride_arrived_at.up.sql: ADD COLUMN arrived_at
+               TIMESTAMPTZ (nullable) + register di migrate.{sh,bat}
+             - repository.go:~533: SetArrivedAt + GetArrivedAt (Querier)
+             - service.go:~808: set arrived_at saat transisi DRIVER_ARRIVED
+             - service.go:~863: reject NO_SHOW < 5 min -> ErrNoShowTooEarly
+             - service.go:~165: +ErrNoShowTooEarly
+             - service.go:~251: Repo interface +2 method
+             - handler.go: mapping 422 (via statusForError pattern)
+             - service_test.go: +SetArrivedAt/GetArrivedAt mock, +GetArrivedAt
+               expectation per-test, +SetArrivedAt expectation di SimpleTransition,
+               +TestCancelOrder_NoShowTooEarly
+
+             Coverage: valid no-show (fee Rp10.000) + reject early (ErrNoShowTooEarly,
+             no refund, no audit) + driver-arrived set arrived_at.
+
+             Full suite internal/ride PASS (FULL_TEST_RC=0).
+
+             Refs: TD-068 (cancel fee), API_CONTRACT sec 7.3.
+
 
 ID         : TD-130
 Kategori   : BACKEND / FITUR
