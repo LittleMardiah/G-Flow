@@ -721,6 +721,47 @@ func createSendOrderCash(t *testing.T, e *testEnv, token string) (uuid.UUID, str
 	return data.ID, data.Status, data.TotalFare
 }
 
+// TestIntegrationSend_HistoryBatchStops membuktikan TD-153 terhadap DB nyata:
+// GetSendOrderHistory meng-attach stops via batch query
+// `WHERE order_id = ANY($1)` (pgx v5 binding []uuid.UUID). Preseden TD-181:
+// pgxmock lolos tetapi real DB 42P08 — karena itu test ini WAJIB DB nyata
+// (bukan skip). 2 order (1 & 2 stop) → total 3 stop ter-attach, dan setiap
+// stop.OrderID harus sama dengan order pemiliknya (bukti pengelompokan map).
+func TestIntegrationSend_HistoryBatchStops(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	senderToken, senderID := registerAndLogin(t, e.r, "customer")
+	senderWalletID := e.getWalletID(t, ctx, senderID, "CUSTOMER")
+	topupCustomer(t, e, senderToken, senderWalletID, "200000")
+
+	orderA, _, _ := createSendOrder(t, e, senderToken, 1)
+	orderB, _, _ := createSendOrder(t, e, senderToken, 2)
+
+	svc := send.NewService(send.NewRepository(e.pool), e.pool, nil, e.ledger)
+	orders, total, err := svc.GetSendOrderHistory(ctx, senderID, 1, 20)
+	require.NoError(t, err, "GetSendOrderHistory batch stops (real DB)")
+	require.Equal(t, 2, total, "total order sender")
+	require.Len(t, orders, 2, "orders pada halaman 1")
+
+	expected := map[uuid.UUID]int{orderA: 1, orderB: 2}
+	totalStops := 0
+	for _, o := range orders {
+		want, ok := expected[o.ID]
+		require.True(t, ok, "order tak terduga: %v", o.ID)
+		require.Len(t, o.Stops, want, "jumlah stop order %v", o.ID)
+		for _, st := range o.Stops {
+			require.Equal(t, o.ID, st.OrderID,
+				"stops[].OrderID harus = order.ID (pengelompokan batch)")
+		}
+		totalStops += len(o.Stops)
+	}
+	require.Equal(t, 3, totalStops, "total stop ter-attach = stop yang di-seed")
+}
+
 // testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
 // port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
 // dev lokal (Redis:6380) sama-sama jalan.

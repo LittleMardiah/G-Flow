@@ -105,6 +105,14 @@ func (m *mockRepo) CountSendOrdersBySender(ctx context.Context, senderID uuid.UU
 	return args.Int(0), args.Error(1)
 }
 
+func (m *mockRepo) GetStopsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID][]*SendOrderStop, error) {
+	args := m.Called(ctx, orderIDs)
+	if r := args.Get(0); r != nil {
+		return r.(map[uuid.UUID][]*SendOrderStop), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 func (m *mockRepo) GetDriver(ctx context.Context, driverID uuid.UUID) (*SendDriver, error) {
 	args := m.Called(ctx, driverID)
 	if args.Get(0) == nil {
@@ -1368,6 +1376,7 @@ func TestGetSendOrderHistory(t *testing.T) {
 	repo.On("CountSendOrdersBySender", mock.Anything, fCustID).Return(2, nil)
 	repo.On("GetSendOrdersBySender", mock.Anything, fCustID, 20, 0).
 		Return([]*SendOrder{fSendOrder(sendStatusDelivered, PaymentMethodWallet, nil)}, nil)
+	repo.On("GetStopsByOrderIDs", mock.Anything, mock.Anything).Return(map[uuid.UUID][]*SendOrderStop{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
 	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 0, 0)
 	assert.NoError(t, err)
@@ -1396,6 +1405,28 @@ func TestGetSendOrderHistory_Paging(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Empty(t, orders)
+}
+
+// TD-153: history attach stops (batch) — verifikasi map lookup.
+func TestGetSendOrderHistory_AttachesStops(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	orderID := uuid.New()
+	stops := []*SendOrderStop{{ID: uuid.New(), OrderID: orderID, StopNumber: 1, Status: "PENDING"}}
+	repo.On("CountSendOrdersBySender", mock.Anything, mock.Anything).Return(1, nil)
+	repo.On("GetSendOrdersBySender", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return([]*SendOrder{{ID: orderID}}, nil)
+	repo.On("GetStopsByOrderIDs", mock.Anything, mock.Anything).
+		Return(map[uuid.UUID][]*SendOrderStop{orderID: stops}, nil)
+
+	svc := NewService(repo, nil, nil, lgr)
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), uuid.New(), 1, 20)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, orders, 1)
+	assert.Len(t, orders[0].Stops, 1)
+	assert.Equal(t, orderID, orders[0].Stops[0].OrderID)
+	repo.AssertExpectations(t)
 }
 
 // ---- AcceptSendOrder ----

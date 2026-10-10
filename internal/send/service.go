@@ -185,6 +185,7 @@ type Repo interface {
 	MarkSendOrderDelivered(ctx context.Context, q Querier, orderID uuid.UUID) (bool, error)
 	MarkSendOrderSettled(ctx context.Context, q Querier, orderID uuid.UUID, driverEarning, platformCommission decimal.Decimal) error
 	GetSendOrderStopsByOrderID(ctx context.Context, q Querier, orderID uuid.UUID) ([]*SendOrderStop, error)
+	GetStopsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID][]*SendOrderStop, error)
 	UpdateSendOrderStopStatus(ctx context.Context, q Querier, stopID uuid.UUID, status string, proof *string) (bool, error)
 }
 
@@ -917,6 +918,22 @@ func (s *Service) GetSendOrderHistory(ctx context.Context, senderID uuid.UUID, p
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// TD-153: attach stops batch (1 query untuk N order, hindari N+1).
+	if len(orders) > 0 {
+		orderIDs := make([]uuid.UUID, 0, len(orders))
+		for _, o := range orders {
+			orderIDs = append(orderIDs, o.ID)
+		}
+		stopsMap, err := s.repo.GetStopsByOrderIDs(ctx, orderIDs)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, o := range orders {
+			o.Stops = stopsMap[o.ID]
+		}
+	}
+
 	return orders, total, nil
 }
 

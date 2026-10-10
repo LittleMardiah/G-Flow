@@ -2805,8 +2805,22 @@ Solusi     : Extend GetSendOrderHistory untuk include stops batch (mirror
              GET /send-orders (admin/driver/customer) sebelum pilih
              breakdown di response yang sama vs endpoint terpisah.
 Prioritas  : SEDANG
-Status     : OPEN
-Referensi  : TD-126, TD-137 (temuan OpenCode)
+Status     : ✅ FIXED (2026-10-10, sesi S15f)
+Note       : FIXED via batch attach di GET /send-orders history.
+             (a) SendOrder struct +Stops []*SendOrderStop (repository.go:113);
+             (b) method GetStopsByOrderIDs(ctx, orderIDs) map[uuid.UUID][]*SendOrderStop
+                 batch query `WHERE order_id = ANY($1)` (repository.go:390);
+             (c) Repo interface method + attach di GetSendOrderHistory
+                 (service.go:188, 928-933).
+             Evidence: unit 4/4 PASS (pgxmock + TestGetSendOrderHistory_AttachesStops);
+             integration test DB PASS (TestIntegrationSend_HistoryBatchStops) —
+             preseden TD-181 (pgxmock lolos → real DB 42P08) TERATASI: pgx v5
+             binding []uuid.UUID ke ANY($1) benar di PG nyata, tidak ada 42P08.
+             Mobile consumer VERIFIED sudah baca key `stops` (send_order.dart:65)
+             dan render di history (send_history_screen.dart:114) — TIDAK butuh fix.
+             Counter §2/§3 TIDAK di-update di sesi ini (register punya banyak
+             [OVERRIDE] historis; sync counter = TD terpisah).
+Referensi  : TD-126, TD-137 (temuan OpenCode), TD-181 (preseden pgx binding)
 
 ID         : TD-154
 Kategori   : SECURITY
@@ -9045,6 +9059,21 @@ CHANGELOG — 2026-10-09 (sesi TD-177, global ledger verify):
   - Regex re.split dengan capture group TIDAK stop di match berikutnya —
     boundary harus dicari eksplisit (find + regex next-ID).
 ========================================================================
+
+
+========================================================================
+CHANGELOG — 2026-10-10 (sesi S15f, close TD-153):
+- TD-153 (BACKEND / FITUR) Status OPEN -> FIXED.
+- Prod: SendOrder.Stops + GetStopsByOrderIDs batch + attach di GetSendOrderHistory.
+- Unit: 4/4 PASS (pgxmock + TestGetSendOrderHistory_AttachesStops baru).
+- Integration DB: TestIntegrationSend_HistoryBatchStops PASS — pgx v5 binding
+  []uuid.UUID ke `WHERE order_id = ANY($1)` verified di DB nyata (bukan pgxmock).
+  Preseden TD-181 (pgxmock lolos -> real DB 42P08) TERATASI: tidak ada 42P08.
+- Mobile consumer VERIFIED sudah handle `stops` (send_order.dart:65,
+  send_history_screen.dart:114) — note lama di entry TD-153 stale, tidak butuh fix.
+- 4 file modified (repository.go +42, service.go +17, service_test.go +31,
+  integration_test.go +41) — 131 ins.
+- Counter §2/§3 TIDAK di-update di sesi ini (defer ke TD sync terpisah).
 
 END OF TECHNICAL DEBT REGISTER v2.0 (Phase 1-3)
 ===========================================================================

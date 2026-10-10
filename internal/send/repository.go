@@ -109,6 +109,8 @@ type SendOrder struct {
 	DeliveredAt         *time.Time       `json:"delivered_at,omitempty"`
 	SettledAt           *time.Time       `json:"settled_at,omitempty"`
 	IsSettled           bool             `json:"is_settled"`
+	// TD-153: opsional, di-attach untuk history (batch).
+	Stops []*SendOrderStop `json:"stops,omitempty"`
 }
 
 // SendOrderStop adalah representasi baris tabel send_order_stops (multi-stop
@@ -380,6 +382,46 @@ func (r *Repository) GetSendOrderStopsByOrderID(ctx context.Context, q Querier, 
 		stops = append(stops, &st)
 	}
 	return stops, rows.Err()
+}
+
+// GetStopsByOrderIDs mengambil stops untuk banyak order sekaligus (batch).
+// Mirror food/repository.go GetItemsByOrderIDs (TD-137): 1 query untuk N
+// order, hindari N+1.
+func (r *Repository) GetStopsByOrderIDs(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID][]*SendOrderStop, error) {
+	out := make(map[uuid.UUID][]*SendOrderStop)
+	if len(orderIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, order_id, stop_number,
+		       recipient_name, recipient_phone,
+		       dropoff_lat, dropoff_lng, dropoff_address,
+		       distance_km, allocated_fare, status,
+		       delivery_photo_url, recipient_signature,
+		       arrived_at, completed_at, notes
+		FROM send_order_stops
+		WHERE order_id = ANY($1)
+		ORDER BY order_id ASC, stop_number ASC
+	`, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st SendOrderStop
+		if err := rows.Scan(
+			&st.ID, &st.OrderID, &st.StopNumber,
+			&st.RecipientName, &st.RecipientPhone,
+			&st.DropoffLat, &st.DropoffLng, &st.DropoffAddress,
+			&st.DistanceKm, &st.AllocatedFare, &st.Status,
+			&st.DeliveryPhotoURL, &st.RecipientSignature,
+			&st.ArrivedAt, &st.CompletedAt, &st.Notes,
+		); err != nil {
+			return nil, err
+		}
+		out[st.OrderID] = append(out[st.OrderID], &st)
+	}
+	return out, rows.Err()
 }
 
 // UpdateSendOrderStopStatus mengubah status sebuah stop (Task 3.6.3): dari
