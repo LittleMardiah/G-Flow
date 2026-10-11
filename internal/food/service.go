@@ -40,6 +40,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/g-flow/g-flow/internal/db"
 	"github.com/g-flow/g-flow/internal/wallet"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -1423,10 +1424,11 @@ func (s *Service) settleFoodOrderTx(ctx context.Context, tx pgx.Tx, order *FoodO
 
 // UpdateFoodOrderStatusRequest input untuk PATCH /food-orders/{id}.
 type UpdateFoodOrderStatusRequest struct {
-	OrderID uuid.UUID
-	UserID  uuid.UUID
-	Status  string
-	Reason  string
+	OrderID        uuid.UUID
+	UserID         uuid.UUID
+	Status         string
+	Reason         string
+	IdempotencyKey string
 }
 
 // UpdateFoodOrderStatusResponse hasil PATCH /food-orders/{id}.
@@ -1442,7 +1444,58 @@ const (
 	actorKindDriver
 )
 
-// UpdateFoodOrderStatus memproses PATCH /food-orders/{id} dengan FOR UPDATE
+// UpdateFoodOrderStatus memproses PATCH /food-orders/{id} dengan dual-layer
+// idempotency (Redis L1 + PostgreSQL L2) dan retry transient; logika transaksi
+// berada di updateFoodOrderStatusTx.
+func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrderStatusRequest) (*UpdateFoodOrderStatusResponse, error) {
+	if req.IdempotencyKey == "" {
+		return nil, ErrIdempotencyKeyRequired
+	}
+
+	// L1: Redis (scope per user agar tidak collision antar user).
+	if cached, ok := s.redisGetCachedResp(ctx, req.UserID, req.IdempotencyKey); ok {
+		var out UpdateFoodOrderStatusResponse
+		if err := json.Unmarshal(cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// L2: PostgreSQL idempotency.
+	if res, err := s.idemAcquire(ctx, req.UserID, req.IdempotencyKey); err != nil {
+		return nil, err
+	} else if !res.proceed {
+		s.redisSet(ctx, req.UserID, req.IdempotencyKey, redisCompleted, res.cached)
+		var out UpdateFoodOrderStatusResponse
+		if err := json.Unmarshal(res.cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Transisi dengan retry transient. Aman diulang: tx rollback penuh saat
+	// gagal, dan replay setelah commit di-guard oleh idempotent check di
+	// updateFoodOrderStatusTx.
+	var resp *UpdateFoodOrderStatusResponse
+	if err := db.ProcessWithRetry(ctx, func(retryCtx context.Context) error {
+		r, err := s.updateFoodOrderStatusTx(retryCtx, req)
+		if err != nil {
+			return err
+		}
+		resp = r
+		return nil
+	}, true); err != nil {
+		return nil, err
+	}
+
+	if err := s.cacheResponse(ctx, req.UserID, req.IdempotencyKey, resp); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// updateFoodOrderStatusTx memproses transisi status order dengan FOR UPDATE
 // NOWAIT (ROADMAP 3.3.4):
 //
 //   - Customer (pemilik order): CREATED/CONFIRMED → CANCELLED, dengan refund
@@ -1458,7 +1511,7 @@ const (
 //     (settleFoodOrderTx — 4-way WALLET / CASH).
 //
 // Settlement (DELIVERED → SETTLED) otomatis diimplementasi di Task 3.4.
-func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrderStatusRequest) (*UpdateFoodOrderStatusResponse, error) {
+func (s *Service) updateFoodOrderStatusTx(ctx context.Context, req UpdateFoodOrderStatusRequest) (*UpdateFoodOrderStatusResponse, error) {
 	if !validFoodStatusTarget(req.Status) {
 		return nil, ErrInvalidStatus
 	}
@@ -1467,6 +1520,17 @@ func (s *Service) UpdateFoodOrderStatus(ctx context.Context, req UpdateFoodOrder
 	if err != nil {
 		return nil, err
 	}
+
+	// Replay: status target sudah tercapai.
+	if order.Status == req.Status {
+		return &UpdateFoodOrderStatusResponse{OrderID: order.ID, Status: req.Status}, nil
+	}
+	// Retry-after-commit: DELIVERED sudah memicu settlement (SETTLED), response
+	// konsisten dengan attempt pertama yang mengembalikan SETTLED.
+	if req.Status == foodStatusDelivered && order.Status == foodStatusSettled {
+		return &UpdateFoodOrderStatusResponse{OrderID: order.ID, Status: foodStatusSettled}, nil
+	}
+
 	if order.Status == foodStatusCancelled || order.Status == foodStatusSettled {
 		return nil, ErrInvalidTransition
 	}

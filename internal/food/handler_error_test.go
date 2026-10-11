@@ -269,12 +269,14 @@ func TestHandler_GetFoodOrderHistory_Errors(t *testing.T) {
 func TestHandler_UpdateFoodOrderStatus_Errors(t *testing.T) {
 	_, c, w := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{bad`,
 		gin.Param{Key: "id", Value: fOrderID.String()})
+	c.Request.Header.Set("X-Idempotency-Key", "test-key-upd-err-1")
 	h := NewHandler(new(mockFoodService))
 	h.UpdateFoodOrderStatus(c)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	_, c2, w2 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"confirmed"}`,
 		gin.Param{Key: "id", Value: fOrderID.String()})
+	c2.Request.Header.Set("X-Idempotency-Key", "test-key-upd-err-2")
 	h2 := NewHandler(new(mockFoodService))
 	h2.UpdateFoodOrderStatus(c2)
 	assert.Equal(t, http.StatusUnauthorized, w2.Code)

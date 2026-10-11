@@ -498,6 +498,7 @@ func TestHandler_CreateFoodOrder_Errors(t *testing.T) {
 func TestHandler_UpdateFoodOrderStatus(t *testing.T) {
 	svc, c, w := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"confirmed"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c.Set("user_id", fMerchID.String())
+	c.Request.Header.Set("X-Idempotency-Key", "test-key-upd-1")
 	svc.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
 		return r.OrderID == fOrderID && r.Status == "CONFIRMED"
 	})).Return(&UpdateFoodOrderStatusResponse{OrderID: fOrderID, Status: foodStatusConfirmed}, nil)
@@ -508,22 +509,32 @@ func TestHandler_UpdateFoodOrderStatus(t *testing.T) {
 
 	_, c2, w2 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/bad", `{"status":"x"}`, gin.Param{Key: "id", Value: "bad"})
 	c2.Set("user_id", fMerchID.String())
+	c2.Request.Header.Set("X-Idempotency-Key", "test-key-upd-2")
 	h2 := NewHandler(new(mockFoodService))
 	h2.UpdateFoodOrderStatus(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
 
 	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"bad"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c3.Set("user_id", fMerchID.String())
+	c3.Request.Header.Set("X-Idempotency-Key", "test-key-upd-3")
 	svc3.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything).Return(nil, ErrInvalidTransition)
 	h3 := NewHandler(svc3)
 	h3.UpdateFoodOrderStatus(c3)
 	assert.Equal(t, http.StatusConflict, w3.Code)
+
+	// X-Idempotency-Key wajib → tanpa header 400 IDEMPOTENCY_KEY_REQUIRED.
+	_, c4, w4 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"confirmed"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	c4.Set("user_id", fMerchID.String())
+	h4 := NewHandler(new(mockFoodService))
+	h4.UpdateFoodOrderStatus(c4)
+	assert.Equal(t, http.StatusBadRequest, w4.Code)
 }
 
 func TestHandler_UpdateFoodOrderStatus_MerchantWallet(t *testing.T) {
 	// Merchant confirm order WALLET (born CONFIRMED/WAITING) → 200.
 	svc, c, w := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"confirmed"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c.Set("user_id", fMerchID.String())
+	c.Request.Header.Set("X-Idempotency-Key", "test-key-upd-w1")
 	svc.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
 		return r.OrderID == fOrderID && r.Status == "CONFIRMED"
 	})).Return(&UpdateFoodOrderStatusResponse{OrderID: fOrderID, Status: foodStatusConfirmed}, nil)
@@ -535,6 +546,7 @@ func TestHandler_UpdateFoodOrderStatus_MerchantWallet(t *testing.T) {
 	// Merchant reject order WALLET → CANCELLED 200.
 	svc2, c2, w2 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"cancelled"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c2.Set("user_id", fMerchID.String())
+	c2.Request.Header.Set("X-Idempotency-Key", "test-key-upd-w2")
 	svc2.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
 		return r.OrderID == fOrderID && r.Status == "CANCELLED"
 	})).Return(&UpdateFoodOrderStatusResponse{OrderID: fOrderID, Status: foodStatusCancelled}, nil)
@@ -546,6 +558,7 @@ func TestHandler_UpdateFoodOrderStatus_MerchantWallet(t *testing.T) {
 	// Merchant skip confirm (PREPARING langsung saat merchant_status WAITING) → 409.
 	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodPatch, "/api/v1/food-orders/"+fOrderID.String(), `{"status":"preparing"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c3.Set("user_id", fMerchID.String())
+	c3.Request.Header.Set("X-Idempotency-Key", "test-key-upd-w3")
 	svc3.On("UpdateFoodOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateFoodOrderStatusRequest) bool {
 		return r.OrderID == fOrderID && r.Status == "PREPARING"
 	})).Return(nil, ErrInvalidTransition)

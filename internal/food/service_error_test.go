@@ -856,33 +856,45 @@ func TestCreateFoodOrder_RedisInvalidCached(t *testing.T) {
 
 func TestUpdateFoodOrderStatus_GetOrderError(t *testing.T) {
 	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	idemKey := "food-update-err-get-order"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(nil, ErrFoodOrderNotFound)
-	svc := NewService(repo, nil, nil, new(mockLedger))
-	_, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+	foodIdemProceed(mDB, idemKey, fCustID)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrFoodOrderNotFound)
 }
 
 func TestUpdateFoodOrderStatus_SettledOrder(t *testing.T) {
 	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
 	order := fFoodOrder(foodStatusSettled, PaymentMethodCash, nil)
+	idemKey := "food-update-err-settled"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
-	svc := NewService(repo, nil, nil, new(mockLedger))
-	_, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+	foodIdemProceed(mDB, idemKey, fCustID)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 }
 
 func TestUpdateFoodOrderStatus_GetMerchantError(t *testing.T) {
 	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-get-merchant"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(nil, ErrMerchantNotFound)
-	svc := NewService(repo, nil, nil, new(mockLedger))
-	_, err := svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+	foodIdemProceed(mDB, idemKey, fCustID)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrMerchantNotFound)
 }
@@ -892,13 +904,15 @@ func TestUpdateFoodOrderStatus_BeginError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-begin"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin().WillReturnError(pgx.ErrTxClosed)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, pgx.ErrTxClosed)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -909,8 +923,10 @@ func TestUpdateFoodOrderStatus_SetTimeoutError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-set-timeout"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").
 		WithArgs().
@@ -918,7 +934,7 @@ func TestUpdateFoodOrderStatus_SetTimeoutError(t *testing.T) {
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -929,15 +945,17 @@ func TestUpdateFoodOrderStatus_LockPlainError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-lock-plain"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(nil, errors.New("boom"))
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.Error(t, err, "boom")
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -949,15 +967,17 @@ func TestUpdateFoodOrderStatus_LockedStatusChanged(t *testing.T) {
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
 	locked := fFoodOrder(foodStatusInTransit, PaymentMethodCash, nil)
+	idemKey := "food-update-err-locked-changed"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(locked, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -968,8 +988,10 @@ func TestUpdateFoodOrderStatus_UpdateRepoError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-update-repo"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -979,7 +1001,7 @@ func TestUpdateFoodOrderStatus_UpdateRepoError(t *testing.T) {
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -990,8 +1012,10 @@ func TestUpdateFoodOrderStatus_EventError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-event"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1003,7 +1027,7 @@ func TestUpdateFoodOrderStatus_EventError(t *testing.T) {
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -1015,8 +1039,10 @@ func TestUpdateFoodOrderStatus_CancelRefundLedgerError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusConfirmed, PaymentMethodWallet, nil)
+	idemKey := "food-update-err-cancel-refund"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1030,7 +1056,7 @@ func TestUpdateFoodOrderStatus_CancelRefundLedgerError(t *testing.T) {
 
 	svc := NewService(repo, mDB, nil, lgr)
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -1042,8 +1068,10 @@ func TestUpdateFoodOrderStatus_DeliverSettleError(t *testing.T) {
 	require.NoError(t, err)
 	d := fDriverID
 	order := fFoodOrder(foodStatusInTransit, PaymentMethodCash, &d)
+	idemKey := "food-update-err-deliver-settle"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1056,7 +1084,7 @@ func TestUpdateFoodOrderStatus_DeliverSettleError(t *testing.T) {
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fDriverID, Status: foodStatusDelivered,
+		OrderID: fOrderID, UserID: fDriverID, Status: foodStatusDelivered, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -1068,8 +1096,10 @@ func TestUpdateFoodOrderStatus_CommitError(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	order := fFoodOrder(foodStatusCreated, PaymentMethodCash, nil)
+	idemKey := "food-update-err-commit"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	foodIdemProceed(mDB, idemKey, fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1081,7 +1111,7 @@ func TestUpdateFoodOrderStatus_CommitError(t *testing.T) {
 
 	svc := NewService(repo, mDB, nil, lgr)
 	_, err = svc.UpdateFoodOrderStatus(context.Background(), UpdateFoodOrderStatusRequest{
-		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled,
+		OrderID: fOrderID, UserID: fCustID, Status: foodStatusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, pgx.ErrTxClosed)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -1152,25 +1182,25 @@ func Test_cacheResponse_MarshalSetup(t *testing.T) {
 
 func TestHandler_CodeForError_Full(t *testing.T) {
 	cases := map[error]string{
-		ErrMerchantNotFound:      "MERCHANT_NOT_FOUND",
-		ErrMenuNotFound:          "MENU_NOT_FOUND",
-		ErrItemNotFound:          "ITEM_NOT_FOUND",
-		ErrFoodOrderNotFound:     "FOOD_ORDER_NOT_FOUND",
-		ErrDriverNotFound:        "DRIVER_NOT_FOUND",
-		ErrWalletNotFound:        "WALLET_NOT_FOUND",
-		ErrNotMerchant:           "NOT_MERCHANT",
-		ErrNotMerchantOwner:      "FORBIDDEN",
-		ErrNotAllowed:            "FORBIDDEN",
-		ErrNotCustomer:           "NOT_CUSTOMER",
-		ErrMerchantInactive:      "MERCHANT_INACTIVE",
-		ErrMerchantAlreadyExists: "MERCHANT_ALREADY_EXISTS",
-		ErrInvalidCoordinates:    "INVALID_COORDINATES",
-		ErrInvalidMenu:           "INVALID_MENU",
-		ErrInvalidPrice:          "INVALID_PRICE",
-		ErrEmptyName:             "INVALID_REQUEST",
-		ErrCustomerInactive:      "CUSTOMER_INACTIVE",
-		ErrOverdueDebt:           "OVERDUE_DEBT",
-		ErrWalletInactive:        "WALLET_INACTIVE",
+		ErrMerchantNotFound:       "MERCHANT_NOT_FOUND",
+		ErrMenuNotFound:           "MENU_NOT_FOUND",
+		ErrItemNotFound:           "ITEM_NOT_FOUND",
+		ErrFoodOrderNotFound:      "FOOD_ORDER_NOT_FOUND",
+		ErrDriverNotFound:         "DRIVER_NOT_FOUND",
+		ErrWalletNotFound:         "WALLET_NOT_FOUND",
+		ErrNotMerchant:            "NOT_MERCHANT",
+		ErrNotMerchantOwner:       "FORBIDDEN",
+		ErrNotAllowed:             "FORBIDDEN",
+		ErrNotCustomer:            "NOT_CUSTOMER",
+		ErrMerchantInactive:       "MERCHANT_INACTIVE",
+		ErrMerchantAlreadyExists:  "MERCHANT_ALREADY_EXISTS",
+		ErrInvalidCoordinates:     "INVALID_COORDINATES",
+		ErrInvalidMenu:            "INVALID_MENU",
+		ErrInvalidPrice:           "INVALID_PRICE",
+		ErrEmptyName:              "INVALID_REQUEST",
+		ErrCustomerInactive:       "CUSTOMER_INACTIVE",
+		ErrOverdueDebt:            "OVERDUE_DEBT",
+		ErrWalletInactive:         "WALLET_INACTIVE",
 		ErrMerchantWalletNotFound: "MERCHANT_WALLET_NOT_FOUND",
 		ErrInsufficientBalance:    "INSUFFICIENT_BALANCE",
 		ErrInvalidPaymentMethod:   "INVALID_PAYMENT_METHOD",
