@@ -372,6 +372,7 @@ func TestHandler_UpdateStatus_Success(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`{"status":"DRIVER_ARRIVED"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-success")
 	c.Set("user_id", svcDriverID.String())
 
 	svc := new(mockRideService)
@@ -390,6 +391,7 @@ func TestHandler_UpdateStatus_WithActualFare(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`{"status":"COMPLETED","actual_fare":60000}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-actualfare")
 	c.Set("user_id", svcDriverID.String())
 
 	svc := new(mockRideService)
@@ -409,6 +411,7 @@ func TestHandler_UpdateStatus_WithoutActualFare(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`{"status":"COMPLETED"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-without-fare")
 	c.Set("user_id", svcDriverID.String())
 
 	svc := new(mockRideService)
@@ -428,6 +431,7 @@ func TestHandler_UpdateStatus_ActualFareZeroIgnored(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`{"status":"COMPLETED","actual_fare":0}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-fare-zero")
 	c.Set("user_id", svcDriverID.String())
 
 	svc := new(mockRideService)
@@ -446,6 +450,7 @@ func TestHandler_UpdateStatus_InvalidOrderID(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/xyz/status",
 		bytes.NewBufferString(`{"status":"CANCELLED"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-invalid-order")
 	c.Set("user_id", svcCustomerID.String())
 
 	h := NewHandler(nil)
@@ -459,6 +464,7 @@ func TestHandler_UpdateStatus_BindError(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`not-json`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-bind-error")
 	c.Set("user_id", svcCustomerID.String())
 
 	h := NewHandler(nil)
@@ -472,6 +478,7 @@ func TestHandler_UpdateStatus_Unauthorized(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`{"status":"CANCELLED"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-unauthorized")
 
 	h := NewHandler(nil)
 	h.UpdateStatus(c)
@@ -484,6 +491,7 @@ func TestHandler_UpdateStatus_ServiceError(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
 		bytes.NewBufferString(`{"status":"COMPLETED"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Idempotency-Key", "idem-update-service-error")
 	c.Set("user_id", svcDriverID.String())
 
 	svc := new(mockRideService)
@@ -493,6 +501,22 @@ func TestHandler_UpdateStatus_ServiceError(t *testing.T) {
 	h.UpdateStatus(c)
 	assert.Equal(t, http.StatusConflict, w.Code)
 	svc.AssertExpectations(t)
+}
+
+// TD-176: header idempotency wajib pada UpdateStatus.
+func TestHandler_UpdateStatus_MissingIdempotencyKey(t *testing.T) {
+	_, c, w := setupGin()
+	c.Params = gin.Params{gin.Param{Key: "order_id", Value: svcOrderID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/rides/"+svcOrderID.String()+"/status",
+		bytes.NewBufferString(`{"status":"DRIVER_ARRIVED"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", svcDriverID.String())
+
+	// Tidak ada X-Idempotency-Key → ditolak sebelum service dipanggil.
+	h := NewHandler(nil)
+	h.UpdateStatus(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "IDEMPOTENCY_KEY_REQUIRED")
 }
 
 func TestHandler_GetRide_CustomerOwner_Success(t *testing.T) {

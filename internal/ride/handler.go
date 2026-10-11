@@ -221,6 +221,13 @@ type updateStatusRequestBody struct {
 // DRIVER_ARRIVED → TRIP_STARTED → COMPLETED (settlement otomatis) dan
 // CANCELLED (customer / driver).
 func (h *Handler) UpdateStatus(c *gin.Context) {
+	key := strings.TrimSpace(c.GetHeader("X-Idempotency-Key"))
+	if key == "" {
+		writeError(c, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED",
+			"X-Idempotency-Key header is required")
+		return
+	}
+
 	orderID, err := uuid.Parse(c.Param("order_id"))
 	if err != nil {
 		writeError(c, http.StatusUnprocessableEntity, "INVALID_ORDER_ID", "invalid order_id")
@@ -247,11 +254,12 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	}
 
 	resp, err := h.svc.UpdateRideStatus(c.Request.Context(), UpdateRideStatusRequest{
-		OrderID:    orderID,
-		UserID:     userID,
-		Status:     body.Status,
-		Reason:     body.Reason,
-		ActualFare: actualFare,
+		OrderID:        orderID,
+		UserID:         userID,
+		IdempotencyKey: key,
+		Status:         body.Status,
+		Reason:         body.Reason,
+		ActualFare:     actualFare,
 	})
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())

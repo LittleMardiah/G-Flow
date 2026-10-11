@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/g-flow/g-flow/internal/db"
 	"github.com/g-flow/g-flow/internal/wallet"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -721,11 +722,12 @@ func (s *Service) AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID u
 // ActualFare opsional (TD-069): fare aktual dari driver saat COMPLETED; jika
 // nil/nol → pakai estimated_fare (backward compat).
 type UpdateRideStatusRequest struct {
-	OrderID    uuid.UUID
-	UserID     uuid.UUID
-	Status     string
-	Reason     string
-	ActualFare *decimal.Decimal
+	OrderID        uuid.UUID
+	UserID         uuid.UUID
+	Status         string
+	Reason         string
+	ActualFare     *decimal.Decimal
+	IdempotencyKey string
 }
 
 // UpdateRideStatusResponse hasil update status order (API_CONTRACT 7.3).
@@ -750,7 +752,66 @@ type UpdateRideStatusResponse struct {
 // status. Authorization divalidasi di service; handler hanya meneruskan
 // user_id dari JWT claim. Locking order FOR UPDATE mencegah dua transisi
 // bersamaan (cancel vs accept / double-cancel).
+//
+// TD-176: wrapper idempotency dual-layer (L1 Redis + L2 PostgreSQL) + retry
+// transient. Body transaksi dipindah ke updateRideStatusTx sehingga replay
+// attempt ke-2 mengembalikan response yang sama tanpa mengeksekusi transisi
+// dua kali.
 func (s *Service) UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error) {
+	if req.IdempotencyKey == "" {
+		return nil, ErrIdempotencyKeyRequired
+	}
+
+	// L1: Redis (scope per user agar tidak collision antar user).
+	if cached, ok := s.redisGetCachedResp(ctx, req.UserID, req.IdempotencyKey); ok {
+		var out UpdateRideStatusResponse
+		if err := json.Unmarshal(cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// L2: PostgreSQL idempotency.
+	if res, err := s.idemAcquire(ctx, req.UserID, req.IdempotencyKey); err != nil {
+		return nil, err
+	} else if !res.proceed {
+		s.redisSet(ctx, req.UserID, req.IdempotencyKey, redisCompleted, res.cached)
+		var out UpdateRideStatusResponse
+		if err := json.Unmarshal(res.cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Transisi dengan retry transient. Aman diulang: tx rollback penuh saat
+	// gagal, dan replay setelah commit di-guard oleh idempotent check di
+	// updateRideStatusTx.
+	var resp *UpdateRideStatusResponse
+	if err := db.ProcessWithRetry(ctx, func(retryCtx context.Context) error {
+		r, err := s.updateRideStatusTx(retryCtx, req)
+		if err != nil {
+			return err
+		}
+		resp = r
+		return nil
+	}, true); err != nil {
+		return nil, err
+	}
+
+	if err := s.cacheResponse(ctx, req.UserID, req.IdempotencyKey, resp); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// updateRideStatusTx mengeksekusi transisi status dalam satu transaksi.
+//
+// Idempotent replay guard: jika status target sudah tercapai (attempt
+// sebelumnya sudah commit tapi response gagal terkirim), kembalikan response
+// identik tanpa transisi baru. Response selalu memakai req.Status (bukan status
+// final DB) sehingga attempt 1 dan attempt 2 konsisten.
+func (s *Service) updateRideStatusTx(ctx context.Context, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error) {
 	if !validRideStatusTarget(req.Status) {
 		return nil, ErrInvalidStatus
 	}
@@ -758,6 +819,15 @@ func (s *Service) UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequ
 	order, err := s.repo.GetOrderByID(ctx, req.OrderID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Replay: status target sudah tercapai.
+	if order.Status == req.Status {
+		return &UpdateRideStatusResponse{OrderID: order.ID, Status: req.Status}, nil
+	}
+	// Retry-after-commit: COMPLETED sudah memicu settlement (SETTLED).
+	if req.Status == statusCompleted && order.Status == statusSettled {
+		return &UpdateRideStatusResponse{OrderID: order.ID, Status: req.Status}, nil
 	}
 
 	// Order sudah final → tidak ada transisi lagi.

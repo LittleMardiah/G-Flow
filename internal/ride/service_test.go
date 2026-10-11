@@ -281,6 +281,26 @@ func setupBookRideDB(mDB pgxmock.PgxPoolIface, idemKey string) {
 		WillReturnResult(pgconn.NewCommandTag("SET"))
 }
 
+// expectIdemMiss mengatur ekspektasi L2 idempotency (idempotency_cache) untuk
+// satu pemanggilan UpdateRideStatus: SELECT → no row, lalu INSERT PROCESSING.
+// WAJIB dipanggil sebelum ExpectBegin karena pgxmock mencocokkan berurutan.
+func expectIdemMiss(mDB pgxmock.PgxPoolIface, idemKey string, userID uuid.UUID) {
+	mDB.ExpectQuery("SELECT state, response_body, debounce_at").
+		WithArgs(idemKey, userID).
+		WillReturnError(pgx.ErrNoRows)
+	mDB.ExpectExec("INSERT INTO idempotency_cache").
+		WithArgs(idemKey, userID).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+}
+
+// expectIdemCacheUpdate mengatur ekspektasi cacheResponse (UPDATE COMPLETED)
+// yang dijalankan setelah Commit.
+func expectIdemCacheUpdate(mDB pgxmock.PgxPoolIface, idemKey string, userID uuid.UUID) {
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs(idemKey, userID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+}
+
 func timeNowFuture() *time.Time {
 	t := time.Now().Add(5 * time.Minute)
 	return &t
@@ -1029,6 +1049,7 @@ func TestCancelOrder_BeforeAssign(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "cancel-before-assign-key"
 	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
@@ -1037,18 +1058,21 @@ func TestCancelOrder_BeforeAssign(t *testing.T) {
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcCustomerID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID,
-		UserID:  svcCustomerID,
-		Status:  statusCancelled,
+		OrderID:        svcOrderID,
+		UserID:         svcCustomerID,
+		Status:         statusCancelled,
+		IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1064,6 +1088,7 @@ func TestCancelOrder_AfterAssign(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "cancel-after-assign-key"
 	drv := svcDriverID
 	order := svcOrder(statusDriverAssigned, PaymentMethodCash, &drv)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
@@ -1074,16 +1099,19 @@ func TestCancelOrder_AfterAssign(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcCustomerID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	// Order service refunds escrow hanya untuk WALLET → CASH tanpa fee/refund.
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID,
-		UserID:  svcCustomerID,
-		Status:  statusCancelled,
+		OrderID:        svcOrderID,
+		UserID:         svcCustomerID,
+		Status:         statusCancelled,
+		IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1104,25 +1132,29 @@ func TestCancelOrder_DriverEmergency(t *testing.T) {
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 	// Driver asal cancancel tanpa reason → reason otomatis DRIVER_EMERGENCY.
+	idemKey := "cancel-driver-emergency-key"
 	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonDriverEmergency, decimal.Zero).Return(true, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID,
-		UserID:  svcDriverID,
-		Status:  statusCancelled,
-		Reason:  reasonDriverEmergency,
+		OrderID:        svcOrderID,
+		UserID:         svcDriverID,
+		Status:         statusCancelled,
+		Reason:         reasonDriverEmergency,
+		IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1159,7 +1191,7 @@ func TestCancelOrder_FeeCalculationTable(t *testing.T) {
 
 // setupCancelFeeTest membangun mock repo/ledger/db umum untuk cancel ber-fee
 // (WALLET): cancel sukses + refund fee + driver reset + audit event.
-func setupCancelFeeTest(est decimal.Decimal, status, reason string) (*mockRepo, *mockLedger, pgxmock.PgxPoolIface, *RideOrder) {
+func setupCancelFeeTest(est decimal.Decimal, status, reason, idemKey string, userID uuid.UUID) (*mockRepo, *mockLedger, pgxmock.PgxPoolIface, *RideOrder) {
 	repo := new(mockRepo)
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
@@ -1174,6 +1206,7 @@ func setupCancelFeeTest(est decimal.Decimal, status, reason string) (*mockRepo, 
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, userID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
@@ -1217,15 +1250,17 @@ func assertLedgerFee(t *testing.T, args mock.Arguments, est, fee int64) {
 // Cancel WALLET setelah DRIVER_ASSIGNED → fee 5.000 ke driver, refund
 // (estimated - 5.000) ke customer, ledger double-entry seimbang.
 func TestCancelOrder_FeeAssignedWallet(t *testing.T) {
-	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverAssigned, reasonCustomerCancel)
+	idemKey := "cancel-fee-assigned-key"
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverAssigned, reasonCustomerCancel, idemKey, svcCustomerID)
 	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, reasonCustomerCancel,
 		decimal.NewFromInt(5000)).Return(true, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
 		Run(func(args mock.Arguments) { assertLedgerFee(t, args, 50000, 5000) }).Return(nil)
+	expectIdemCacheUpdate(mDB, idemKey, svcCustomerID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel, IdempotencyKey: idemKey,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, statusCancelled, resp.Status)
@@ -1238,15 +1273,17 @@ func TestCancelOrder_FeeAssignedWallet(t *testing.T) {
 
 // Cancel WALLET setelah DRIVER_ARRIVED → fee 10.000 ke driver.
 func TestCancelOrder_FeeArrivedWallet(t *testing.T) {
-	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonCustomerCancel)
+	idemKey := "cancel-fee-arrived-key"
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonCustomerCancel, idemKey, svcCustomerID)
 	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusDriverArrived, reasonCustomerCancel,
 		decimal.NewFromInt(10000)).Return(true, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
 		Run(func(args mock.Arguments) { assertLedgerFee(t, args, 50000, 10000) }).Return(nil)
+	expectIdemCacheUpdate(mDB, idemKey, svcCustomerID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel, IdempotencyKey: idemKey,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, statusCancelled, resp.Status)
@@ -1260,7 +1297,8 @@ func TestCancelOrder_FeeArrivedWallet(t *testing.T) {
 // TC-INT-RD-005 — No-Show: driver sudah DRIVER_ARRIVED, customer tidak muncul
 // → fee 10.000 dari customer, kompensasi penuh ke driver.
 func TestCancelOrder_NoShow(t *testing.T) {
-	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow)
+	idemKey := "cancel-noshow-key"
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow, idemKey, svcDriverID)
 	// TD-129: driver menunggu > 5 menit (valid no-show).
 	arrivedAt := time.Now().Add(-6 * time.Minute)
 	repo.On("GetArrivedAt", mock.Anything, mock.Anything, svcOrderID).Return(&arrivedAt, nil)
@@ -1268,10 +1306,11 @@ func TestCancelOrder_NoShow(t *testing.T) {
 		decimal.NewFromInt(10000)).Return(true, nil)
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
 		Run(func(args mock.Arguments) { assertLedgerFee(t, args, 50000, 10000) }).Return(nil)
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow, IdempotencyKey: idemKey,
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, statusCancelled, resp.Status)
@@ -1285,14 +1324,15 @@ func TestCancelOrder_NoShow(t *testing.T) {
 // NO_SHOW hanya boleh dari driver tertunjuk (customer dilarang memicu no-show).
 // TD-129: NO_SHOW ditolak kalau < 5 menit sejak DRIVER_ARRIVED.
 func TestCancelOrder_NoShowTooEarly(t *testing.T) {
-	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow)
+	idemKey := "cancel-noshow-early-key"
+	repo, lgr, mDB, _ := setupCancelFeeTest(decimal.NewFromInt(50000), statusDriverArrived, reasonNoShow, idemKey, svcDriverID)
 	// GetArrivedAt return 2 menit lalu (< 5 min threshold).
 	arrivedAt := time.Now().Add(-2 * time.Minute)
 	repo.On("GetArrivedAt", mock.Anything, mock.Anything, svcOrderID).Return(&arrivedAt, nil)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrNoShowTooEarly)
 	// Early-exit: no refund, no audit (bukti path NoShowTooEarly).
@@ -1308,16 +1348,18 @@ func TestCancelOrder_NoShowNotDriver(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "cancel-noshow-notdriver-key"
 	order := svcOrder(statusDriverArrived, PaymentMethodWallet, &svcDriverID)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonNoShow,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonNoShow, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrNotAllowed)
 	repo.AssertNotCalled(t, "CancelOrder")
@@ -1330,16 +1372,18 @@ func TestCancelOrder_NoShowWrongStatus(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "cancel-noshow-wrongstatus-key"
 	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCancelled, Reason: reasonNoShow, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertNotCalled(t, "CancelOrder")
@@ -1353,16 +1397,18 @@ func TestCancelOrder_CustomerEmergencyBypass(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "cancel-customer-emergency-key"
 	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonDriverEmergency,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonDriverEmergency, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrNotAllowed)
 	repo.AssertNotCalled(t, "CancelOrder")
@@ -1374,12 +1420,14 @@ func TestCancelOrder_InvalidTransition(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "cancel-invalid-transition-key"
 	order := svcOrder(statusCompleted, PaymentMethodWallet, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertExpectations(t)
@@ -1390,13 +1438,16 @@ func TestCancelOrder_NotAllowed(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "cancel-not-allowed-key"
+	uid := uuid.New()
 	drv := svcDriverID
 	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &drv)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, uid)
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: uuid.New(), Status: statusCancelled,
+		OrderID: svcOrderID, UserID: uid, Status: statusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrNotAllowed)
 	repo.AssertExpectations(t)
@@ -1407,9 +1458,11 @@ func TestUpdateRideStatus_InvalidStatus(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "update-invalid-status-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: "BOGUS",
+		OrderID: svcOrderID, UserID: svcDriverID, Status: "BOGUS", IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidStatus)
 	repo.AssertNotCalled(t, "GetOrderByID")
@@ -1430,16 +1483,125 @@ func TestUpdateRideStatus_SimpleTransition(t *testing.T) {
 	repo.On("SetArrivedAt", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+	idemKey := "update-simple-transition-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusDriverArrived, IdempotencyKey: idemKey,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, statusDriverArrived, resp.Status)
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+// TD-176: idempotent behavior UpdateRideStatus.
+func TestUpdateRideStatus_RequiresIdempotencyKey(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	drv := svcDriverID
+	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &drv)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
 		OrderID: svcOrderID, UserID: svcDriverID, Status: statusDriverArrived,
 	})
+	assert.ErrorIs(t, err, ErrIdempotencyKeyRequired)
+	assert.Nil(t, resp)
+	// Guard terjadi sebelum DB/Redis: tidak ada query sama sekali.
+	repo.AssertNotCalled(t, "GetOrderByID")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateRideStatus_IdempotentL2Replay(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
+
+	idemKey := "update-idem-l2-replay-key"
+	cached := &UpdateRideStatusResponse{OrderID: svcOrderID, Status: statusCompleted}
+	body, err := json.Marshal(cached)
+	assert.NoError(t, err)
+
+	// L2 hit: state COMPLETED + body tersimpan.
+	mDB.ExpectQuery("SELECT state, response_body, debounce_at").
+		WithArgs(idemKey, svcDriverID).
+		WillReturnRows(pgxmock.NewRows([]string{"state", "response_body", "debounce_at"}).
+			AddRow(redisCompleted, body, nil))
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
+	})
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, statusCompleted, resp.Status)
+	assert.Equal(t, svcOrderID, resp.OrderID)
+	// Short-circuit di L2: tidak ada transisi, tidak ada Begin/cacheResponse.
+	repo.AssertNotCalled(t, "GetOrderByID")
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateRideStatus_ReplaySameStatus_4a(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "update-replay-same-status-key"
+	drv := svcDriverID
+	order := svcOrder(statusDriverArrived, PaymentMethodWallet, &drv)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+
+	expectIdemMiss(mDB, idemKey, svcDriverID)
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusDriverArrived, IdempotencyKey: idemKey,
+	})
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
 	assert.Equal(t, statusDriverArrived, resp.Status)
+	// Check #4a (pre-read) short-circuit sebelum Begin/lock.
+	repo.AssertNotCalled(t, "LockOrderForUpdate")
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestUpdateRideStatus_ReplayAfterCommitCompleted_Settled_4b(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+
+	idemKey := "update-replay-settled-key"
+	drv := svcDriverID
+	order := svcOrder(statusSettled, PaymentMethodWallet, &drv)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
+
+	expectIdemMiss(mDB, idemKey, svcDriverID)
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
+	})
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
+	// Check #4b: COMPLETED sudah memicu settlement (SETTLED) → replay.
+	assert.Equal(t, statusCompleted, resp.Status)
+	repo.AssertNotCalled(t, "LockOrderForUpdate")
 	repo.AssertExpectations(t)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1452,6 +1614,7 @@ func TestSettlement_WalletPayment(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "settlement-wallet-key"
 	drv := svcDriverID
 	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
 	drvWallet := &RideWallet{ID: svcOrderID, UserID: svcDriverID, Type: WalletTypeDriver, Balance: decimal.Zero, Status: "ACTIVE"}
@@ -1470,16 +1633,18 @@ func TestSettlement_WalletPayment(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1495,6 +1660,7 @@ func TestSettlement_NoDelta_ActualEqualEstimated(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "settlement-nodelta-key"
 	drv := svcDriverID
 	order := svcOrder(statusTripStarted, PaymentMethodWallet, &drv)
 
@@ -1511,17 +1677,19 @@ func TestSettlement_NoDelta_ActualEqualEstimated(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	actual := decimal.NewFromInt(50000)
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1559,17 +1727,20 @@ func TestSettlement_ActualFareRoundsToZero_FallsBackToEstimated(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	idemKey := "settlement-roundstozero-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	actual := decimal.RequireFromString("0.004")
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1602,6 +1773,8 @@ func TestSettlement_SurplusDelta_Refund(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	idemKey := "settlement-surplus-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	// Delta surplus: lock customer+escrow.
@@ -1613,11 +1786,12 @@ func TestSettlement_SurplusDelta_Refund(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	actual := decimal.NewFromInt(40000)
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1649,6 +1823,8 @@ func TestSettlement_ShortfallDelta_CoveredFromWallet(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	idemKey := "settlement-shortfall-covered-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	// Delta shortfall: lock customer+escrow lalu baca balance.
@@ -1662,11 +1838,12 @@ func TestSettlement_ShortfallDelta_CoveredFromWallet(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	actual := decimal.NewFromInt(60000)
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1699,6 +1876,8 @@ func TestSettlement_ShortfallDelta_Insufficient_SubsidyOverdue(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	idemKey := "settlement-shortfall-insufficient-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	// Delta shortfall: lock customer+escrow → balance 0 (tidak cukup).
@@ -1718,11 +1897,12 @@ func TestSettlement_ShortfallDelta_Insufficient_SubsidyOverdue(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 3"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	actual := decimal.NewFromInt(60000)
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, ActualFare: &actual, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1753,6 +1933,8 @@ func TestSettlement_CashPayment_AboveCeiling(t *testing.T) {
 	repo.On("ResetDriverIdle", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	idemKey := "settlement-cash-above-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
@@ -1762,10 +1944,11 @@ func TestSettlement_CashPayment_AboveCeiling(t *testing.T) {
 	mDB.ExpectQuery("SELECT balance FROM wallets").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(-40000)))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -1796,6 +1979,8 @@ func TestSettlement_CashPayment_BelowCeiling_Suspended(t *testing.T) {
 	repo.On("MarkDriverSuspended", mock.Anything, mock.Anything, svcDriverID).Return(nil)
 	repo.On("MarkSettled", mock.Anything, mock.Anything, svcOrderID).Return(nil)
 
+	idemKey := "settlement-cash-below-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
@@ -1805,10 +1990,11 @@ func TestSettlement_CashPayment_BelowCeiling_Suspended(t *testing.T) {
 	mDB.ExpectQuery("SELECT balance FROM wallets").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"balance"}).AddRow(decimal.NewFromInt(-60000)))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcDriverID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 
 	assert.NoError(t, err)
@@ -2108,17 +2294,19 @@ func TestCancelOrder_CancelFailed(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "cancel-failed-key"
 	order := svcOrder(statusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonCustomerCancel, decimal.Zero).Return(false, nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err = svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertExpectations(t)
@@ -2130,18 +2318,20 @@ func TestUpdateStatus_LockStatusMismatch(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "update-lock-mismatch-key"
 	order := svcOrder(statusDriverArrived, PaymentMethodWallet, &svcDriverID)
 	drv := svcDriverID
 	order2 := svcOrder(statusTripStarted, PaymentMethodWallet, &drv) // status berubah usai lock
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order2, nil)
 
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err = svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusTripStarted,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusTripStarted, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertExpectations(t)
@@ -2162,12 +2352,14 @@ func TestCompleteOrder_SettlementDriverWalletError(t *testing.T) {
 	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 	repo.On("GetWalletByUserAndType", mock.Anything, svcDriverID, WalletTypeDriver).Return(nil, ErrWalletNotFound)
 
+	idemKey := "settlement-driver-wallet-err-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err = svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	repo.AssertExpectations(t)
@@ -2234,12 +2426,14 @@ func Test_updateStatus_SimpleTransitionFailed(t *testing.T) {
 	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
 	repo.On("TransitionStatus", mock.Anything, mock.Anything, svcOrderID, statusDriverAssigned, statusDriverArrived).Return(false, nil)
 
+	idemKey := "update-simple-transition-failed-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err = svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusDriverArrived,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusDriverArrived, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertExpectations(t)
@@ -2250,12 +2444,14 @@ func Test_updateStatus_OrderFinal(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "update-order-final-key"
 	order := svcOrder(statusSettled, PaymentMethodWallet, nil)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertExpectations(t)
@@ -2266,14 +2462,17 @@ func Test_updateStatus_CompletedWrongActor(t *testing.T) {
 	lgr := new(mockLedger)
 	mDB, _ := pgxmock.NewPool()
 
+	idemKey := "update-completed-wrong-actor-key"
+	uid := uuid.New()
 	drv := svcDriverID
 	order := svcOrder(statusDriverArrived, PaymentMethodWallet, &drv)
 	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil)
 
+	expectIdemMiss(mDB, idemKey, uid)
 	svc := NewService(repo, lgr, nil, mDB)
 	// status bukan TRIP_STARTED → ErrInvalidTransition.
 	_, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: uuid.New(), Status: statusCompleted,
+		OrderID: svcOrderID, UserID: uid, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	repo.AssertExpectations(t)
@@ -2323,12 +2522,14 @@ func TestSettlement_WalletPayment_SystemWalletErr(t *testing.T) {
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemPlatform).Return(svcPlatformID, nil)
 	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(uuid.Nil, ErrWalletNotFound)
 
+	idemKey := "settlement-system-wallet-err-key"
+	expectIdemMiss(mDB, idemKey, svcDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 
 	svc := NewService(repo, lgr, nil, mDB)
 	_, err = svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted,
+		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	repo.AssertExpectations(t)
@@ -2801,6 +3002,7 @@ func TestCancelOrder_VoucherRefundDiscounted(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
+	idemKey := "cancel-voucher-refund-key"
 	discount := decimal.NewFromInt(10000)
 	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
 	order.DiscountAmount = &discount
@@ -2814,16 +3016,18 @@ func TestCancelOrder_VoucherRefundDiscounted(t *testing.T) {
 	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).
 		Run(func(args mock.Arguments) { assertFullRefundEntries(t, args, refund) }).Return(nil)
 
+	expectIdemMiss(mDB, idemKey, svcCustomerID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
 	mDB.ExpectCommit()
+	expectIdemCacheUpdate(mDB, idemKey, svcCustomerID)
 
 	svc := NewService(repo, lgr, nil, mDB)
 	resp, err := svc.UpdateRideStatus(context.Background(), UpdateRideStatusRequest{
-		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel,
+		OrderID: svcOrderID, UserID: svcCustomerID, Status: statusCancelled, Reason: reasonCustomerCancel, IdempotencyKey: idemKey,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, statusCancelled, resp.Status)

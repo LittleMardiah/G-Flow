@@ -4406,6 +4406,20 @@ Solusi     : (1) Tambah `X-Idempotency-Key` requirement di 3 handler status
              TransitionStatus WHERE status=$3).
 Prioritas  : SEDANG
 Status     : OPEN
+Note       : RIDE-SIDE DONE 2026-10-11 (sesi S16b-2..S16e-3). Remaining:
+             food + send (auto-settlement CAS guard retry-after-commit).
+             Ride bukti:
+             - Handler wajib X-Idempotency-Key (400 IDEMPOTENCY_KEY_REQUIRED).
+             - UpdateRideStatus wrapper L1 Redis + L2 PostgreSQL + ProcessWithRetry.
+             - UpdateRideStatusRequest +IdempotencyKey; response konsisten attempt 1 vs 2.
+             - Idempotent replay guard #4a (status==target) + #4b (COMPLETED+SETTLED).
+             - Unit: 5 test baru PASS. Integration DB nyata: 3 test baru PASS.
+             - Full integration suite ride: 18/18 PASS (fix regression
+               helper updateRideStatus/updateRideStatusWithFare + backdate NoShowCancel).
+             - Coverage: 5 file (handler.go/service.go/service_test.go/handler_test.go/
+               integration_test.go), 577 ins.
+             Referensi silang: TD-184 (NoShowCancel backdate test gap, FIXED).
+
 Referensi  : TD-091 (infra sudah siap), ROADMAP 04 §4.3.2 / ADR-006 (spec)
 
 ID         : TD-177
@@ -9183,6 +9197,27 @@ Status     : ✅ FIXED (2026-10-10, sesi TD-183)
 Referensi  : API CONTRACT §6.4 + §10.4, PRD F003, DATABASE_SCHEMA §7,
              TD-178 (pattern 42P08)
 
+
+ID         : TD-184
+Kategori   : TESTING
+Judul      : TestIntegrationRide_NoShowCancel tidak di-backdate `arrived_at`
+             saat TD-129 commit → test selalu 500 setelah rule >=5 menit
+             ditambahkan; ter-mask oleh handler UpdateStatus wajib key (400).
+Bukti      : (a) HEAD c452679 (TD-129 commit) — test (integration_test.go:734)
+             issue DRIVER_ARRIVED lalu LANGSUNG CANCELLED/NO_SHOW tanpa
+             backdate; service.go:938 butuh time.Since(arrived_at) >= 5 menit
+             (ErrNoShowTooEarly). (b) Proven pre-existing via clean worktree
+             at HEAD (S16e-2): failure identik 500 no-show. (c) Ter-mask
+             selama S16b-3 karena handler tolak tanpa key (400).
+Solusi     : FIXED via helper backdateRideArrivedAt (set arrived_at =
+             NOW() - INTERVAL '6 minutes') di integration_test.go.
+Prioritas  : SEDANG
+Status     : ✅ FIXED (2026-10-11, sesi S16e-3)
+Note       : (a) Full integration suite ride 18/18 PASS (V3 RC=0).
+             (b) Non-vacuous: tanpa backdate 500; setelah backdate 200.
+             (c) Pelajaran: perubahan rule bisnis WAJIB cek integration suite.
+Referensi  : TD-129 (rule), TD-176 (fix discover — S16e-2)
+
 ========================================================================
 CHANGELOG — 2026-10-09 (sesi TD-054, admin 2FA untuk UpdateUserStatus):
 - Backend: internal/admin/handler.go UpdateUserStatus + 2FA + lockout block
@@ -9203,3 +9238,20 @@ CHANGELOG — 2026-10-09 (sesi TD-054, admin 2FA untuk UpdateUserStatus):
   TIDAK match default backend lokal (admin-2fa-secret, per TD-023).
   Set E2E_ADMIN_2FA lokal kalau menjalankan E2E di mesin sendiri.
 ========================================================================
+
+========================================================================
+CHANGELOG — 2026-10-11 (sesi S16f-3, TD-184 entry + ride-side close):
+- TD-176 ride-side COMPLETE. Food+send remaining → tetap OPEN.
+- Handler UpdateStatus wajib X-Idempotency-Key (400 IDEMPOTENCY_KEY_REQUIRED).
+- UpdateRideStatus wrapper: L1 Redis + L2 PostgreSQL + ProcessWithRetry.
+- Idempotent replay guard #4a + #4b.
+- Unit: 5 test baru PASS. Integration DB: 3 test baru PASS.
+- Full integration suite ride: 18/18 PASS.
+- TD-184 entry BARU (TESTING) FIXED: TestIntegrationRide_NoShowCancel tidak
+  backdate arrived_at saat TD-129; fix via helper backdateRideArrivedAt.
+- Delta register: FIXED +1 (TD-184), OPEN tetap (TD-176 masih OPEN), TOTAL +1.
+- Counter §2/§3 TIDAK di-update (defer ke TD sync terpisah).
+- CATATAN STRUKTUR: file register TIDAK ID-ordered — END marker di line ~9092,
+  TD-180..183 ada setelahnya. Changelog ini append di TRUE TAIL untuk hindari
+  jebakan `rfind(marker)`. Kandidat amendment organisasi di sesi terpisah.
+

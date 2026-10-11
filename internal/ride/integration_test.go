@@ -286,7 +286,7 @@ func bookRideCoords(t *testing.T, e *testEnv, token, paymentMethod string, pLat,
 func updateRideStatus(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status, reason string) *httptest.ResponseRecorder {
 	t.Helper()
 	return doJSON(e.r, http.MethodPatch, "/api/v1/rides/"+orderID.String()+"/status",
-		gin.H{"status": status, "reason": reason}, token, "")
+		gin.H{"status": status, "reason": reason}, token, uuid.NewString())
 }
 
 // updateRideStatusWithFare mirror updateRideStatus tapi menambahkan
@@ -295,7 +295,17 @@ func updateRideStatus(t *testing.T, e *testEnv, token string, orderID uuid.UUID,
 func updateRideStatusWithFare(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status string, actualFare int64) *httptest.ResponseRecorder {
 	t.Helper()
 	return doJSON(e.r, http.MethodPatch, "/api/v1/rides/"+orderID.String()+"/status",
-		gin.H{"status": status, "actual_fare": actualFare}, token, "")
+		gin.H{"status": status, "actual_fare": actualFare}, token, uuid.NewString())
+}
+
+// backdateRideArrivedAt memundurkan arrived_at agar lolos rule TD-129
+// (>=5 menit setelah DRIVER_ARRIVED) tanpa harus sleep di test.
+func backdateRideArrivedAt(t *testing.T, e *testEnv, ctx context.Context, orderID uuid.UUID) {
+	t.Helper()
+	_, err := e.pool.Exec(ctx,
+		`UPDATE ride_orders SET arrived_at = NOW() - INTERVAL '6 minutes' WHERE id = $1`,
+		orderID)
+	require.NoError(t, err)
 }
 
 // updatedStatus membaca field data.status dari respons PATCH /status.
@@ -751,6 +761,8 @@ func TestIntegrationRide_NoShowCancel(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
 	w = updateRideStatus(t, e, dToken, orderID, "DRIVER_ARRIVED", "")
 	require.Equal(t, http.StatusOK, w.Code, "arrived: %s", w.Body.String())
+
+	backdateRideArrivedAt(t, e, ctx, orderID)
 
 	// Driver membatalkan karena customer no-show (sudah menunggu > 5 menit).
 	w = updateRideStatus(t, e, dToken, orderID, "CANCELLED", "NO_SHOW")
@@ -1377,6 +1389,212 @@ func TestIntegrationRide_VoucherCancelRollback(t *testing.T) {
 	require.Equal(t, "CANCELLED", getOrder(t, e, ctx, data.OrderID).Status)
 
 	assertLedgerBalanced(t, e, ctx, data.OrderID)
+}
+
+// --- TD-176: idempotency UpdateRideStatus (PostgreSQL L2, DB nyata) ---
+//
+// Helper + integration test untuk membuktikan binding pgx v5 terhadap
+// idempotency_cache di PostgreSQL nyata (SELECT state/response_body/debounce_at
+// + INSERT PROCESSING + UPDATE COMPLETED), preseden TD-181 (pgxmock bisa
+// lolos, real DB fail). Semua helper di bawah LOKAL di file ini.
+
+// updateStatusKey PATCH /rides/:order_id/status dengan X-Idempotency-Key
+// eksplisit. updateRideStatus (helper existing) selalu mengirim key kosong;
+// sejak TD-176 handler mewajibkan header, transisi status wajib pakai helper
+// ini.
+func updateStatusKey(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doJSON(e.r, http.MethodPatch, "/api/v1/rides/"+orderID.String()+"/status",
+		gin.H{"status": status}, token, key)
+}
+
+// seedAssignedRide menyiapkan order yang sudah di-assign untuk test transisi
+// status: register customer + topup + book + register driver + accept.
+// Mengembalikan token customer, token + ID driver (aktor transisi status),
+// orderID, dan wallet driver.
+func seedAssignedRide(t *testing.T, e *testEnv) (custToken, dToken string, driverID, orderID, drvWallet uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWallet, "100000")
+
+	orderID, _ = bookRide(t, e, custToken, "WALLET")
+
+	dToken, driverID, drvWallet = newDriver(t, e, decimal.NewFromInt(100000))
+	w := doJSON(e.r, http.MethodPost, "/api/v1/rides/"+orderID.String()+"/accept", nil, dToken, "")
+	require.Equal(t, http.StatusOK, w.Code, "accept: %s", w.Body.String())
+	return custToken, dToken, driverID, orderID, drvWallet
+}
+
+// resetRideIdempotency mem-flush side effect idempotency milik order/aktor
+// test supaya run berulang idempoten: semua event ride order + semua baris
+// idempotency_cache milik aktor (driver pelaku PATCH status).
+func resetRideIdempotency(t *testing.T, e *testEnv, ctx context.Context, orderID uuid.UUID, actorID uuid.UUID) {
+	t.Helper()
+	_, err := e.pool.Exec(ctx,
+		`DELETE FROM ride_order_events WHERE order_id = $1`, orderID)
+	require.NoError(t, err)
+	_, err = e.pool.Exec(ctx,
+		`DELETE FROM idempotency_cache WHERE user_id = $1`, actorID)
+	require.NoError(t, err)
+}
+
+// delRedisIdemKey menghapus key L1 Redis milik satu user. Dipakai untuk
+// memaksa replay key yang sama jatuh ke L2 PostgreSQL sehingga test benar-benar
+// membuktikan binding pgx v5 SELECT state/response_body/debounce_at (bukan
+// hanya hit Redis L1). Prefix Redis = "idempotency:" (service.go, scope per
+// user).
+func delRedisIdemKey(t *testing.T, userID uuid.UUID, key string) {
+	t.Helper()
+	rdb, err := redis.ParseURL(testRedisURL())
+	require.NoError(t, err)
+	rd := redis.NewClient(rdb)
+	defer func() { _ = rd.Close() }()
+	require.NoError(t, rd.Del(context.Background(),
+		"idempotency:"+userID.String()+":"+key).Err())
+}
+
+// Test 1 (TD-176): key yang SAMA dipakai dua kali → respons identik, tepat
+// satu event DRIVER_ARRIVED, dan hanya satu baris idempotency_cache. Redis L1
+// di-flush di antara dua PATCH supaya replay kedua memotong binding pgx v5
+// SELECT ... COMPLETED di PostgreSQL nyata (bukan hit cache Redis).
+func TestIntegrationRide_UpdateStatus_IdempotentSameKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	_, dToken, driverID, orderID, _ := seedAssignedRide(t, e)
+	resetRideIdempotency(t, e, ctx, orderID, driverID)
+
+	key := "K1-" + uuid.NewString()
+
+	w1 := updateStatusKey(t, e, dToken, orderID, "DRIVER_ARRIVED", key)
+	require.Equal(t, http.StatusOK, w1.Code, "PATCH#1: %s", w1.Body.String())
+	require.Equal(t, "DRIVER_ARRIVED", updatedStatus(t, w1))
+
+	// Bypass L1 Redis agar replay kedua memotong L2 PostgreSQL.
+	delRedisIdemKey(t, driverID, key)
+
+	w2 := updateStatusKey(t, e, dToken, orderID, "DRIVER_ARRIVED", key)
+	require.Equal(t, http.StatusOK, w2.Code, "PATCH#2: %s", w2.Body.String())
+	require.Equal(t, "DRIVER_ARRIVED", updatedStatus(t, w2))
+	// Respons dianggap identik pada field semantik (order_id + status) yang
+	// disimpan di cache; status_updated_at dari handler selalu NOW().
+	require.Equal(t, updatedStatus(t, w1), updatedStatus(t, w2),
+		"replay key sama harus mengembalikan respons yang identik")
+
+	var events int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ride_order_events
+		 WHERE order_id = $1 AND to_status = 'DRIVER_ARRIVED'`, orderID).Scan(&events))
+	require.Equal(t, 1, events, "replay tidak boleh menambah event DRIVER_ARRIVED")
+
+	var cacheRows int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM idempotency_cache
+		 WHERE key = $1 AND user_id = $2`, key, driverID).Scan(&cacheRows))
+	require.Equal(t, 1, cacheRows, "tepat satu baris idempotency_cache untuk K1")
+}
+
+// Test 2 (TD-176): replay dengan key BARU (bukan cache) saat status target
+// sudah tercapai → 200 + respons status DRIVER_ARRIVED via guard #4a di
+// pre-read updateRideStatusTx; TIDAK ada event DRIVER_ARRIVED baru.
+func TestIntegrationRide_UpdateStatus_ReplaySameStatus_4a(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	_, dToken, driverID, orderID, _ := seedAssignedRide(t, e)
+	resetRideIdempotency(t, e, ctx, orderID, driverID)
+
+	key1 := "K1-" + uuid.NewString()
+	w := updateStatusKey(t, e, dToken, orderID, "DRIVER_ARRIVED", key1)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "DRIVER_ARRIVED", updatedStatus(t, w))
+
+	// Key BARU → tidak ada cache COMPLETED (L1 maupun L2) sehingga eksekusi
+	// masuk ke updateRideStatusTx; pre-read melihat order.Status ==
+	// req.Status == DRIVER_ARRIVED → return via #4a tanpa transisi/event baru.
+	key2 := "K2-" + uuid.NewString()
+	w = updateStatusKey(t, e, dToken, orderID, "DRIVER_ARRIVED", key2)
+	require.Equal(t, http.StatusOK, w.Code, "replay key baru: %s", w.Body.String())
+	require.Equal(t, "DRIVER_ARRIVED", updatedStatus(t, w))
+
+	var events int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ride_order_events
+		 WHERE order_id = $1 AND to_status = 'DRIVER_ARRIVED'`, orderID).Scan(&events))
+	require.Equal(t, 1, events, "PATCH key baru boleh 200 tapi tidak menambah event")
+}
+
+// Test 3 (TD-176): replay COMPLETED memakai key BARU setelah order
+// SETTLED (settlement COMPLETED→SETTLED sudah commit) → 200 + respons status
+// COMPLETED via guard #4b di pre-read updateRideStatusTx. Settlement TIDAK
+// dieksekusi dua kali: ledger_entries tidak bertambah, saldo driver & platform
+// tidak berubah.
+func TestIntegrationRide_UpdateStatus_ReplayAfterCommit_Completed_4b(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	_, dToken, driverID, orderID, drvWallet := seedAssignedRide(t, e)
+	resetRideIdempotency(t, e, ctx, orderID, driverID)
+
+	// Tiap transisi memakai key berbeda (satu operasi = satu key; key yang
+	// sama untuk dua transisi akan mengembalikan cache transisi pertama).
+	// COMPLETED (transisi yang memicu settlement) memakai K1.
+	keyArrive := "K-arrive-" + uuid.NewString()
+	keyStart := "K-start-" + uuid.NewString()
+	keyComplete := "K1-" + uuid.NewString()
+
+	for _, step := range []struct {
+		status string
+		key    string
+	}{
+		{"DRIVER_ARRIVED", keyArrive},
+		{"TRIP_STARTED", keyStart},
+	} {
+		w := updateStatusKey(t, e, dToken, orderID, step.status, step.key)
+		require.Equal(t, http.StatusOK, w.Code, "status %s: %s", step.status, w.Body.String())
+	}
+
+	w := updateStatusKey(t, e, dToken, orderID, "COMPLETED", keyComplete)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "SETTLED", updatedStatus(t, w))
+
+	order := getOrder(t, e, ctx, orderID)
+	require.Equal(t, "SETTLED", order.Status, "COMPLETED harus memicu settlement")
+
+	var ledgerBefore int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries WHERE reference_id = $1`, orderID).Scan(&ledgerBefore))
+	driverBalBefore := e.getBalance(t, ctx, drvWallet)
+	platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+
+	// Replay COMPLETED dengan key BARU (K3) → pre-read #4b: order sudah
+	// SETTLED + target COMPLETED → respons COMPLETED tanpa settlement baru.
+	keyReplay := "K3-" + uuid.NewString()
+	w = updateStatusKey(t, e, dToken, orderID, "COMPLETED", keyReplay)
+	require.Equal(t, http.StatusOK, w.Code, "replay COMPLETED: %s", w.Body.String())
+	require.Equal(t, "COMPLETED", updatedStatus(t, w))
+
+	var ledgerAfter int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries WHERE reference_id = $1`, orderID).Scan(&ledgerAfter))
+	require.Equal(t, ledgerBefore, ledgerAfter,
+		"replay COMPLETED tidak boleh menambah ledger_entries (%d → %d)", ledgerBefore, ledgerAfter)
+	require.True(t, e.getBalance(t, ctx, drvWallet).Equal(driverBalBefore),
+		"driver wallet berubah: %v → %v", driverBalBefore, e.getBalance(t, ctx, drvWallet))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore),
+		"platform wallet berubah: %v → %v", platformBefore, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"))
 }
 
 // testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
