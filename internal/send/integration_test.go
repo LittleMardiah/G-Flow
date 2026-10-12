@@ -326,11 +326,23 @@ func acceptSendOrder(t *testing.T, e *testEnv, driverToken string, orderID uuid.
 	return w.Code, status
 }
 
-// updateSendStatus mengirim PATCH /send-orders/:id/status.
+// updateSendStatus mengirim PATCH /send-orders/:id. Mengembalikan status dari
+// respons data (status akhir setelah auto-settlement bila DELIVERED).
 func updateSendStatus(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status, reason string) (int, string) {
 	t.Helper()
+	return updateSendStatusKey(t, e, token, orderID, status, reason, "")
+}
+
+// updateSendStatusKey PATCH /api/v1/send-orders/:id dengan X-Idempotency-Key
+// eksplisit. Jika key kosong, akan auto-gen uuid.NewString() (mirror ride
+// S16e-2 / food S17f) — header wajib sejak TD-176, key "" ditolak 400.
+func updateSendStatusKey(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status, reason, key string) (int, string) {
+	t.Helper()
+	if key == "" {
+		key = uuid.NewString()
+	}
 	w := doJSON(e.r, http.MethodPatch, "/api/v1/send-orders/"+orderID.String(),
-		gin.H{"status": status, "reason": reason}, token, "")
+		gin.H{"status": status, "reason": reason}, token, key)
 	if w.Code != http.StatusOK {
 		t.Logf("PATCH send-orders/%s status=%s -> %d: %s", orderID, status, w.Code, w.Body.String())
 	}
@@ -760,6 +772,209 @@ func TestIntegrationSend_HistoryBatchStops(t *testing.T) {
 		totalStops += len(o.Stops)
 	}
 	require.Equal(t, 3, totalStops, "total stop ter-attach = stop yang di-seed")
+}
+
+// resetSendIdempotency mem-flush side effect idempotency milik order/aktor test
+// supaya run berulang idempoten: semua event send order + semua baris
+// idempotency_cache milik aktor (pelaku PATCH status).
+func resetSendIdempotency(t *testing.T, e *testEnv, ctx context.Context, orderID uuid.UUID, actorID uuid.UUID) {
+	t.Helper()
+	_, err := e.pool.Exec(ctx,
+		`DELETE FROM send_order_events WHERE order_id = $1`, orderID)
+	require.NoError(t, err)
+	_, err = e.pool.Exec(ctx,
+		`DELETE FROM idempotency_cache WHERE user_id = $1`, actorID)
+	require.NoError(t, err)
+}
+
+// delRedisIdemKey menghapus key L1 Redis milik satu user. Dipakai untuk
+// memaksa replay key yang sama jatuh ke L2 PostgreSQL sehingga test benar-benar
+// membuktikan binding state/response_body/debounce_at (bukan hanya hit Redis
+// L1). Prefix Redis = "idempotency:" (service.go, scope per user).
+func delRedisIdemKey(t *testing.T, userID uuid.UUID, key string) {
+	t.Helper()
+	rdb, err := redis.ParseURL(testRedisURL())
+	require.NoError(t, err)
+	rd := redis.NewClient(rdb)
+	defer func() { _ = rd.Close() }()
+	require.NoError(t, rd.Del(context.Background(),
+		"idempotency:"+userID.String()+":"+key).Err())
+}
+
+// countOrderLedgerEntries menghitung baris ledger_entries milik satu order
+// (reference_id = order id).
+func (e *testEnv) countOrderLedgerEntries(t *testing.T, ctx context.Context, orderID uuid.UUID) int {
+	t.Helper()
+	var n int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries WHERE reference_id = $1`, orderID).Scan(&n))
+	return n
+}
+
+// countSendEventsByStatus menghitung event audit send_order_events dengan
+// to_status tertentu untuk satu order.
+func (e *testEnv) countSendEventsByStatus(t *testing.T, ctx context.Context, orderID uuid.UUID, toStatus string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM send_order_events WHERE order_id = $1 AND to_status = $2`,
+		orderID, toStatus).Scan(&n))
+	return n
+}
+
+// countIdempotencyCache menghitung baris idempotency_cache L2 untuk (key,user).
+func (e *testEnv) countIdempotencyCache(t *testing.T, ctx context.Context, key string, userID uuid.UUID) int {
+	t.Helper()
+	var n int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM idempotency_cache WHERE key = $1 AND user_id = $2`,
+		key, userID).Scan(&n))
+	return n
+}
+
+// Test 1 (TD-176): key yang SAMA dipakai dua kali → respons identik, tepat
+// satu event PICKED_UP, dan hanya satu baris idempotency_cache. Redis L1
+// di-flush di antara dua PATCH supaya replay kedua memotong binding SELECT
+// state/response_body di PostgreSQL nyata (bukan hit cache Redis).
+func TestIntegrationSend_UpdateStatus_IdempotentSameKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	senderToken, senderID := registerAndLogin(t, e.r, "customer")
+	senderWalletID := e.getWalletID(t, ctx, senderID, "CUSTOMER")
+	topupCustomer(t, e, senderToken, senderWalletID, "100000")
+
+	driverToken, driverID, _ := newDriver(t, e, 0)
+
+	orderID, _, _ := createSendOrder(t, e, senderToken, 1)
+	code, got := acceptSendOrder(t, e, driverToken, orderID)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "DRIVER_ASSIGNED", got)
+
+	resetSendIdempotency(t, e, ctx, orderID, driverID)
+
+	key := "K1-" + uuid.NewString()
+
+	code, got = updateSendStatusKey(t, e, driverToken, orderID, "PICKED_UP", "", key)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PICKED_UP", got)
+
+	// Bypass L1 Redis agar replay kedua memotong L2 PostgreSQL.
+	delRedisIdemKey(t, driverID, key)
+
+	code2, got2 := updateSendStatusKey(t, e, driverToken, orderID, "PICKED_UP", "", key)
+	require.Equal(t, http.StatusOK, code2)
+	require.Equal(t, got, got2, "replay key sama harus mengembalikan status identik")
+
+	require.Equal(t, 1, e.countSendEventsByStatus(t, ctx, orderID, "PICKED_UP"),
+		"replay tidak boleh menambah event PICKED_UP")
+	require.Equal(t, 1, e.countIdempotencyCache(t, ctx, key, driverID),
+		"tepat satu baris idempotency_cache untuk K1")
+}
+
+// Test 2 (TD-176): replay dengan key BARU (bukan cache) saat status target
+// sudah tercapai → 200 + status PICKED_UP via guard #4a (send SINGLE-STATE:
+// order.Status == req.Status di pre-read updateSendOrderStatusTx); TIDAK ada
+// event PICKED_UP baru.
+func TestIntegrationSend_UpdateStatus_ReplaySameStatus_4a(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	senderToken, senderID := registerAndLogin(t, e.r, "customer")
+	senderWalletID := e.getWalletID(t, ctx, senderID, "CUSTOMER")
+	topupCustomer(t, e, senderToken, senderWalletID, "100000")
+
+	driverToken, driverID, _ := newDriver(t, e, 0)
+
+	orderID, _, _ := createSendOrder(t, e, senderToken, 1)
+	code, got := acceptSendOrder(t, e, driverToken, orderID)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "DRIVER_ASSIGNED", got)
+
+	resetSendIdempotency(t, e, ctx, orderID, driverID)
+
+	key1 := "K1-" + uuid.NewString()
+	code, got = updateSendStatusKey(t, e, driverToken, orderID, "PICKED_UP", "", key1)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PICKED_UP", got)
+
+	// Key BARU → tidak ada cache (L1/L2) sehingga eksekusi masuk ke
+	// updateSendOrderStatusTx; pre-read melihat order.Status == req.Status ==
+	// PICKED_UP → return via #4a tanpa transisi/event baru.
+	key2 := "K2-" + uuid.NewString()
+	code, got = updateSendStatusKey(t, e, driverToken, orderID, "PICKED_UP", "", key2)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PICKED_UP", got)
+
+	require.Equal(t, 1, e.countSendEventsByStatus(t, ctx, orderID, "PICKED_UP"),
+		"PATCH key baru boleh 200 tapi tidak menambah event")
+}
+
+// Test 3 (TD-176): replay DELIVERED memakai key BARU setelah order SETTLED
+// (settlement DELIVERED→SETTLED sudah commit) → 200 + respons status SETTLED
+// via guard #4b. Settlement TIDAK dieksekusi dua kali: ledger_entries tidak
+// bertambah, saldo driver, platform, dan escrow tidak berubah.
+func TestIntegrationSend_UpdateStatus_ReplayAfterCommit_4b(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	senderToken, senderID := registerAndLogin(t, e.r, "customer")
+	senderWalletID := e.getWalletID(t, ctx, senderID, "CUSTOMER")
+	topupCustomer(t, e, senderToken, senderWalletID, "100000")
+
+	driverToken, driverID, driverWalletID := newDriver(t, e, 0)
+
+	orderID, _, _ := createSendOrder(t, e, senderToken, 1)
+	code, got := acceptSendOrder(t, e, driverToken, orderID)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "DRIVER_ASSIGNED", got)
+
+	resetSendIdempotency(t, e, ctx, orderID, driverID)
+
+	// Chain sampai DELIVERED/SETTLED (settlement dipicu semua stop COMPLETED).
+	code, got = updateSendStatus(t, e, driverToken, orderID, "PICKED_UP", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PICKED_UP", got)
+	code, got = updateSendStatus(t, e, driverToken, orderID, "IN_TRANSIT", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "IN_TRANSIT", got)
+
+	stops := e.getSendStopIDs(t, ctx, orderID)
+	require.Len(t, stops, 1)
+	orderStatus, settled := completeSendStop(t, e, driverToken, orderID, stops[0])
+	require.Equal(t, "SETTLED", orderStatus)
+	require.True(t, settled)
+	require.Equal(t, "SETTLED", e.getSendOrderStatus(t, ctx, orderID))
+
+	ledgerBefore := e.countOrderLedgerEntries(t, ctx, orderID)
+	driverBalBefore := e.getBalance(t, ctx, driverWalletID)
+	platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+	escrowBefore := e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW")
+
+	// Replay DELIVERED dengan key BARU → pre-read #4b: order sudah SETTLED +
+	// target DELIVERED → respons SETTLED tanpa settlement baru.
+	keyReplay := "K-replay-" + uuid.NewString()
+	code, got = updateSendStatusKey(t, e, driverToken, orderID, "DELIVERED", "", keyReplay)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "SETTLED", got, "replay DELIVERED harus kembalikan SETTLED (#4b)")
+
+	require.Equal(t, ledgerBefore, e.countOrderLedgerEntries(t, ctx, orderID),
+		"replay DELIVERED tidak boleh menambah ledger_entries")
+	require.True(t, e.getBalance(t, ctx, driverWalletID).Equal(driverBalBefore),
+		"driver wallet berubah: %v → %v", driverBalBefore, e.getBalance(t, ctx, driverWalletID))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore),
+		"platform wallet berubah: %v → %v", platformBefore, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM"))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW").Equal(escrowBefore),
+		"escrow berubah: %v → %v", escrowBefore, e.systemWalletBalance(t, ctx, "SYSTEM_ESCROW"))
 }
 
 // testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke

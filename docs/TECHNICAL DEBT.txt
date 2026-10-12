@@ -4405,7 +4405,7 @@ Solusi     : (1) Tambah `X-Idempotency-Key` requirement di 3 handler status
              status=$2 AND is_settled=FALSE, CompleteOrder WHERE status=$2,
              TransitionStatus WHERE status=$3).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-13, sesi S18f)
 Note       : RIDE-SIDE DONE 2026-10-11 (sesi S16b-2..S16e-3). Remaining:
              food + send (auto-settlement CAS guard retry-after-commit).
              Ride bukti:
@@ -4439,6 +4439,27 @@ Note       : RIDE-SIDE DONE 2026-10-11 (sesi S16b-2..S16e-3). Remaining:
                "fix helper updateFoodStatus" yang belum di-commit.
                Dikoreksi di commit S17g-4.
              Remaining: send-side (UpdateSendOrderStatus).
+
+             SEND-SIDE DONE 2026-10-13 (sesi S18a..S18e):
+             - Handler UpdateSendOrderStatus wajib X-Idempotency-Key (400).
+             - UpdateSendOrderStatus wrapper: L1 Redis + L2 PostgreSQL +
+               db.ProcessWithRetry; extract updateSendOrderStatusTx.
+             - Replay guard #4a single-check `order.Status == req.Status`
+               (send SINGLE-STATE, mirror ride — bukan dual-state seperti food).
+               #4b `DELIVERED && SETTLED → return {Status: SETTLED}` (konsisten
+               dengan deliverSendOrderTx attempt 1).
+             - Unit test: helper sendIdemProceed + 25 test fix (IdempotencyKey +
+               L2 mock) + subcase 2 fix (SETTLED != CANCELLED, un-mask
+               behavior change) + 1 test baru ReplayCancelled.
+             - Integration test: helper updateSendStatus auto-gen key + 3 test
+               baru (IdempotentSameKey PICKED_UP, ReplaySameStatus_4a PICKED_UP,
+               ReplayAfterCommit_4b DELIVERED with escrow/driver/platform
+               balance invariants).
+             - Full integration send: 9/9 PASS (6 existing + 3 new) di
+               PostgreSQL nyata. Preseden TD-181 (pgx v5 binding) TERATASI
+               untuk send.
+             - Commit: 1494f70 (ride) + 16505df (food) + S18f (send, this
+               commit) = TD-176 FULLY CLOSED (3 modul: ride + food + send).
 
 Referensi  : TD-091 (infra sudah siap), ROADMAP 04 §4.3.2 / ADR-006 (spec)
 
@@ -9291,3 +9312,21 @@ CHANGELOG — 2026-10-13 (sesi S17g-4, TD-176 food-side close):
   helper updateFoodStatus yang belum di-commit. Dikoreksi di S17g-4.
 - File modified: 3 (integration_test.go + service.go + service_test.go).
 
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S18f, TD-176 FULLY CLOSED — send-side):
+- TD-176 send-side DONE (S18a..S18e). Ride + food + send = 3 modul complete.
+- Handler UpdateSendOrderStatus wajib X-Idempotency-Key (400).
+- Wrapper L1 Redis + L2 PostgreSQL + db.ProcessWithRetry; extract
+  updateSendOrderStatusTx.
+- Replay guard #4a single-check (send SINGLE-STATE, mirror ride) + #4b
+  (DELIVERED after SETTLED — response SETTLED).
+- Unit test: 25 fix + subcase 2 un-mask (SETTLED != CANCELLED) + ReplayCancelled.
+- Integration test: 3 new (IdempotentSameKey, ReplaySameStatus_4a,
+  ReplayAfterCommit_4b with escrow invariant).
+- Full integration send: 9/9 PASS di PostgreSQL nyata. Preseden TD-181
+  (pgx v5 binding) TERATASI untuk send.
+- Commit c779afc (WIP unit) + S18f (final close).
+- Delta register: FIXED +1 (TD-176 close), OPEN tidak berubah (tidak ada
+  entry baru), TOTAL tetap.
+- Catatan: commit c779afc (WIP unit) punya message jujur — klaim fix yang
+  memang sudah di-commit. Beda dari pola 7fa3140 (food WIP misleading).
