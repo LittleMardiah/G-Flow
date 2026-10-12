@@ -4588,8 +4588,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
-                                       (85 FIXED + 55 CLOSED + 14 DEFERRED + 31 OPEN = 185)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
+                                       (85 FIXED + 55 CLOSED + 14 DEFERRED + 32 OPEN = 186)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4925,7 +4925,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
 STATUS: ✅ FIXED 85 item, 55 item CLOSED (FIXED/CLOSED 140), 14 item DEFERRED,
-        31 item OPEN.  [85 + 55 + 14 + 31 = 185 = TOTAL]
+        32 item OPEN.  [85 + 55 + 14 + 32 = 186 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5224,8 +5224,8 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S22 — TD-108 FIXED):
-   - Total hutang teridentifikasi      : 185 item (TD-051 di-reserve/skip; 185 item aktif terdaftar).
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S24 — TD-192 register):
+   - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
    - ✅ FIXED                           : 85 item
    - CLOSED                             : 55 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
@@ -5236,9 +5236,9 @@ REKOMENDASI:
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 31 item (sisa setelah sesi S22 = SEDANG 21 + RENDAH 10;
+   - ❌ OPEN                              : 32 item (sisa setelah sesi S24 = SEDANG 22 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [85 + 55 + 14 + 31 = 185 = TOTAL]
+      [85 + 55 + 14 + 32 = 186 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9623,6 +9623,26 @@ CHANGELOG — 2026-10-13 (sesi S20j, TD-190/191 close finalize + Section 19):
   S20j attempt-2 = bulletproof: pre-verify uniqueness + position-based footer.
   Reviewer errors #20 + #21 accrue ke TEAM_CONTRACT v2.7.2.
 
+ID         : TD-192
+Kategori   : INCIDENT / RELIABILITY
+Judul      : Mutation leak S21-S22 — file service.go ditemukan dalam state
+             mutated (if false /* MUTATION-TEST */) tanpa trace 06:07-06:10 WIB.
+Bukti      : (a) 06:05 OpenCode S21-2 output klaim tests PASS. (b) 06:07
+             canonical state check — 126 insertions. (c) 06:10 script temukan
+             TARGET_COUNT=0 + grep line 566 `if false { /* MUTATION-TEST`.
+             File BERUBAH antara 06:07-06:10 tanpa perintah eksplisit. (d)
+             Kalau file sudah mutated pada 06:05, S21-2 test PASS =
+             kontradiksi (harus FAIL) → suspect. (e) Setelah repair manual
+             (06:11), marker=0 + ownership check original + FULL_RC=0.
+Dampak     : Kalau leak lolos ke commit → authz bypass di production
+             (ownership check = `if false`) — CRITICAL security regression.
+             2nd incident setelah S20d; §16.6 kill switch radar aktif.
+Solusi     : Section 20 TEAM_CONTRACT (Mutation Protocol atomic +
+             verify-restore). Audit ulang S21-2 output. Session isolation.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : S20d (TD-190), S21-2 (suspect), S21-3 (repair), §16.6
+
 ========================================================================
 CHANGELOG — 2026-10-13 (sesi S22, TD-108 FIXED — ownership check refactor):
 - TD-108 (ARSITEKTUR) Status OPEN → ✅ FIXED. Refactor ownership check
@@ -9638,4 +9658,13 @@ CHANGELOG — 2026-10-13 (sesi S22, TD-108 FIXED — ownership check refactor):
 - Counter §2/§3 disinkronkan ke 85F/55C/14D/31O = 185 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-108), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S23).
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S24, TD-192 register + counter sync):
+- TD-192 entry BARU (INCIDENT/RELIABILITY, SEDANG, OPEN) — mutation leak
+  S21-S22 (file service.go state mutated tanpa trace 06:07-06:10).
+  Suspect S21-2 output. 2nd incident setelah S20d.
+- Counter §2/§3 sync: 85F/55C/14D/32O = 186 (TOTAL +1 dari TD-192).
+- Delta register: TOTAL +1, OPEN +1, SEDANG +1.
+- Commit: belum (R10). User commit via PowerShell (S25).
 
