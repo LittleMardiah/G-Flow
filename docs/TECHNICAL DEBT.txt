@@ -1965,7 +1965,18 @@ Dampak     : Driver bisa accept order melebihi kapasitas efektif di
 Solusi     : Count aktif LINTAS modul sebelum set IDLE, ATAU pisah
              working_status per modul.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (2026-10-13, sesi S19b — INVALID PREMISE)
+
+Note       : Premise TIDAK REPRODUCIBLE (S19a CEK):
+             (a) Guard IDLE global di accept (ride/service.go:627,653;
+                 food/service.go:1794; send/service.go:533 + repo:266)
+                 memblok accept order ke-2 → driver TIDAK PERNAH pegang
+                 >1 order aktif lintas modul.
+             (b) Reset IDLE unconditional (ride:973,1274,1314; food:1350,
+                 1399,1646; send:1157,1298,1338) → tidak premature karena (a).
+             (c) Kontradiksi lebih dalam ditemukan: food/send limit 3 =
+                 DEAD CODE (guard IDLE efektif = 1 order); ride tanpa limit.
+             Reframe: TD-185 (guard/limit inconsistency + design decision).
 Referensi  : Food Dispatch CEK (OpenCode)
 
 ID         : TD-123
@@ -9312,6 +9323,75 @@ CHANGELOG — 2026-10-13 (sesi S17g-4, TD-176 food-side close):
   helper updateFoodStatus yang belum di-commit. Dikoreksi di S17g-4.
 - File modified: 3 (integration_test.go + service.go + service_test.go).
 
+ID         : TD-185
+Kategori   : ARSITEKTUR
+Judul      : working_status global IDLE guard blok multi-modul; capacity limit
+             food/send (3) DEAD CODE; ride tanpa capacity limit → inkonsisten.
+             Butuh keputusan intent produk (single vs multi-order driver).
+Bukti      : (a) Guard IDLE global di accept: ride/service.go:627 (unlocked),
+             653 (locked FOR UPDATE); food/service.go:1794; send/service.go:533
+             + repository.go:266. Setelah accept-1, working_status → BUSY
+             (ride:694, food:1866, send:608) → accept-2 lintas modul BLOCK.
+             (b) Food limit 3 (food/service.go:80) + Send limit 3
+             (send/service.go:83) = unreachable karena (a). Grep ride
+             `driverMaxActiveOrders|maxActiveOrders` = 0 hasil → ride tidak
+             punya capacity limit formal.
+             (c) Reset IDLE unconditional di 9 call site (ride:973,1274,1314;
+             food:1350,1399,1646; send:1157,1298,1338).
+Dampak     : Driver hanya bisa pegang 1 order aktif lintas modul, meski limit
+             resmi food/send = 3. Dead code. Inkonsisten (ride vs food/send).
+             Butuh KEPUTUSAN INTENT PRODUK.
+Solusi     : (a) Keputusan produk: single-order atau multi-order?
+             * Multi-order: hapus guard IDLE global → count active across
+               modules; ATAU split working_status per modul.
+             * Single-order: hapus dead limit 3, dokumentasi sebagai
+               constraint by design.
+             (b) Implementasi + test concurrency lintas modul.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : S19a CEK (reframe TD-122 CLOSED), food/service.go:80,
+             send/service.go:83, ride/service.go:627/653
+
+ID         : TD-186
+Kategori   : KODE / BLOCKER
+Judul      : `is_online` driver TIDAK PERNAH di-set di kode — matching
+             engine butuh is_online=TRUE.
+Bukti      : (a) Grep `is_online` di internal/ (non-test) = 2 hasil:
+             location/repository.go:7 (komentar) + :79 (READ di WHERE clause).
+             TIDAK ADA write `SET is_online`. (b) GetNearbyDrivers
+             (location/repository.go:69-95) filter `AND u.is_online = TRUE` —
+             tanpa setter, driver selamanya is_online=FALSE (default schema
+             users.is_online BOOLEAN DEFAULT FALSE, migrations/001:64).
+Dampak     : **BLOCKER production.** Driver matching `GetNearbyDrivers` akan
+             SELALU return empty. Ride/food/send dispatch tidak bisa
+             menemukan driver.
+Solusi     : (a) Cek endpoint toggle online driver missing (kemungkinan
+             `POST /api/v1/drivers/online` atau
+             `PATCH /api/v1/drivers/me/status`). (b) Kalau belum ada:
+             implementasi endpoint + handler + repo method. (c) Consider:
+             auto-online saat location update + auto-offline saat TTL habis.
+Prioritas  : TINGGI
+Status     : OPEN
+Referensi  : S19a CEK, location/repository.go:79, migrations/001:64
+
+ID         : TD-187
+Kategori   : DOKUMENTASI / KODE
+Judul      : G-Send capacity: doc LOGIC FLOW.txt:982 menyatakan "Count stops,
+             not orders" tapi kode COUNT(*) orders.
+Bukti      : (a) LOGIC FLOW.txt:982 + :649-659 menyebut "G-Send capacity
+             check | Count stops, not orders". (b) Kode:
+             send/repository.go:235-238 GetDriverActiveSendOrdersCount =
+             `SELECT COUNT(*) FROM send_orders WHERE driver_id = $1 AND
+             status IN (...)` — COUNT orders. (c) send/service.go:553
+             `if active >= driverMaxActiveOrders` = 3 orders.
+Dampak     : Dokumen LOCKED tidak sinkron dengan kode (R2 violation).
+Solusi     : Kode = source of truth (R2): update LOGIC FLOW.txt untuk
+             mencerminkan kode (count orders), ATAU refactor kode count stops
+             (keputusan intent produk).
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : S19a CEK, LOGIC FLOW.txt:649-659/982, send/repository.go:235-238
+
 ========================================================================
 CHANGELOG — 2026-10-13 (sesi S18f, TD-176 FULLY CLOSED — send-side):
 - TD-176 send-side DONE (S18a..S18e). Ride + food + send = 3 modul complete.
@@ -9330,3 +9410,19 @@ CHANGELOG — 2026-10-13 (sesi S18f, TD-176 FULLY CLOSED — send-side):
   entry baru), TOTAL tetap.
 - Catatan: commit c779afc (WIP unit) punya message jujur — klaim fix yang
   memang sudah di-commit. Beda dari pola 7fa3140 (food WIP misleading).
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S19b, TD-122 close + 3 TD baru):
+- TD-122 CLOSED sebagai INVALID PREMISE. Reframe jadi TD-185.
+- TD-185 (SEDANG) — working_status guard IDLE global blok multi-modul;
+  capacity limit food/send (3) DEAD CODE; ride tanpa limit. Butuh keputusan
+  intent produk (single vs multi-order).
+- TD-186 (TINGGI/BLOCKER) — `is_online` never set; matching
+  GetNearbyDrivers butuh is_online=TRUE → selalu empty. Ride/food/send
+  dispatch broken. Missing endpoint toggle online.
+- TD-187 (RENDAH) — G-Send capacity doc (LOGIC FLOW.txt:982) vs kode
+  (COUNT(*) orders). R2 violation.
+- Delta register: CLOSED +1 (TD-122), OPEN +3 (TD-185/186/187), TOTAL +3.
+- Selanjutnya: S19c = CEK-spesifik TD-186 (verifikasi impact + cek endpoint
+  missing). Fix = S19d (butuh keputusan desain).
+
