@@ -4588,7 +4588,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
-                                       (83 FIXED + 54 CLOSED + 14 DEFERRED + 34 OPEN = 185)
+                                       (84 FIXED + 55 CLOSED + 14 DEFERRED + 32 OPEN = 185)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4923,8 +4923,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 83 item, 54 item CLOSED (FIXED/CLOSED 137), 14 item DEFERRED,
-        34 item OPEN.  [83 + 54 + 14 + 34 = 185 = TOTAL]
+STATUS: ✅ FIXED 84 item, 55 item CLOSED (FIXED/CLOSED 139), 14 item DEFERRED,
+        32 item OPEN.  [84 + 55 + 14 + 32 = 185 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5223,21 +5223,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S20f — TD-190/191 register):
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S20j — TD-190/191 close + Section 19):
    - Total hutang teridentifikasi      : 185 item (TD-051 di-reserve/skip; 185 item aktif terdaftar).
-   - ✅ FIXED                           : 83 item
-   - CLOSED                             : 54 item (9 lama TD-011 s/d TD-019 + 5 via triage
+   - ✅ FIXED                           : 84 item
+   - CLOSED                             : 55 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 137 item
+   - FIXED/CLOSED                       : 139 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 34 item (sisa setelah sesi S20f = SEDANG 23 + RENDAH 11;
+   - ❌ OPEN                              : 32 item (sisa setelah sesi S20j = SEDANG 22 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [83 + 54 + 14 + 34 = 185 = TOTAL]
+      [84 + 55 + 14 + 32 = 185 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9603,4 +9603,22 @@ CHANGELOG — 2026-10-13 (sesi S20f, TD-190/191 register + counter sync):
 - Delta register: TOTAL +2 (TD-190, TD-191), OPEN +2, SEDANG +1, RENDAH +1.
 - Referensi: S20d (hallucination), S20c (judul/line count).
 - Commit: belum (R10). User commit via PowerShell (S20g).
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S20j, TD-190/191 close finalize + Section 19):
+- TD-191 (HYGIENE) Status OPEN → ✅ FIXED. Judul TD-189 di-update ke
+  "workspace post-S20a: 384 vs 808; HEAD pre-S20a: 384 vs 710".
+- TD-190 (INCIDENT) Status OPEN → ✅ CLOSED. Mitigation via Section 19
+  Task Classification Matrix (TEAM_CONTRACT.txt v2.7.1): docs-only task
+  → USER MANUAL (bukan OpenCode).
+- Section 19 added (Task Classification Matrix + Enforcement).
+- Counter §2/§3 disinkronkan ke 84F/55C/14D/32O = 185 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-191), CLOSED +1 (TD-190), OPEN -2.
+- Catatan partial S20h: PART 1 (TD-190/191 status) + PART 2 (Section 19)
+  sukses, tapi PART 3 (counter sync) crash di LOC3_FOOTER (anchor tidak
+  unik setelah LOC2 rewrite §2 footer) → PART 4 (changelog) skipped.
+  S20j = recovery: counter + changelog + SECTION 19 verified.
+  S20j attempt-1 crash di LOC3f (pattern ditulis dari target bukan source).
+  S20j attempt-2 = bulletproof: pre-verify uniqueness + position-based footer.
+  Reviewer errors #20 + #21 accrue ke TEAM_CONTRACT v2.7.2.
 
