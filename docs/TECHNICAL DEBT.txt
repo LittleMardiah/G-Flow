@@ -4420,6 +4420,26 @@ Note       : RIDE-SIDE DONE 2026-10-11 (sesi S16b-2..S16e-3). Remaining:
                integration_test.go), 577 ins.
              Referensi silang: TD-184 (NoShowCancel backdate test gap, FIXED).
 
+             FOOD-SIDE DONE 2026-10-12 (sesi S17a..S17g):
+             - Handler UpdateFoodOrderStatus wajib X-Idempotency-Key (400).
+             - UpdateFoodOrderStatus wrapper: L1 Redis + L2 PostgreSQL +
+               db.ProcessWithRetry; extract updateFoodOrderStatusTx.
+             - Replay guard #4a + #4b dengan EXEMPTION WALLET
+               (CONFIRMED + merchant_status=WAITING, target=CONFIRMED =
+               advance ms, BUKAN replay) — fix bug S17c yang ter-mask
+               di unit test S17d.
+             - Restore TestUpdateFoodOrderStatus_MerchantConfirmWallet
+               (un-mask).
+             - Fix helper updateFoodStatus auto-gen key + 3 integration
+               test baru (IdempotentSameKey PICKED_UP, ReplaySameStatus_4a
+               PREPARING, ReplayAfterCommit_4b DELIVERED).
+             - Full integration food: 9/9 PASS (6 existing + 3 new).
+             - Preseden TD-181 (pgx v5 binding) TERATASI untuk food.
+             - Commit `7fa3140` (WIP) punya misleading message — klaim
+               "fix helper updateFoodStatus" yang belum di-commit.
+               Dikoreksi di commit S17g-4.
+             Remaining: send-side (UpdateSendOrderStatus).
+
 Referensi  : TD-091 (infra sudah siap), ROADMAP 04 §4.3.2 / ADR-006 (spec)
 
 ID         : TD-177
@@ -9254,4 +9274,20 @@ CHANGELOG — 2026-10-11 (sesi S16f-3, TD-184 entry + ride-side close):
 - CATATAN STRUKTUR: file register TIDAK ID-ordered — END marker di line ~9092,
   TD-180..183 ada setelahnya. Changelog ini append di TRUE TAIL untuk hindari
   jebakan `rfind(marker)`. Kandidat amendment organisasi di sesi terpisah.
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S17g-4, TD-176 food-side close):
+- TD-176 food-side DONE. Send-side remaining → TD-176 tetap OPEN.
+- Bug S17c fixed: #4a replay guard exemption WALLET CONFIRMED+WAITING
+  (fall-through ke tx agar ms advance); ter-mask di S17d (test adapted
+  ke buggy behavior), ter-expose di S17f (integration).
+- Restore TestUpdateFoodOrderStatus_MerchantConfirmWallet (un-mask).
+- Fix helper updateFoodStatus auto-gen key (integration_test.go).
+- 3 integration test baru: IdempotentSameKey + ReplaySameStatus_4a +
+  ReplayAfterCommit_4b.
+- Full integration food: 9/9 PASS (6 existing + 3 new) di PostgreSQL nyata.
+- Preseden TD-181 (pgx v5 binding) TERATASI untuk food.
+- Catatan: commit `7fa3140` (WIP) punya misleading message — klaim fix
+  helper updateFoodStatus yang belum di-commit. Dikoreksi di S17g-4.
+- File modified: 3 (integration_test.go + service.go + service_test.go).
 

@@ -406,8 +406,18 @@ func createFoodOrder(t *testing.T, e *testEnv, token string, merchantID, itemID 
 // respons data (status akhir setelah auto-settlement bila DELIVERED).
 func updateFoodStatus(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status, reason string) (int, string) {
 	t.Helper()
+	return updateFoodStatusKey(t, e, token, orderID, status, reason, "")
+}
+
+// updateFoodStatusKey PATCH /api/v1/food-orders/:orderID/status dengan X-Idempotency-Key
+// eksplisit. Jika key kosong, akan auto-gen uuid.NewString() (mirror ride S16e-2).
+func updateFoodStatusKey(t *testing.T, e *testEnv, token string, orderID uuid.UUID, status, reason, key string) (int, string) {
+	t.Helper()
+	if key == "" {
+		key = uuid.NewString()
+	}
 	w := doJSON(e.r, http.MethodPatch, "/api/v1/food-orders/"+orderID.String(),
-		gin.H{"status": status, "reason": reason}, token, "")
+		gin.H{"status": status, "reason": reason}, token, key)
 	if w.Code != http.StatusOK {
 		t.Logf("PATCH food-orders/%s status=%s -> %d: %s", orderID, status, w.Code, w.Body.String())
 	}
@@ -845,6 +855,34 @@ func TestIntegrationFood_TC_FOOD_006_MerchantRejectWalletRefund(t *testing.T) {
 	assertLedgerBalanced(t, e, ctx, orderID)
 }
 
+func (e *testEnv) getMerchantIDFromOrder(t *testing.T, ctx context.Context, orderID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := e.pool.QueryRow(ctx, `SELECT merchant_id FROM food_orders WHERE id = $1`, orderID).Scan(&id)
+	require.NoError(t, err)
+	return id
+}
+
+func resetFoodIdempotency(t *testing.T, e *testEnv, ctx context.Context, orderID uuid.UUID, actorID uuid.UUID) {
+	t.Helper()
+	_, err := e.pool.Exec(ctx,
+		`DELETE FROM food_order_events WHERE order_id = $1`, orderID)
+	require.NoError(t, err)
+	_, err = e.pool.Exec(ctx,
+		`DELETE FROM idempotency_cache WHERE user_id = $1`, actorID)
+	require.NoError(t, err)
+}
+
+func delRedisIdemKey(t *testing.T, userID uuid.UUID, key string) {
+	t.Helper()
+	rdb, err := redis.ParseURL(testRedisURL())
+	require.NoError(t, err)
+	rd := redis.NewClient(rdb)
+	defer func() { _ = rd.Close() }()
+	require.NoError(t, rd.Del(context.Background(),
+		"idempotency:"+userID.String()+":"+key).Err())
+}
+
 // testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
 // port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
 // dev lokal (Redis:6380) sama-sama jalan.
@@ -853,4 +891,174 @@ func testRedisURL() string {
 		return url
 	}
 	return "redis://localhost:6380/0"
+}
+
+func TestIntegrationFood_UpdateStatus_IdempotentSameKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	// Setup order sampai READY_FOR_PICKUP
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWalletID := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWalletID, "100000")
+
+	merchToken, _ := registerAndLogin(t, e.r, "merchant")
+	merchantID := registerMerchant(t, e, merchToken)
+	e.activateMerchant(t, ctx, merchantID)
+	menuID := createMenu(t, e, merchToken, merchantID)
+	itemID := createItem(t, e, merchToken, merchantID, menuID, 25000)
+
+	orderID, status := createFoodOrder(t, e, custToken, merchantID, itemID, "WALLET")
+	require.Equal(t, "CONFIRMED", status)
+
+	code, got := updateFoodStatus(t, e, merchToken, orderID, "CONFIRMED", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "CONFIRMED", got)
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PREPARING", got)
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "READY_FOR_PICKUP", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "READY_FOR_PICKUP", got)
+
+	// Driver assign + ambil
+	dToken, driverID, _ := newDriver(t, e)
+	e.assignFoodDriver(t, ctx, orderID, driverID, e.getWalletID(t, ctx, driverID, "DRIVER"), true)
+
+	resetFoodIdempotency(t, e, ctx, orderID, driverID)
+
+	key := "K1-" + uuid.NewString()
+	code, got = updateFoodStatusKey(t, e, dToken, orderID, "PICKED_UP", "", key)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PICKED_UP", got)
+
+	delRedisIdemKey(t, driverID, key)
+
+	code2, got2 := updateFoodStatusKey(t, e, dToken, orderID, "PICKED_UP", "", key)
+	require.Equal(t, http.StatusOK, code2)
+	require.Equal(t, got, got2)
+
+	var events int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM food_order_events WHERE order_id = $1 AND to_status = 'PICKED_UP'`, orderID).Scan(&events))
+	require.Equal(t, 1, events)
+
+	var cacheRows int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM idempotency_cache WHERE key = $1 AND user_id = $2`, key, driverID).Scan(&cacheRows))
+	require.Equal(t, 1, cacheRows)
+}
+
+func TestIntegrationFood_UpdateStatus_ReplaySameStatus_4a(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWalletID := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWalletID, "100000")
+
+	merchToken, _ := registerAndLogin(t, e.r, "merchant")
+	merchantID := registerMerchant(t, e, merchToken)
+	e.activateMerchant(t, ctx, merchantID)
+	menuID := createMenu(t, e, merchToken, merchantID)
+	itemID := createItem(t, e, merchToken, merchantID, menuID, 25000)
+
+	orderID, status := createFoodOrder(t, e, custToken, merchantID, itemID, "WALLET")
+	require.Equal(t, "CONFIRMED", status)
+
+	code, got := updateFoodStatus(t, e, merchToken, orderID, "CONFIRMED", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "CONFIRMED", got)
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PREPARING", got)
+
+	key1 := "K1-" + uuid.NewString()
+	code, got = updateFoodStatusKey(t, e, merchToken, orderID, "PREPARING", "", key1)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PREPARING", got)
+
+	key2 := "K2-" + uuid.NewString()
+	code, got = updateFoodStatusKey(t, e, merchToken, orderID, "PREPARING", "", key2)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PREPARING", got)
+
+	var events int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM food_order_events WHERE order_id = $1 AND to_status = 'PREPARING'`, orderID).Scan(&events))
+	require.Equal(t, 1, events)
+}
+
+func TestIntegrationFood_UpdateStatus_ReplayAfterCommit_4b(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	e := newTestEnv(t)
+
+	custToken, custID := registerAndLogin(t, e.r, "customer")
+	custWalletID := e.getWalletID(t, ctx, custID, "CUSTOMER")
+	topupCustomer(t, e, custToken, custWalletID, "100000")
+
+	merchToken, merchID := registerAndLogin(t, e.r, "merchant")
+	merchantID := registerMerchant(t, e, merchToken)
+	e.activateMerchant(t, ctx, merchantID)
+	menuID := createMenu(t, e, merchToken, merchantID)
+	itemID := createItem(t, e, merchToken, merchantID, menuID, 25000)
+
+	orderID, status := createFoodOrder(t, e, custToken, merchantID, itemID, "WALLET")
+	require.Equal(t, "CONFIRMED", status)
+
+	code, got := updateFoodStatus(t, e, merchToken, orderID, "CONFIRMED", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "CONFIRMED", got)
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "PREPARING", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PREPARING", got)
+	code, got = updateFoodStatus(t, e, merchToken, orderID, "READY_FOR_PICKUP", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "READY_FOR_PICKUP", got)
+
+	dToken, driverID, drvWallet := newDriver(t, e)
+	e.assignFoodDriver(t, ctx, orderID, driverID, drvWallet, true)
+
+	code, got = updateFoodStatus(t, e, dToken, orderID, "PICKED_UP", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "PICKED_UP", got)
+	code, got = updateFoodStatus(t, e, dToken, orderID, "IN_TRANSIT", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "IN_TRANSIT", got)
+	code, got = updateFoodStatus(t, e, dToken, orderID, "DELIVERED", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "SETTLED", got)
+
+	order := e.getFoodOrderStatus(t, ctx, orderID)
+	require.Equal(t, "SETTLED", order)
+
+	var ledgerBefore int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries WHERE reference_id = $1`, orderID).Scan(&ledgerBefore))
+	driverBalBefore := e.getBalance(t, ctx, drvWallet)
+	merchantWalletID := e.getWalletID(t, context.Background(), merchID, "MERCHANT")
+	merchantBalBefore := e.getBalance(t, ctx, merchantWalletID)
+	platformBefore := e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM")
+
+	keyReplay := "K-replay-" + uuid.NewString()
+	code, got = updateFoodStatusKey(t, e, dToken, orderID, "DELIVERED", "", keyReplay)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "SETTLED", got)
+
+	var ledgerAfter int
+	require.NoError(t, e.pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries WHERE reference_id = $1`, orderID).Scan(&ledgerAfter))
+	require.Equal(t, ledgerBefore, ledgerAfter)
+	require.True(t, e.getBalance(t, ctx, drvWallet).Equal(driverBalBefore))
+	require.True(t, e.getBalance(t, ctx, merchantWalletID).Equal(merchantBalBefore))
+	require.True(t, e.systemWalletBalance(t, ctx, "SYSTEM_PLATFORM").Equal(platformBefore))
 }

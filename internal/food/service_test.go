@@ -1006,14 +1006,20 @@ func TestUpdateFoodOrderStatus_MerchantConfirmWallet(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)
 
-	// WALLET order auto-paid lahir status CONFIRMED. Target CONFIRMED == status
-	// order saat ini → replay guard #4a short-circuit sebelum Begin/lock, lalu
-	// response di-cache ulang (tanpa transaksi).
+	// WALLET order auto-paid lahir status CONFIRMED + merchant_status WAITING
+	// → merchant tetap bisa confirm (WAITING→CONFIRMED): status order masih
+	// CONFIRMED, merchant_status maju ke CONFIRMED.
 	order := fCustBOrder(foodStatusConfirmed, PaymentMethodWallet, nil)
 	idemKey := "food-update-merchant-confirm-wallet"
 	repo.On("GetFoodOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	repo.On("GetMerchantByID", mock.Anything, fMerchID).Return(fMerchant(), nil)
+	repo.On("LockFoodOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
+	repo.On("UpdateFoodOrderStatus", mock.Anything, mock.Anything, fOrderID, foodStatusConfirmed, foodStatusConfirmed,
+		mock.MatchedBy(func(ms *string) bool { return ms != nil && *ms == merchantStatusConfirmed }), mock.Anything).Return(true, nil)
+	repo.On("InsertFoodOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	foodIdemProceed(mDB, idemKey, fCustID)
+	setupFoodDB(mDB, idemKey, fCustID)
+	mDB.ExpectCommit()
 	mDB.ExpectExec("UPDATE idempotency_cache").
 		WithArgs(idemKey, fCustID, pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
@@ -1024,7 +1030,6 @@ func TestUpdateFoodOrderStatus_MerchantConfirmWallet(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, foodStatusConfirmed, resp.Status)
-	repo.AssertNotCalled(t, "LockFoodOrder")
 	repo.AssertExpectations(t)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }

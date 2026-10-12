@@ -1522,7 +1522,14 @@ func (s *Service) updateFoodOrderStatusTx(ctx context.Context, req UpdateFoodOrd
 	}
 
 	// Replay: status target sudah tercapai.
-	if order.Status == req.Status {
+	//
+	// Exemption: WALLET food order lahir status CONFIRMED + merchant_status
+	// WAITING (money secured, merchant belum accept). Merchant PATCH CONFIRMED
+	// adalah advance merchant_status (WAITING→CONFIRMED), BUKAN replay —
+	// jadi fall-through ke transaksi normal. Untuk semua status/mert_status
+	// lain, order.Status == req.Status = replay murni.
+	if order.Status == req.Status &&
+		!(order.Status == foodStatusConfirmed && order.MerchantStatus == merchantStatusWaiting) {
 		return &UpdateFoodOrderStatusResponse{OrderID: order.ID, Status: req.Status}, nil
 	}
 	// Retry-after-commit: DELIVERED sudah memicu settlement (SETTLED), response
