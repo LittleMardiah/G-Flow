@@ -4587,8 +4587,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 183 item (TD-051 di-reserve/skip)
-                                       (83 FIXED + 54 CLOSED + 14 DEFERRED + 32 OPEN = 183)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
+                                       (83 FIXED + 54 CLOSED + 14 DEFERRED + 34 OPEN = 185)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4924,7 +4924,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 183 item (TD-051 di-reserve/skip)
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
 STATUS: ✅ FIXED 83 item, 54 item CLOSED (FIXED/CLOSED 137), 14 item DEFERRED,
-        32 item OPEN.  [83 + 54 + 14 + 32 = 183 = TOTAL]
+        34 item OPEN.  [83 + 54 + 14 + 34 = 185 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5223,8 +5223,8 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S20b — TD-189 register):
-   - Total hutang teridentifikasi      : 183 item (TD-051 di-reserve/skip; 183 item aktif terdaftar).
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S20f — TD-190/191 register):
+   - Total hutang teridentifikasi      : 185 item (TD-051 di-reserve/skip; 185 item aktif terdaftar).
    - ✅ FIXED                           : 83 item
    - CLOSED                             : 54 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
@@ -5235,9 +5235,9 @@ REKOMENDASI:
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 32 item (sisa setelah sesi S20b = SEDANG 22 + RENDAH 10;
+   - ❌ OPEN                              : 34 item (sisa setelah sesi S20f = SEDANG 23 + RENDAH 11;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [83 + 54 + 14 + 32 = 183 = TOTAL]
+      [83 + 54 + 14 + 34 = 185 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9528,6 +9528,56 @@ CHANGELOG — 2026-10-13 (sesi S19i, TD-188 FIXED + counter sync):
 - Delta register: FIXED +1 (TD-188), OPEN -1 (TD-188), TOTAL tetap 182.
 - Commit: belum (R10). User commit via PowerShell (S19j).
 
+ID         : TD-190
+Kategori   : INCIDENT / RELIABILITY
+Judul      : OpenCode hallucination pada sesi S20d — fabricated log output
+             (6 elemen) tanpa eksekusi aktual. Trigger §14.6 R12 (Fail Fast).
+Bukti      : (a) s20d.log fabricated git log: klaim commit b51df48/1a4da91/
+             01f5c34. Canonical `git log --oneline -3` = b193a13/50f332b/
+             0c4c2f6. (b) s20d.log date: 2026-10-13 15:15:29 UTC;
+             canonical env: 2026-10-13 05:17:38 WIB (= 22:17:38 UTC,
+             tidak match). (c) s20d.log V2 line numbers 42/43/1230/2199;
+             register aktual 9500+ baris. (d) s20d.log string "baris (710
+             baris -> 808 baris workspace)" tidak ada di register aktual.
+             (e) s20d.log V3 format "8:STATUS: 183" / "9:TOTAL HUTANG
+             TEKNIS: 183"; aktual "4926:STATUS: ✅ FIXED 83 item..." /
+             "4590:TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 183 item".
+             (f) s20d.log diff --stat: 1 file +2/-2; canonical diff: 2 file
+             +153/-9.
+Dampak     : Kalau log hallucinated dipercaya tanpa verifikasi user, keputusan
+             commit bisa salah. S20d TIDAK merusak file (working tree valid =
+             S20c state), tapi hallucination = breach trust total terhadap
+             agent output. §16.5 User Checkpoint WAJIB jadi standar.
+Solusi     : (a) Setiap sesi OpenCode WAJIB paste RAW output tiap command
+             (R14.1). (b) User WAJIB jalankan §16.5 checkpoint setelah
+             OpenCode selesai — cross-check klaim vs canonical. (c) Kalau 2
+             sesi berturut hallucinate → §16.6 kill switch: reset session +
+             prompt lebih kecil. (d) Klasifikasi task: docs-only → user
+             manual (bukan OpenCode).
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : S20d (hallucination event), §14.1 R3.1 (raw output), §14.6 R12
+             (fail fast), §16.5 (user checkpoint), §16.6 (kill switch)
+
+ID         : TD-191
+Kategori   : HYGIENE
+Judul      : Judul TD-189 masih menulis "(384 vs 710 baris)" — tidak akurat
+             untuk workspace post-S20a (actual = 808). Konsisten dengan
+             Bukti yang sudah di-fix di S20c.
+Bukti      : docs/TECHNICAL DEBT.txt:9486 (Judul TD-189) masih:
+             "punya Section 18 (v2.7) dan tertinggal dari .txt (384 vs 710
+             baris)." Sedangkan Bukti (9488-9500) sudah menyebut 808
+             workspace + 710 HEAD. Changelog S20b (9534) juga sudah 808.
+Dampak     : Kosmetik/konsistensi R6. Pembaca cepat yang baca Judul saja
+             akan lihat angka pre-S20a (710), bukan workspace aktual (808).
+Solusi     : Update Judul TD-189 (line ~9486) jadi: "...tertinggal
+             (workspace post-S20a: 384 vs 808 baris; HEAD pre-S20a: 384 vs
+             710 baris)."
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : S20c (Bukti & changelog sudah 808; Judul tertinggal), S20d
+             (OpenCode flag out-of-scope per R8)
+
 ========================================================================
 CHANGELOG — 2026-10-13 (sesi S20b, TD-189 register + counter sync):
 - TD-189 entry BARU (DOKUMENTASI, RENDAH, OPEN) — TEAM_CONTRACT.md drift
@@ -9539,4 +9589,16 @@ CHANGELOG — 2026-10-13 (sesi S20b, TD-189 register + counter sync):
 - Delta register: TOTAL +1 (TD-189), OPEN +1, RENDAH +1.
 - Referensi: S20a (Section 18 v2.7 di TEAM_CONTRACT.txt).
 - Commit: belum (R10). User commit via PowerShell (S20c).
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S20f, TD-190/191 register + counter sync):
+- TD-190 entry BARU (INCIDENT/RELIABILITY, SEDANG, OPEN) — OpenCode
+  hallucination S20d fabricated 6 elemen log. Trigger §14.6 R12 (Fail Fast).
+  Working tree NOT damaged (S20c state, already committed as 38a8fec).
+- TD-191 entry BARU (HYGIENE, RENDAH, OPEN) — Judul TD-189 masih
+  "(384 vs 710 baris)"; Bukti & changelog sudah 808 (post-S20c).
+- Counter §2/§3 disinkronkan (SEMUA 4 lokasi + parenthetical + footer).
+- Delta register: TOTAL +2 (TD-190, TD-191), OPEN +2, SEDANG +1, RENDAH +1.
+- Referensi: S20d (hallucination), S20c (judul/line count).
+- Commit: belum (R10). User commit via PowerShell (S20g).
 
