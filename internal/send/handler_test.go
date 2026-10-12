@@ -224,8 +224,9 @@ func TestHandler_UpdateSendOrderStatus(t *testing.T) {
 	svc, c, w := newSendHandlerCtx(t, http.MethodPatch, "/api/v1/send-orders/"+fOrderID.String(),
 		`{"status":"cancelled","reason":"customer request"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c.Set("user_id", fCustID.String())
+	c.Request.Header.Set("X-Idempotency-Key", "test-key-upd-send-1")
 	svc.On("UpdateSendOrderStatus", mock.Anything, mock.MatchedBy(func(r UpdateSendOrderStatusRequest) bool {
-		return r.OrderID == fOrderID && r.UserID == fCustID && r.Status == sendStatusCancelled && r.Reason == "customer request"
+		return r.OrderID == fOrderID && r.UserID == fCustID && r.Status == sendStatusCancelled && r.Reason == "customer request" && r.IdempotencyKey == "test-key-upd-send-1"
 	})).Return(&UpdateSendOrderStatusResponse{OrderID: fOrderID, Status: sendStatusCancelled}, nil)
 	h := NewHandler(svc)
 	h.UpdateSendOrderStatus(c)
@@ -234,17 +235,20 @@ func TestHandler_UpdateSendOrderStatus(t *testing.T) {
 
 	_, c2, w2 := newSendHandlerCtx(t, http.MethodPatch, "/api/v1/send-orders/bad", `{"status":"cancelled"}`, gin.Param{Key: "id", Value: "bad"})
 	c2.Set("user_id", fCustID.String())
+	c2.Request.Header.Set("X-Idempotency-Key", "test-key-upd-send-2")
 	h2 := NewHandler(new(mockSendService))
 	h2.UpdateSendOrderStatus(c2)
 	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
 
 	_, c3, w3 := newSendHandlerCtx(t, http.MethodPatch, "/api/v1/send-orders/"+fOrderID.String(), `{bad json`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c3.Set("user_id", fCustID.String())
+	c3.Request.Header.Set("X-Idempotency-Key", "test-key-upd-send-3")
 	h3 := NewHandler(new(mockSendService))
 	h3.UpdateSendOrderStatus(c3)
 	assert.Equal(t, http.StatusBadRequest, w3.Code)
 
 	svc4, c4, w4 := newSendHandlerCtx(t, http.MethodPatch, "/api/v1/send-orders/"+fOrderID.String(), `{"status":"cancelled"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	c4.Request.Header.Set("X-Idempotency-Key", "test-key-upd-send-4")
 	h4 := NewHandler(svc4)
 	h4.UpdateSendOrderStatus(c4)
 	assert.Equal(t, http.StatusUnauthorized, w4.Code)
@@ -252,10 +256,19 @@ func TestHandler_UpdateSendOrderStatus(t *testing.T) {
 	svc5, c5, w5 := newSendHandlerCtx(t, http.MethodPatch, "/api/v1/send-orders/"+fOrderID.String(),
 		`{"status":"delivered"}`, gin.Param{Key: "id", Value: fOrderID.String()})
 	c5.Set("user_id", fDriverID.String())
+	c5.Request.Header.Set("X-Idempotency-Key", "test-key-upd-send-5")
 	svc5.On("UpdateSendOrderStatus", mock.Anything, mock.Anything).Return(nil, ErrInvalidTransition)
 	h5 := NewHandler(svc5)
 	h5.UpdateSendOrderStatus(c5)
 	assert.Equal(t, http.StatusConflict, w5.Code)
+
+	// X-Idempotency-Key wajib → tanpa header 400 IDEMPOTENCY_KEY_REQUIRED.
+	_, c6, w6 := newSendHandlerCtx(t, http.MethodPatch, "/api/v1/send-orders/"+fOrderID.String(),
+		`{"status":"cancelled"}`, gin.Param{Key: "id", Value: fOrderID.String()})
+	c6.Set("user_id", fCustID.String())
+	h6 := NewHandler(new(mockSendService))
+	h6.UpdateSendOrderStatus(c6)
+	assert.Equal(t, http.StatusBadRequest, w6.Code)
 }
 
 func TestHandler_AcceptSendOrder(t *testing.T) {

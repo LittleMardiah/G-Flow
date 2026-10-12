@@ -30,6 +30,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/g-flow/g-flow/internal/db"
 	"github.com/g-flow/g-flow/internal/wallet"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -945,10 +946,11 @@ const (
 
 // UpdateSendOrderStatusRequest input untuk PATCH /send-orders/{id}.
 type UpdateSendOrderStatusRequest struct {
-	OrderID uuid.UUID
-	UserID  uuid.UUID
-	Status  string
-	Reason  string
+	OrderID        uuid.UUID
+	UserID         uuid.UUID
+	Status         string
+	Reason         string
+	IdempotencyKey string
 }
 
 // UpdateSendOrderStatusResponse hasil PATCH /send-orders/{id}.
@@ -967,7 +969,68 @@ type UpdateSendOrderStatusResponse struct {
 //     3-way settlement dalam transaksi yang sama (DELIVERED → SETTLED).
 //   - CANCELLED oleh driver (emergency, dari DRIVER_ASSIGNED/PICKED_UP/
 //     IN_TRANSIT): refund escrow penuh jika WALLET + reset working_status IDLE.
+//
+// TD-176: wrapper idempotency dual-layer (L1 Redis + L2 PostgreSQL) + retry
+// transient. Body transaksi dipindah ke updateSendOrderStatusTx sehingga replay
+// attempt ke-2 mengembalikan response yang sama tanpa mengeksekusi transisi
+// dua kali.
 func (s *Service) UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error) {
+	if req.IdempotencyKey == "" {
+		return nil, ErrIdempotencyKeyRequired
+	}
+
+	// L1: Redis (scope per user agar tidak collision antar user).
+	if cached, ok := s.redisGetCachedResp(ctx, req.UserID, req.IdempotencyKey); ok {
+		var out UpdateSendOrderStatusResponse
+		if err := json.Unmarshal(cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// L2: PostgreSQL idempotency.
+	if res, err := s.idemAcquire(ctx, req.UserID, req.IdempotencyKey); err != nil {
+		return nil, err
+	} else if !res.proceed {
+		s.redisSet(ctx, req.UserID, req.IdempotencyKey, redisCompleted, res.cached)
+		var out UpdateSendOrderStatusResponse
+		if err := json.Unmarshal(res.cached, &out); err != nil {
+			return nil, ErrInvalidCachedResponse
+		}
+		return &out, nil
+	}
+
+	// Transisi dengan retry transient. Aman diulang: tx rollback penuh saat
+	// gagal, dan replay setelah commit di-guard oleh idempotent check di
+	// updateSendOrderStatusTx.
+	var resp *UpdateSendOrderStatusResponse
+	if err := db.ProcessWithRetry(ctx, func(retryCtx context.Context) error {
+		r, err := s.updateSendOrderStatusTx(retryCtx, req)
+		if err != nil {
+			return err
+		}
+		resp = r
+		return nil
+	}, true); err != nil {
+		return nil, err
+	}
+
+	if err := s.cacheResponse(ctx, req.UserID, req.IdempotencyKey, resp); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// updateSendOrderStatusTx mengeksekusi transisi status G-Send dalam satu
+// transaksi.
+//
+// TD-176 idempotent replay guard: jika status target sudah tercapai (attempt
+// sebelumnya sudah commit tapi response gagal terkirim), kembalikan response
+// identik tanpa transisi baru. DELIVERED sudah memicu settlement (SETTLED),
+// sehingga replay setelah commit mengembalikan response SETTLED yang sama
+// dengan attempt pertama (deliverSendOrderTx).
+func (s *Service) updateSendOrderStatusTx(ctx context.Context, req UpdateSendOrderStatusRequest) (*UpdateSendOrderStatusResponse, error) {
 	if !validSendStatusTarget(req.Status) {
 		return nil, ErrInvalidStatus
 	}
@@ -976,6 +1039,16 @@ func (s *Service) UpdateSendOrderStatus(ctx context.Context, req UpdateSendOrder
 	if err != nil {
 		return nil, err
 	}
+
+	// Replay: status target sudah tercapai.
+	if order.Status == req.Status {
+		return &UpdateSendOrderStatusResponse{OrderID: order.ID, Status: req.Status}, nil
+	}
+	// Retry-after-commit: DELIVERED sudah memicu settlement (SETTLED).
+	if req.Status == sendStatusDelivered && order.Status == sendStatusSettled {
+		return &UpdateSendOrderStatusResponse{OrderID: order.ID, Status: sendStatusSettled}, nil
+	}
+
 	if order.Status == sendStatusCancelled || order.Status == sendStatusSettled {
 		return nil, ErrInvalidTransition
 	}

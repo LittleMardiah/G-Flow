@@ -204,6 +204,13 @@ type updateSendOrderStatusRequestBody struct {
 // Auth: sender (pemilik) atau driver tertunjuk.
 // Transisi status menggunakan FOR UPDATE NOWAIT + audit trail.
 func (h *Handler) UpdateSendOrderStatus(c *gin.Context) {
+	key := strings.TrimSpace(c.GetHeader("X-Idempotency-Key"))
+	if key == "" {
+		writeError(c, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED",
+			"X-Idempotency-Key header is required")
+		return
+	}
+
 	orderID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		writeError(c, http.StatusUnprocessableEntity, "INVALID_ORDER_ID", "invalid order id")
@@ -223,10 +230,11 @@ func (h *Handler) UpdateSendOrderStatus(c *gin.Context) {
 	}
 
 	resp, err := h.svc.UpdateSendOrderStatus(c.Request.Context(), UpdateSendOrderStatusRequest{
-		OrderID: orderID,
-		UserID:  userID,
-		Status:  strings.ToUpper(body.Status),
-		Reason:  body.Reason,
+		OrderID:        orderID,
+		UserID:         userID,
+		Status:         strings.ToUpper(body.Status),
+		Reason:         body.Reason,
+		IdempotencyKey: key,
 	})
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())

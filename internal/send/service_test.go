@@ -287,6 +287,18 @@ func setupSendDB(mDB pgxmock.PgxPoolIface, idemKey string, owner uuid.UUID) {
 		WillReturnResult(pgconn.NewCommandTag("SET"))
 }
 
+// sendIdemProceed menyiapkan hanya jalan idempotency L2 (SELECT miss → INSERT
+// PROCESSING → proceed) tanpa BEGIN/SET — dipakai test yang berhenti sebelum
+// transaksi dibuka.
+func sendIdemProceed(mDB pgxmock.PgxPoolIface, idemKey string, owner uuid.UUID) {
+	mDB.ExpectQuery("SELECT state, response_body, debounce_at").
+		WithArgs(idemKey, owner).
+		WillReturnError(pgx.ErrNoRows)
+	mDB.ExpectExec("INSERT INTO idempotency_cache").
+		WithArgs(idemKey, owner).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+}
+
 func sendBeginTx(t *testing.T, mDB pgxmock.PgxPoolIface) pgx.Tx {
 	t.Helper()
 	mDB.ExpectBegin()
@@ -1803,36 +1815,81 @@ func TestAcceptSendOrder_IdempotencyInProgress(t *testing.T) {
 // ---- UpdateSendOrderStatus ----
 
 func TestUpdateSendOrderStatus_InvalidTarget(t *testing.T) {
-	svc := NewService(new(mockRepo), nil, nil, new(mockLedger))
-	_, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: "SETTLED"})
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	idemKey := "send-update-invalid-target"
+	sendIdemProceed(mDB, idemKey, fCustID)
+	svc := NewService(new(mockRepo), mDB, nil, new(mockLedger))
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: "SETTLED", IdempotencyKey: idemKey})
 	assert.ErrorIs(t, err, ErrInvalidStatus)
 }
 
 func TestUpdateSendOrderStatus_Errors(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
 	repo := new(mockRepo)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(nil, ErrSendOrderNotFound)
-	svc := NewService(repo, nil, nil, new(mockLedger))
-	_, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	sendIdemProceed(mDB, "send-update-err-not-found", fCustID)
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-err-not-found"})
 	assert.ErrorIs(t, err, ErrSendOrderNotFound)
 
 	repo2 := new(mockRepo)
-	repo2.On("GetSendOrderByID", mock.Anything, fOrderID).Return(fSendOrder(sendStatusCancelled, PaymentMethodCash, nil), nil)
-	svc2 := NewService(repo2, nil, nil, new(mockLedger))
-	_, err = svc2.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	// Order di status terminal SETTLED (≠ target CANCELLED) → lompat #4a/#4b,
+	// tetap test final-status guard → ErrInvalidTransition.
+	repo2.On("GetSendOrderByID", mock.Anything, fOrderID).Return(fSendOrder(sendStatusSettled, PaymentMethodCash, nil), nil)
+	sendIdemProceed(mDB, "send-update-err-invalid-transition", fCustID)
+	svc2 := NewService(repo2, mDB, nil, new(mockLedger))
+	_, err = svc2.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-err-invalid-transition"})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 
 	repo3 := new(mockRepo)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
+	otherID := uuid.New()
 	repo3.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
-	svc3 := NewService(repo3, nil, nil, new(mockLedger))
-	_, err = svc3.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: uuid.New(), Status: sendStatusCancelled})
+	sendIdemProceed(mDB, "send-update-err-not-allowed", otherID)
+	svc3 := NewService(repo3, mDB, nil, new(mockLedger))
+	_, err = svc3.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: otherID, Status: sendStatusCancelled, IdempotencyKey: "send-update-err-not-allowed"})
 	assert.ErrorIs(t, err, ErrNotAllowed)
 
 	repo4 := new(mockRepo)
 	repo4.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
-	svc4 := NewService(repo4, nil, nil, new(mockLedger))
-	_, err = svc4.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusPickedUp})
+	sendIdemProceed(mDB, "send-update-err-transition-picked-up", fCustID)
+	svc4 := NewService(repo4, mDB, nil, new(mockLedger))
+	_, err = svc4.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusPickedUp, IdempotencyKey: "send-update-err-transition-picked-up"})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
+}
+
+// TD-176: replay idempotent — order sudah CANCELLED, PATCH CANCELLED lagi
+// (key baru) → wrapper L2 proceed → updateSendOrderStatusTx → #4a trigger
+// (order.Status == req.Status) → return SUCCESS tanpa transisi/event baru.
+func TestUpdateSendOrderStatus_ReplayCancelled(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	order := fSendOrder(sendStatusCancelled, PaymentMethodCash, nil)
+	repo := new(mockRepo)
+	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+
+	idemKey := "send-update-replay-cancelled"
+	sendIdemProceed(mDB, idemKey, fCustID)
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs(idemKey, fCustID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+
+	svc := NewService(repo, mDB, nil, new(mockLedger))
+	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{
+		OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: idemKey,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, sendStatusCancelled, resp.Status)
+	// #4a short-circuit: tidak ada Begin/Lock/Update/Event.
+	repo.AssertNotCalled(t, "LockSendOrder")
+	repo.AssertNotCalled(t, "UpdateSendOrderStatus")
+	repo.AssertNotCalled(t, "InsertSendOrderEvent")
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
 func TestUpdateSendOrderStatus_BeginError(t *testing.T) {
@@ -1841,10 +1898,11 @@ func TestUpdateSendOrderStatus_BeginError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusCreated, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-begin-error", fCustID)
 	mDB.ExpectBegin().WillReturnError(pgx.ErrTxClosed)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-begin-error"})
 	assert.ErrorIs(t, err, pgx.ErrTxClosed)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1855,11 +1913,12 @@ func TestUpdateSendOrderStatus_SetTimeoutError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusCreated, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-set-timeout-error", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnError(pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-set-timeout-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1870,12 +1929,13 @@ func TestUpdateSendOrderStatus_LockTimeout(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-lock-timeout", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(nil, &pgconn.PgError{Code: "55P03"})
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-lock-timeout"})
 	assert.ErrorIs(t, err, ErrLockTimeout)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1886,12 +1946,13 @@ func TestUpdateSendOrderStatus_LockPlainError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-lock-plain-error", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(nil, errors.New("boom"))
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-lock-plain-error"})
 	assert.Error(t, err, "boom")
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1903,12 +1964,13 @@ func TestUpdateSendOrderStatus_LockedStatusChanged(t *testing.T) {
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
 	locked := fSendOrder(sendStatusDriverAssigned, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-locked-status-changed", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(locked, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-locked-status-changed"})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1919,6 +1981,7 @@ func TestUpdateSendOrderStatus_CancelUpdateError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-update-error", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1926,7 +1989,7 @@ func TestUpdateSendOrderStatus_CancelUpdateError(t *testing.T) {
 		Return(false, pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-update-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1937,6 +2000,7 @@ func TestUpdateSendOrderStatus_CancelNotOK(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-not-ok", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1944,7 +2008,7 @@ func TestUpdateSendOrderStatus_CancelNotOK(t *testing.T) {
 		Return(false, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-not-ok"})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1956,6 +2020,7 @@ func TestUpdateSendOrderStatus_CancelWalletNoSenderWallet(t *testing.T) {
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodWallet, nil)
 	order.SenderWalletID = nil
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-wallet-no-sender", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1963,7 +2028,7 @@ func TestUpdateSendOrderStatus_CancelWalletNoSenderWallet(t *testing.T) {
 		Return(true, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-wallet-no-sender"})
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1975,6 +2040,7 @@ func TestUpdateSendOrderStatus_CancelRefundLedgerError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodWallet, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-refund-ledger-error", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -1985,7 +2051,7 @@ func TestUpdateSendOrderStatus_CancelRefundLedgerError(t *testing.T) {
 	lgr.On("CreateLedgerEntries", mock.Anything, mock.Anything, mock.AnythingOfType("[]wallet.LedgerEntry")).Return(pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, lgr)
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-refund-ledger-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -1997,6 +2063,7 @@ func TestUpdateSendOrderStatus_CancelDriverIdleError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-driver-idle-error", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2006,7 +2073,7 @@ func TestUpdateSendOrderStatus_CancelDriverIdleError(t *testing.T) {
 	_ = lgr
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-driver-idle-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2018,6 +2085,7 @@ func TestUpdateSendOrderStatus_CancelEventError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodWallet, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-event-error", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2029,7 +2097,7 @@ func TestUpdateSendOrderStatus_CancelEventError(t *testing.T) {
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, lgr)
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-event-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2041,6 +2109,7 @@ func TestUpdateSendOrderStatus_CancelCommitError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodCash, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-commit-error", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2051,7 +2120,7 @@ func TestUpdateSendOrderStatus_CancelCommitError(t *testing.T) {
 	_ = lgr
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-commit-error"})
 	assert.ErrorIs(t, err, pgx.ErrTxClosed)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2063,6 +2132,7 @@ func TestUpdateSendOrderStatus_CancelSuccessSender(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusSearchingDriver, PaymentMethodWallet, nil)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-success-sender", fCustID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2073,9 +2143,12 @@ func TestUpdateSendOrderStatus_CancelSuccessSender(t *testing.T) {
 	lgr.On("CreateLedgerEntries", mock.Anything, mock.Anything, mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs("send-update-cancel-success-sender", fCustID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	svc := NewService(repo, mDB, nil, lgr)
-	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled})
+	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fCustID, Status: sendStatusCancelled, IdempotencyKey: "send-update-cancel-success-sender"})
 	assert.NoError(t, err)
 	assert.Equal(t, sendStatusCancelled, resp.Status)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -2088,6 +2161,7 @@ func TestUpdateSendOrderStatus_CancelSuccessDriver(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodWallet, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-cancel-success-driver", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2099,9 +2173,12 @@ func TestUpdateSendOrderStatus_CancelSuccessDriver(t *testing.T) {
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs("send-update-cancel-success-driver", fDriverID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	svc := NewService(repo, mDB, nil, lgr)
-	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusCancelled, Reason: "emergency"})
+	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusCancelled, Reason: "emergency", IdempotencyKey: "send-update-cancel-success-driver"})
 	assert.NoError(t, err)
 	assert.Equal(t, sendStatusCancelled, resp.Status)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -2113,6 +2190,7 @@ func TestUpdateSendOrderStatus_PlainTransition(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusDriverAssigned, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-plain-transition", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2120,9 +2198,12 @@ func TestUpdateSendOrderStatus_PlainTransition(t *testing.T) {
 		Return(true, nil)
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs("send-update-plain-transition", fDriverID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusPickedUp})
+	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusPickedUp, IdempotencyKey: "send-update-plain-transition"})
 	assert.NoError(t, err)
 	assert.Equal(t, sendStatusPickedUp, resp.Status)
 	assert.NoError(t, mDB.ExpectationsWereMet())
@@ -2134,6 +2215,7 @@ func TestUpdateSendOrderStatus_PlainTransitionUpdateNotOK(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusDriverAssigned, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-plain-not-ok", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2141,7 +2223,7 @@ func TestUpdateSendOrderStatus_PlainTransitionUpdateNotOK(t *testing.T) {
 		Return(false, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusPickedUp})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusPickedUp, IdempotencyKey: "send-update-plain-not-ok"})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2152,13 +2234,14 @@ func TestUpdateSendOrderStatus_DeliverStopsError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-stops-error", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
 	repo.On("GetSendOrderStopsByOrderID", mock.Anything, mock.Anything, fOrderID).Return(nil, pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-stops-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2169,6 +2252,7 @@ func TestUpdateSendOrderStatus_DeliverStopsNotCompleted(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-stops-not-completed", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2176,7 +2260,7 @@ func TestUpdateSendOrderStatus_DeliverStopsNotCompleted(t *testing.T) {
 		Return([]*SendOrderStop{fSendStop(fOrderID, fStop1ID, 1, stopStatusPending)}, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-stops-not-completed"})
 	assert.ErrorIs(t, err, ErrStopsNotDelivered)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2187,6 +2271,7 @@ func TestUpdateSendOrderStatus_DeliverMarkError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-mark-error", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2195,7 +2280,7 @@ func TestUpdateSendOrderStatus_DeliverMarkError(t *testing.T) {
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(false, pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-mark-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2206,6 +2291,7 @@ func TestUpdateSendOrderStatus_DeliverMarkNotOK(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-mark-not-ok", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2214,7 +2300,7 @@ func TestUpdateSendOrderStatus_DeliverMarkNotOK(t *testing.T) {
 	repo.On("MarkSendOrderDelivered", mock.Anything, mock.Anything, fOrderID).Return(false, nil)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-mark-not-ok"})
 	assert.ErrorIs(t, err, ErrInvalidTransition)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2225,6 +2311,7 @@ func TestUpdateSendOrderStatus_DeliverEventError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-event-error", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2234,7 +2321,7 @@ func TestUpdateSendOrderStatus_DeliverEventError(t *testing.T) {
 	repo.On("InsertSendOrderEvent", mock.Anything, mock.Anything, mock.Anything).Return(pgx.ErrNoRows)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-event-error"})
 	assert.ErrorIs(t, err, pgx.ErrNoRows)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2245,6 +2332,7 @@ func TestUpdateSendOrderStatus_DeliverSettleError(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-settle-error", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2255,7 +2343,7 @@ func TestUpdateSendOrderStatus_DeliverSettleError(t *testing.T) {
 	repo.On("GetWalletByUserAndType", mock.Anything, fDriverID, walletTypeDriver).Return(nil, ErrWalletNotFound)
 
 	svc := NewService(repo, mDB, nil, new(mockLedger))
-	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	_, err = svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-settle-error"})
 	assert.ErrorIs(t, err, ErrWalletNotFound)
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
@@ -2267,6 +2355,7 @@ func TestUpdateSendOrderStatus_DeliverSuccessCash(t *testing.T) {
 	require.NoError(t, err)
 	order := fSendOrder(sendStatusInTransit, PaymentMethodCash, &fDriverID)
 	repo.On("GetSendOrderByID", mock.Anything, fOrderID).Return(order, nil)
+	sendIdemProceed(mDB, "send-update-deliver-success-cash", fDriverID)
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
 	repo.On("LockSendOrder", mock.Anything, mock.Anything, fOrderID).Return(order, nil)
@@ -2284,9 +2373,12 @@ func TestUpdateSendOrderStatus_DeliverSuccessCash(t *testing.T) {
 	repo.On("UpdateDriverWorkingStatus", mock.Anything, mock.Anything, fDriverID, workingStatusIdle).Return(nil)
 	repo.On("MarkSendOrderSettled", mock.Anything, mock.Anything, fOrderID, mock.Anything, mock.Anything).Return(nil)
 	mDB.ExpectCommit()
+	mDB.ExpectExec("UPDATE idempotency_cache").
+		WithArgs("send-update-deliver-success-cash", fDriverID, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	svc := NewService(repo, mDB, nil, lgr)
-	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered})
+	resp, err := svc.UpdateSendOrderStatus(context.Background(), UpdateSendOrderStatusRequest{OrderID: fOrderID, UserID: fDriverID, Status: sendStatusDelivered, IdempotencyKey: "send-update-deliver-success-cash"})
 	assert.NoError(t, err)
 	assert.Equal(t, sendStatusSettled, resp.Status)
 	assert.NoError(t, mDB.ExpectationsWereMet())
