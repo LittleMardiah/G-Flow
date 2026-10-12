@@ -25,7 +25,7 @@ type RideService interface {
 	BookRide(ctx context.Context, req BookRideRequest) (*BookRideResponse, error)
 	AcceptOrder(ctx context.Context, orderID uuid.UUID, driverID uuid.UUID) (*AcceptOrderResponse, error)
 	UpdateRideStatus(ctx context.Context, req UpdateRideStatusRequest) (*UpdateRideStatusResponse, error)
-	GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error)
+	GetOrderForUser(ctx context.Context, orderID, userID uuid.UUID) (*RideOrder, error)
 	GetRidesHistory(ctx context.Context, customerID uuid.UUID, page, pageSize int, status string) ([]RideOrder, int, error)
 }
 
@@ -355,14 +355,9 @@ func (h *Handler) GetRide(c *gin.Context) {
 		return
 	}
 
-	order, err := h.svc.GetOrder(c.Request.Context(), orderID)
+	order, err := h.svc.GetOrderForUser(c.Request.Context(), orderID, userID)
 	if err != nil {
 		writeError(c, statusForError(err), codeForError(err), err.Error())
-		return
-	}
-
-	if order.CustomerID != userID && (order.DriverID == nil || *order.DriverID != userID) {
-		writeError(c, statusForError(ErrNotAllowed), codeForError(ErrNotAllowed), ErrNotAllowed.Error())
 		return
 	}
 

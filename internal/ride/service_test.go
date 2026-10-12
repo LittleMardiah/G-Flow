@@ -690,6 +690,97 @@ func TestService_GetOrder_RepoError(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+// ---- TD-108: ownership check dipindah dari handler ke service ----
+
+// TestService_GetOrderForUser_CustomerOwner Customer pemesan boleh mengakses
+// order-nya sendiri.
+func TestService_GetOrderForUser_CustomerOwner(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	o := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(o, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrderForUser(context.Background(), svcOrderID, svcCustomerID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, svcOrderID, got.ID)
+	repo.AssertExpectations(t)
+}
+
+// TestService_GetOrderForUser_DriverAssigned Driver yang ditugaskan pada order
+// juga boleh mengakses.
+func TestService_GetOrderForUser_DriverAssigned(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	o := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(o, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrderForUser(context.Background(), svcOrderID, svcDriverID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, svcOrderID, got.ID)
+	repo.AssertExpectations(t)
+}
+
+// TestService_GetOrderForUser_NotAllowed User yang bukan customer pemesan
+// maupun driver ditugaskan harus ditolak dengan ErrNotAllowed (bukan generic
+// repo error), sehingga handler memetakannya ke 403.
+func TestService_GetOrderForUser_NotAllowed(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	other := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	o := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(o, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrderForUser(context.Background(), svcOrderID, other)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrNotAllowed)
+	repo.AssertExpectations(t)
+}
+
+// TestService_GetOrderForUser_NoDriverNonCustomer Order tanpa driver: user
+// yang bukan customer pemesan harus ditolak ErrNotAllowed.
+func TestService_GetOrderForUser_NoDriverNonCustomer(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	other := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	o := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(o, nil)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrderForUser(context.Background(), svcOrderID, other)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrNotAllowed)
+	repo.AssertExpectations(t)
+}
+
+// TestService_GetOrderForUser_NotFound Order tidak ada: error repo
+// (ErrOrderNotFound) diteruskan tanpa ownership check.
+func TestService_GetOrderForUser_NotFound(t *testing.T) {
+	repo := new(mockRepo)
+	lgr := new(mockLedger)
+	mDB, _ := pgxmock.NewPool()
+
+	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(nil, ErrOrderNotFound)
+
+	svc := NewService(repo, lgr, nil, mDB)
+	got, err := svc.GetOrderForUser(context.Background(), svcOrderID, svcCustomerID)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrOrderNotFound)
+	repo.AssertExpectations(t)
+}
+
 // TestMaskDriverPhone_Table menutupi seluruh cabang maskDriverPhone
 // (service.go): prefix +62 / 0 / tanpa prefix, terpotong, kosong, dan nil.
 func TestMaskDriverPhone_Table(t *testing.T) {

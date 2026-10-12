@@ -547,6 +547,28 @@ func (s *Service) GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, 
 	return &masked, nil
 }
 
+// GetOrderForUser mengambil order sekaligus memverifikasi bahwa userID berhak
+// mengaksesnya (customer pemesan atau driver yang ditugaskan pada order).
+// Ownership check dipindah dari handler ke service agar konsisten dengan pola
+// UpdateRideStatus dan dapat diuji langsung di layer service (TD-108).
+//
+// Error sentinel:
+//   - ErrOrderNotFound: order tidak ditemukan.
+//   - ErrNotAllowed: user bukan customer pemesan maupun driver order.
+func (s *Service) GetOrderForUser(ctx context.Context, orderID, userID uuid.UUID) (*RideOrder, error) {
+	order, err := s.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrOrderNotFound
+	}
+	if order.CustomerID != userID && (order.DriverID == nil || *order.DriverID != userID) {
+		return nil, ErrNotAllowed
+	}
+	return order, nil
+}
+
 func maskDriverPhone(phone *string) *string {
 	if phone == nil {
 		return nil

@@ -51,8 +51,8 @@ func (m *mockRideService) UpdateRideStatus(ctx context.Context, req UpdateRideSt
 	return args.Get(0).(*UpdateRideStatusResponse), args.Error(1)
 }
 
-func (m *mockRideService) GetOrder(ctx context.Context, orderID uuid.UUID) (*RideOrder, error) {
-	args := m.Called(ctx, orderID)
+func (m *mockRideService) GetOrderForUser(ctx context.Context, orderID, userID uuid.UUID) (*RideOrder, error) {
+	args := m.Called(ctx, orderID, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -527,7 +527,7 @@ func TestHandler_GetRide_CustomerOwner_Success(t *testing.T) {
 
 	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcCustomerID).Return(order, nil)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -555,7 +555,7 @@ func TestHandler_GetRide_DriverAssigned_Success(t *testing.T) {
 
 	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcDriverID).Return(order, nil)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -589,7 +589,7 @@ func TestHandler_GetRide_PlatformCommission(t *testing.T) {
 	order.DriverEarning = &earning
 
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcCustomerID).Return(order, nil)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -621,7 +621,7 @@ func TestHandler_GetRide_PlatformCommission(t *testing.T) {
 
 // TestHandler_GetRide_WithDriver Memverifikasi body JSON memuat object
 // `driver` lengkap (id, name, phone_masked, vehicle_type, vehicle_plate).
-// Nilai phone yang diberi SUDAH dimasking (memang begitu svc.GetOrder
+// Nilai phone yang diberi SUDAH dimasking (memang begitu svc.GetOrderForUser
 // memasking) dan handler harus meneruskannya apa adanya.
 func TestHandler_GetRide_WithDriver(t *testing.T) {
 	_, c, w := setupGin()
@@ -636,7 +636,7 @@ func TestHandler_GetRide_WithDriver(t *testing.T) {
 	order.DriverVehiclePlate = ptrString("B 1234 ABC")
 
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcCustomerID).Return(order, nil)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -687,7 +687,7 @@ func TestHandler_GetRide_NoDriver(t *testing.T) {
 
 	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcCustomerID).Return(order, nil)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -727,7 +727,7 @@ func TestHandler_GetRide_DriverPartial(t *testing.T) {
 	// DriverPhone/Vehicle* sengaja nil.
 
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcCustomerID).Return(order, nil)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -754,9 +754,8 @@ func TestHandler_GetRide_Forbidden(t *testing.T) {
 	// User lain: bukan customer pemesan, bukan driver tertunjuk.
 	c.Set("user_id", "99999999-9999-9999-9999-999999999999")
 
-	order := svcOrder(statusDriverAssigned, PaymentMethodWallet, &svcDriverID)
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(order, nil)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, uuid.MustParse("99999999-9999-9999-9999-999999999999")).Return(nil, ErrNotAllowed)
 
 	h := NewHandler(svc)
 	h.GetRide(c)
@@ -772,7 +771,7 @@ func TestHandler_GetRide_NotFound(t *testing.T) {
 	c.Set("user_id", svcCustomerID.String())
 
 	svc := new(mockRideService)
-	svc.On("GetOrder", mock.Anything, svcOrderID).Return(nil, ErrOrderNotFound)
+	svc.On("GetOrderForUser", mock.Anything, svcOrderID, svcCustomerID).Return(nil, ErrOrderNotFound)
 
 	h := NewHandler(svc)
 	h.GetRide(c)

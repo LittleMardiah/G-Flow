@@ -1641,7 +1641,8 @@ Solusi     : Pindahkan ownership check ke service method
              GetOrderForUser(ctx, orderID, userID) → 403/404,
              handler tinggal panggil.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-13, sesi S21 — refactor ownership check
+             GetRide ke service layer GetOrderForUser)
 Referensi  : TD-077 A1 (commit akan datang) — kritik OpenCode
 
 ID         : TD-109
@@ -4588,7 +4589,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
-                                       (84 FIXED + 55 CLOSED + 14 DEFERRED + 32 OPEN = 185)
+                                       (85 FIXED + 55 CLOSED + 14 DEFERRED + 31 OPEN = 185)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4923,8 +4924,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 185 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 84 item, 55 item CLOSED (FIXED/CLOSED 139), 14 item DEFERRED,
-        32 item OPEN.  [84 + 55 + 14 + 32 = 185 = TOTAL]
+STATUS: ✅ FIXED 85 item, 55 item CLOSED (FIXED/CLOSED 140), 14 item DEFERRED,
+        31 item OPEN.  [85 + 55 + 14 + 31 = 185 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5223,21 +5224,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S20j — TD-190/191 close + Section 19):
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S22 — TD-108 FIXED):
    - Total hutang teridentifikasi      : 185 item (TD-051 di-reserve/skip; 185 item aktif terdaftar).
-   - ✅ FIXED                           : 84 item
+   - ✅ FIXED                           : 85 item
    - CLOSED                             : 55 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 139 item
+   - FIXED/CLOSED                       : 140 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 32 item (sisa setelah sesi S20j = SEDANG 22 + RENDAH 10;
+   - ❌ OPEN                              : 31 item (sisa setelah sesi S22 = SEDANG 21 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [84 + 55 + 14 + 32 = 185 = TOTAL]
+      [85 + 55 + 14 + 31 = 185 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9621,4 +9622,20 @@ CHANGELOG — 2026-10-13 (sesi S20j, TD-190/191 close finalize + Section 19):
   S20j attempt-1 crash di LOC3f (pattern ditulis dari target bukan source).
   S20j attempt-2 = bulletproof: pre-verify uniqueness + position-based footer.
   Reviewer errors #20 + #21 accrue ke TEAM_CONTRACT v2.7.2.
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S22, TD-108 FIXED — ownership check refactor):
+- TD-108 (ARSITEKTUR) Status OPEN → ✅ FIXED. Refactor ownership check
+  GetRide dari handler layer ke service layer (GetOrderForUser), konsisten
+  dengan pattern UpdateRideStatus. Service method reuse GetOrder + return
+  ErrOrderNotFound / ErrNotAllowed. Handler dipindah panggil service.
+- Bukti: internal/ride/service.go:558 (GetOrderForUser) +
+  handler.go:345 (GetRide memanggil service); unit test 0 fail
+  (TestService_GetOrderForUser_* 5 test + TestHandler_GetRide_* 8 test);
+  coverage internal/ride 83.9%.
+- Mutation check: disable ownership check → TestService_GetOrderForUser_
+  NotAllowed FAIL (non-vacuous); restore → PASS.
+- Counter §2/§3 disinkronkan ke 85F/55C/14D/31O = 185 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-108), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S23).
 
