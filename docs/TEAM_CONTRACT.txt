@@ -3,9 +3,9 @@ TEAM CONTRACT — G-Flow Project
 Kesepakatan Kerja: Developer + DeepSeek + OpenCode
 ================================================================================
 
-Version: 2.7-GFLOW
+Version: 2.7.1-GFLOW
 Effective: 2026-10-07
-Last Updated: 2026-10-13
+Last Updated: 2026-10-13 (v2.7.1)
 Status: LOCKED
 Project: G-Flow Super-App Ecosystem
 Scope: Backend Go (Gin + pgx + Redis), PostgreSQL/Supabase, 3 Flutter apps, Next.js Admin Panel
@@ -397,6 +397,7 @@ Alignment: RULES Rx / TD-xxx
 | 2.6       | 2026-10-03 | OPENCODE REALITY CONSTRAINT (Section 16) + ROLE RESTORATION (Section 17, DeepSeek Reviewer). Fix scope Section 5 (ScIntel). Fix header typo.        |
 | 1.0-GFLOW | 2026-10-07 | Adaptasi dari versi ScIntel; scope diganti ke G-Flow. Struktur, 10 RULES, Autonomy Override dipertahankan.                                          |
 | 2.7-GFLOW | 2026-10-13 | Amend Section 18 — Reviewer Lessons S19 chain (L-S19-01..07). |
+| 2.7.1-GFLOW | 2026-10-13 | Add Section 19 — Task Classification Matrix (docs manual, no OpenCode). |
 +-----------+------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
 
 ================================================================================
@@ -806,3 +807,53 @@ PREVENTION: Prompt replace WAJIB assert n == 1 (bukan >= 1).
 ================================================================================
 END OF ADDENDUM v2.7
 ================================================================================
+
+================================================================================
+19. ADDENDUM v2.7.1 — TASK CLASSIFICATION MATRIX (2026-10-13)
+================================================================================
+
+Konteks: Insiden S20d (TD-190) membuktikan OpenCode hallucinate 6 elemen saat
+docs-only task. Sebaliknya, S20f manual (bash + python3) 100% clean untuk
+docs-only task. Section ini formalize boundary: KAPAN pakai OpenCode, kapan
+pakai manual.
+
+--------------------------------------------------------------------------------
+19.1 Klasifikasi Task
+--------------------------------------------------------------------------------
+| Task Type                    | Tool        | Rationale                              |
+|------------------------------|-------------|----------------------------------------|
+| Code (Go files, tests)       | OpenCode    | Build/vet/test = OpenCode unggul       |
+| Docs-only (.txt/.md, register| USER MANUAL | No compile step; OpenCode = risk       |
+|   counter, changelog, etc)   |             | tanpa benefit                          |
+| Read-only investigation      | USER MANUAL | Grep/awk/cat langsung, lebih cepat     |
+| Complex multi-file code      | OpenCode    | Cross-file verification + tests        |
+| Mixed (code + docs)          | SPLIT:      | Minimize hallucination surface         |
+|                              | docs manual |                                        |
+|                              | → code OC   |                                        |
+
+--------------------------------------------------------------------------------
+19.2 Rationale
+--------------------------------------------------------------------------------
+OpenCode value = build/vet/test discipline di Go code. Docs-only task TIDAK
+punya compile step — jadi OpenCode jadi wrapper tanpa benefit, DAN menambah
+risiko hallucination (contoh: S20d fabricated 6 elemen log tanpa eksekusi).
+
+Manual script (bash + python3) untuk docs-only = 100% clean karena:
+- Deterministik (no LLM inference)
+- Raw output langsung dari command
+- No hallucination surface
+
+--------------------------------------------------------------------------------
+19.3 Enforcement
+--------------------------------------------------------------------------------
+(a) Setiap sesi OpenCode WAJIB paste RAW output tiap command (R14.1) —
+    dilarang ringkasan tanpa raw di atasnya.
+(b) User WAJIB jalankan §16.5 checkpoint (ls/git status/git log/date)
+    setelah OpenCode selesai — cross-check klaim vs canonical.
+(c) Kalau 2 sesi berturut hallucinate → §16.6 kill switch: reset session +
+    prompt lebih kecil.
+(d) Klasifikasi task SEBELUM prompt: kalau docs-only → USER MANUAL.
+    Kalau code → OpenCode. Kalau mixed → SPLIT.
+
+================================================================================
+END OF ADDENDUM v2.7.1

@@ -9483,8 +9483,8 @@ CHANGELOG — 2026-10-13 (sesi S19e, TD-186 finalize + TD-188 register):
 ID         : TD-189
 Kategori   : DOKUMENTASI
 Judul      : TEAM_CONTRACT.md drift vs TEAM_CONTRACT.txt — .md tidak
-             punya Section 18 (v2.7) dan tertinggal dari .txt (384 vs 710
-             baris). Pre-existing, bukan dari S20a.
+             punya Section 18 (v2.7); tertinggal (workspace post-S20a:
+             384 vs 808 baris; HEAD pre-S20a: 384 vs 710 baris).
 Bukti      : (a) wc -l workspace post-S20a: docs/TEAM_CONTRACT.md = 384
              baris (unchanged sejak 2026-10-07); docs/TEAM_CONTRACT.txt =
              808 baris (working tree, Section 18 v2.7 sudah ditambahkan).
@@ -9555,7 +9555,8 @@ Solusi     : (a) Setiap sesi OpenCode WAJIB paste RAW output tiap command
              prompt lebih kecil. (d) Klasifikasi task: docs-only → user
              manual (bukan OpenCode).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (2026-10-13, sesi S20h — mitigation via Section 19
+             Task Classification Matrix di TEAM_CONTRACT.txt v2.7.1)
 Referensi  : S20d (hallucination event), §14.1 R3.1 (raw output), §14.6 R12
              (fail fast), §16.5 (user checkpoint), §16.6 (kill switch)
 
@@ -9574,7 +9575,8 @@ Solusi     : Update Judul TD-189 (line ~9486) jadi: "...tertinggal
              (workspace post-S20a: 384 vs 808 baris; HEAD pre-S20a: 384 vs
              710 baris)."
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-13, sesi S20h — judul TD-189 di-update
+             808/710; konsisten dengan Bukti + changelog S20c)
 Referensi  : S20c (Bukti & changelog sudah 808; Judul tertinggal), S20d
              (OpenCode flag out-of-scope per R8)
 
