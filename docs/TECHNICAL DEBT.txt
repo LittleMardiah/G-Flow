@@ -4587,8 +4587,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 182 item (TD-051 di-reserve/skip)
-                                       (83 FIXED + 54 CLOSED + 14 DEFERRED + 31 OPEN = 182)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 183 item (TD-051 di-reserve/skip)
+                                       (83 FIXED + 54 CLOSED + 14 DEFERRED + 32 OPEN = 183)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4924,7 +4924,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 182 item (TD-051 di-reserve/skip)
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
 STATUS: ✅ FIXED 83 item, 54 item CLOSED (FIXED/CLOSED 137), 14 item DEFERRED,
-        31 item OPEN.  [83 + 54 + 14 + 31 = 182 = TOTAL]
+        32 item OPEN.  [83 + 54 + 14 + 32 = 183 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5223,8 +5223,8 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S19i — sync counter TD-188 FIXED):
-   - Total hutang teridentifikasi      : 182 item (TD-051 di-reserve/skip; 182 item aktif terdaftar).
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S20b — TD-189 register):
+   - Total hutang teridentifikasi      : 183 item (TD-051 di-reserve/skip; 183 item aktif terdaftar).
    - ✅ FIXED                           : 83 item
    - CLOSED                             : 54 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
@@ -5235,9 +5235,9 @@ REKOMENDASI:
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 31 item (sisa setelah sesi S19h = SEDANG 22 + RENDAH 9;
+   - ❌ OPEN                              : 32 item (sisa setelah sesi S20b = SEDANG 22 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [83 + 54 + 14 + 31 = 182 = TOTAL]
+      [83 + 54 + 14 + 32 = 183 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9480,6 +9480,40 @@ CHANGELOG — 2026-10-13 (sesi S19e, TD-186 finalize + TD-188 register):
   TOTAL +1 (TD-188). RENDAH +1 (TD-188).
 - Commit: belum (R10). User commit via PowerShell (S19f).
 
+ID         : TD-189
+Kategori   : DOKUMENTASI
+Judul      : TEAM_CONTRACT.md drift vs TEAM_CONTRACT.txt — .md tidak
+             punya Section 18 (v2.7) dan tertinggal dari .txt (384 vs 710
+             baris). Pre-existing, bukan dari S20a.
+Bukti      : (a) wc -l workspace post-S20a: docs/TEAM_CONTRACT.md = 384
+             baris (unchanged sejak 2026-10-07); docs/TEAM_CONTRACT.txt =
+             808 baris (working tree, Section 18 v2.7 sudah ditambahkan).
+             (b) HEAD (committed, pre-S20a): docs/TEAM_CONTRACT.txt = 710
+             baris (`git show HEAD:docs/TEAM_CONTRACT.txt | wc -l`).
+             (c) grep -c "Section 18|L-S19-" docs/TEAM_CONTRACT.md = 0
+             (Section 18 hanya di .txt). (d) File mtime: .txt = 2026-10-07
+             06:53, .md = 2026-10-07 13:38 (.md lebih baru dibuat, tapi
+             tidak di-update sejalan). (e) Drift pre-S20a (HEAD): .md 384
+             vs .txt 710 = 326 baris; drift post-S20a (workspace): .md 384
+             vs .txt 808 = 424 baris. (f) Header di .md masih
+             Version 1.0-GFLOW.
+Dampak     : R6 (konsistensi) violation. Pembaca yang buka .md akan lihat
+             versi lama tanpa Section 18/17/16 — bisa salah referensi.
+             Duplikasi sumber kebenaran untuk dokumen yang sama.
+Solusi     : Butuh KEPUTUSAN User (produk/dokumentasi, bukan mekanis):
+             (a) Mirror penuh — auto-generate .md dari .txt (butuh build step
+                 atau script sinkronisasi), atau manual copy.
+             (b) Deprecate .md — hapus file + redirect ke .txt via README/
+                 link, jangan dua sumber.
+             (c) Summary-only .md — .md jadi index singkat (versi + link ke
+                 section .txt), bukan full mirror.
+             Rekomendasi teknis: (b) atau (c) untuk hindari double maintenance.
+             Menunggu keputusan User.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : S20a (Section 18 v2.7 di .txt, .md tidak disentuh per R8),
+             R6 konsistensi
+
 ========================================================================
 CHANGELOG — 2026-10-13 (sesi S19i, TD-188 FIXED + counter sync):
 - TD-188 status: OPEN → ✅ FIXED (2026-10-13, sesi S19h). Bukti:
@@ -9493,4 +9527,16 @@ CHANGELOG — 2026-10-13 (sesi S19i, TD-188 FIXED + counter sync):
 - Counter §2/§3 disinkronkan (stale sejak S19h).
 - Delta register: FIXED +1 (TD-188), OPEN -1 (TD-188), TOTAL tetap 182.
 - Commit: belum (R10). User commit via PowerShell (S19j).
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S20b, TD-189 register + counter sync):
+- TD-189 entry BARU (DOKUMENTASI, RENDAH, OPEN) — TEAM_CONTRACT.md drift
+  vs TEAM_CONTRACT.txt (workspace post-S20a: 384 vs 808 baris; HEAD
+  pre-S20a: 384 vs 710 baris; Section 18 hanya di .txt). Butuh keputusan
+  User (mirror / deprecate / summary-only).
+- Counter §2/§3 disinkronkan setelah S20a (Section 18 di .txt tidak
+  memengaruhi counter register, tapi Section 18 wajib patuh L-S19-03/04/05).
+- Delta register: TOTAL +1 (TD-189), OPEN +1, RENDAH +1.
+- Referensi: S20a (Section 18 v2.7 di TEAM_CONTRACT.txt).
+- Commit: belum (R10). User commit via PowerShell (S20c).
 

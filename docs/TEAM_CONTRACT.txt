@@ -3,9 +3,9 @@ TEAM CONTRACT — G-Flow Project
 Kesepakatan Kerja: Developer + DeepSeek + OpenCode
 ================================================================================
 
-Version: 1.0-GFLOW
+Version: 2.7-GFLOW
 Effective: 2026-10-07
-Last Updated: 2026-10-07
+Last Updated: 2026-10-13
 Status: LOCKED
 Project: G-Flow Super-App Ecosystem
 Scope: Backend Go (Gin + pgx + Redis), PostgreSQL/Supabase, 3 Flutter apps, Next.js Admin Panel
@@ -396,6 +396,7 @@ Alignment: RULES Rx / TD-xxx
 | 2.5       | 2026-10-03 | Amend kontradiksi Section 6/8/11 (digabung ke commit v2.4).                                                                                        |
 | 2.6       | 2026-10-03 | OPENCODE REALITY CONSTRAINT (Section 16) + ROLE RESTORATION (Section 17, DeepSeek Reviewer). Fix scope Section 5 (ScIntel). Fix header typo.        |
 | 1.0-GFLOW | 2026-10-07 | Adaptasi dari versi ScIntel; scope diganti ke G-Flow. Struktur, 10 RULES, Autonomy Override dipertahankan.                                          |
+| 2.7-GFLOW | 2026-10-13 | Amend Section 18 — Reviewer Lessons S19 chain (L-S19-01..07). |
 +-----------+------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
 
 ================================================================================
@@ -707,4 +708,101 @@ Kalau 3 sesi atau lebih, STOP task dan eskalasi ke User.
 tapi berpikirlah apakah sistem juga bisa berjalan dengan Normal di Situasi 
 yang sedang 'Tidak Normal'"
 — Vibe Coder Principle
+================================================================================
+
+================================================================================
+18. ADDENDUM v2.7 — REVIEWER LESSONS FROM S19 CHAIN (2026-10-13)
+================================================================================
+
+Konteks: Chain S19 (S19b..S19j, 10 sesi, commits 0c4c2f6/50f332b/b193a13)
+mengungkap 7 pola kesalahan Reviewer (AI) yang belum terformalisasi.
+Append-only; tidak menggantikan RULES Section 2.
+
+--------------------------------------------------------------------------------
+L-S19-01 (Sesi S19b): Asumsi TD Numbering
+--------------------------------------------------------------------------------
+KONTEKS   : Prompt S19b asumsi TD-191..193 tersedia, padahal register max
+            TD-184. Next free = TD-185. OpenCode STOP → benar.
+ROOT CAUSE: Reviewer mengasumsi numbering dari template/memori tanpa grep.
+LESSON    : SEBELUM propose entry TD baru, WAJIB grep numeric max.
+CHECK     : grep -oE "^ID\s+: TD-[0-9]+" docs/TECHNICAL DEBT.txt \
+            | grep -oE "[0-9]+" | sort -n | tail -1
+PREVENTION: Setiap prompt yang menambah TD baru WAJIB include STEP
+            "CEK next free TD".
+
+--------------------------------------------------------------------------------
+L-S19-02 (Sesi S19b-2): rfind Substring Separator
+--------------------------------------------------------------------------------
+KONTEKS   : Prompt S19b pakai rfind('====\n') untuk cari separator 72-char.
+            Match hanya 4 '=' terakhir → 68 '=' nyangkut ke baris berikutnya.
+            OpenCode self-fix.
+ROOT CAUSE: rfind substring tidak distinguish separator utuh.
+LESSON    : Saat pakai rfind separator multi-char, WAJIB full string:
+            rfind('=' * 72 + '\n'), bukan substring pendek.
+CHECK     : xxd file setelah edit.
+PREVENTION: Semua prompt script yang pakai rfind separator WAJIB pakai
+            '=' * 72 eksplisit.
+
+--------------------------------------------------------------------------------
+L-S19-03 (Sesi S19e): Counter Sync Cakupan Sempit
+--------------------------------------------------------------------------------
+KONTEKS   : Prompt S19e header "sync counter §2/§3", tapi script cuma
+            replace §2 STATUS. §2 TOTAL HUTANG + §3 header tertinggal.
+ROOT CAUSE: Reviewer asumsi 1 format counter. Register punya multiple.
+LESSON    : WAJIB grep SEMUA format counter sebelum nulis script replace.
+CHECK     : grep -n "^STATUS:\|^TOTAL HUTANG\|RINGKASAN STATUS TERKINI"
+            docs/TECHNICAL DEBT.txt
+PREVENTION: Prompt "sync counter" WAJIB include STEP 1 CEK untuk
+            ^TOTAL HUTANG + ^STATUS: + ^RINGKASAN STATUS TERKINI.
+
+--------------------------------------------------------------------------------
+L-S19-04 (Sesi S19f): §3 Sub-Field Tertinggal
+--------------------------------------------------------------------------------
+KONTEKS   : Setelah fix §3 header, bullets + footer sum masih angka lama.
+ROOT CAUSE: §3 = 1 header + 5 bullets + 1 footer = 7 counter terkait, tapi
+            reviewer cuma handle header.
+LESSON    : "Sync §3" = sync HEADER + semua BULLETS + FOOTER.
+CHECK     : awk section §3, dump semua baris counter, verify konsisten.
+PREVENTION: Prompt "sync §3" WAJIB enumerasi field: header, total hutang,
+            fixed, closed, fixed/closed, deferred, open, footer sum.
+
+--------------------------------------------------------------------------------
+L-S19-05 (Sesi S19g): §3 Parenthetical = Counter Terpisah
+--------------------------------------------------------------------------------
+KONTEKS   : "- ❌ OPEN : 32 item (sisa ... = SEDANG 30 + RENDAH 10)" —
+            split SEDANG+RENDAH = 40 ≠ OPEN 32.
+ROOT CAUSE: Parenthetical sub-counter dianggap teks statis, padahal derived
+            dari parser.
+LESSON    : Setiap counter derivable WAJIB di-recompute saat sync.
+CHECK     : Parse ulang OPEN entries, split by Prioritas, assert sum.
+PREVENTION: Prompt "sync counter" WAJIB include reparse + recompute untuk
+            counter derivable.
+
+--------------------------------------------------------------------------------
+L-S19-06 (Sesi S19h): Fix Code Tanpa Sesi Register
+--------------------------------------------------------------------------------
+KONTEKS   : Sesi S19h fix code (integration test). Register tetap stale
+            (TD-188 OPEN, counter 82F) sampai S19i.
+ROOT CAUSE: Reviewer split "fix code" dari "register sync" tanpa flag
+            explicit bahwa register TETAP stale.
+LESSON    : Setiap sesi yang mengubah status domain WAJIB diikuti sesi
+            finalize register (gabung atau pisah, tapi jangan skip).
+CHECK     : Setelah sesi fix, grep "Status : OPEN" untuk TD terkait.
+PREVENTION: Prompt fix code WAJIB diakhiri STEP "LAPOR: register perlu
+            update?" atau lanjut sesi register sync.
+
+--------------------------------------------------------------------------------
+L-S19-07 (Sesi S19i): Regex Footer '>= 1' Terlalu Longgar
+--------------------------------------------------------------------------------
+KONTEKS   : Prompt S19i assert n9 >= 1 untuk regex footer. Actual = 2
+            (legitimate, tapi lu missed). Verifikasi manual dibutuhkan.
+ROOT CAUSE: Regex bisa match multiple legitimate target. Assert >= 1 =
+            false positive OK, tapi tidak detect over-broad.
+LESSON    : Assert count WAJIB == 1, atau anchor lebih spesifik. Setelah
+            replace, manual verify grep + context.
+CHECK     : grep -n "<pattern>" file → manual inspect each hit.
+PREVENTION: Prompt replace WAJIB assert n == 1 (bukan >= 1).
+
+================================================================================
+END OF ADDENDUM v2.7
 ================================================================================
