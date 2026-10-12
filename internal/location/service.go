@@ -56,6 +56,7 @@ var (
 type Repo interface {
 	UpsertLocation(ctx context.Context, driverID uuid.UUID, lat, lng float64) error
 	GetNearbyDrivers(ctx context.Context, lat, lng float64, radiusKm float64) ([]NearbyDriver, error)
+	SetDriverOnlineStatus(ctx context.Context, driverID uuid.UUID, isOnline bool) error
 }
 
 // DB adalah subset operasi pool yang dipakai Service untuk fallback.
@@ -74,6 +75,7 @@ type RedisClient interface {
 	Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
 	HGet(ctx context.Context, key string, field string) *redis.StringCmd
 	TTL(ctx context.Context, key string) *redis.DurationCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
 // redisStorage adalah penyimpan lokasi driver hasil baca dari Redis.
@@ -94,6 +96,32 @@ type Service struct {
 // NewService membuat Service baru dengan dependency injection.
 func NewService(repo Repo, rdb RedisClient, db DB) *Service {
 	return &Service{repo: repo, rdb: rdb, db: db}
+}
+
+// SetOnlineStatus meng-update status online driver (is_online) di PostgreSQL.
+//
+//  1. Update kolom users.is_online (+ last_status_update_at, updated_at)
+//     lewat repository.SetDriverOnlineStatus.
+//  2. Jika driver set OFFLINE (isOnline=false) dan Redis tersedia, hapus
+//     key lokasi driver:location:{driverID} agar ia langsung tidak terlihat
+//     di pencarian driver terdekat (instant offline).
+//  3. Jika driver set ONLINE (isOnline=true), tidak ada aksi Redis: driver
+//     akan mengirim lokasi lagi lewat UpdateLocation (TTL + HSet).
+func (s *Service) SetOnlineStatus(ctx context.Context, driverID uuid.UUID, isOnline bool) error {
+	if err := s.repo.SetDriverOnlineStatus(ctx, driverID, isOnline); err != nil {
+		// pgx.ErrNoRows diterjemahkan ke error domain agar HTTP layer
+		// tidak bergantung pada driver database (pattern ride/food/driver).
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDriverNotFound
+		}
+		return err
+	}
+
+	if !isOnline && s.rdb != nil {
+		_ = s.rdb.Del(ctx, redisKey(driverID)).Err()
+	}
+
+	return nil
 }
 
 // UpdateLocation menyimpan lokasi terbaru driver.

@@ -63,6 +63,29 @@ func (r *Repository) UpsertLocation(ctx context.Context, driverID uuid.UUID, lat
 	return err
 }
 
+// SetDriverOnlineStatus meng-update status online driver pada tabel users.
+// Hanya driver ACTIVE yang boleh bertransisi; kalau tidak ada baris yang
+// terpengaruh (driver tidak ditemukan / bukan driver / tidak ACTIVE),
+// dikembalikan pgx.ErrNoRows agar pemanggil bisa map ke 404.
+func (r *Repository) SetDriverOnlineStatus(ctx context.Context, driverID uuid.UUID, isOnline bool) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE users
+		SET is_online = $2,
+		    last_status_update_at = NOW(),
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND user_type = 'driver'
+		  AND status = 'ACTIVE'
+	`, driverID, isOnline)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // GetNearbyDrivers mencari driver aktif (IDLE & online) dalam radius radiusKm
 // dari koordinat (lat,lng). Memakai earthdistance.ll_to_earth untuk filter
 // jarak dan join ke users agar hanya driver memenuhi syarat yang dikembalikan.

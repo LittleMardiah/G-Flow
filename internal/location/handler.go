@@ -19,6 +19,7 @@ import (
 type LocationService interface {
 	UpdateLocation(ctx context.Context, driverID uuid.UUID, lat, lng float64) error
 	GetNearbyDrivers(ctx context.Context, lat, lng float64, radiusKm float64) ([]NearbyDriver, error)
+	SetOnlineStatus(ctx context.Context, driverID uuid.UUID, isOnline bool) error
 }
 
 // Handler menerima request HTTP dan memanggil Service.
@@ -35,6 +36,11 @@ func NewHandler(svc LocationService) *Handler {
 type updateLocationRequestBody struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+}
+
+// setOnlineStatusRequestBody input JSON dari PATCH /drivers/me/status.
+type setOnlineStatusRequestBody struct {
+	IsOnline bool `json:"is_online"`
 }
 
 // UpdateLocation POST /api/v1/drivers/location
@@ -74,6 +80,42 @@ func (h *Handler) UpdateLocation(c *gin.Context) {
 			"driver_id": driverID,
 			"latitude":  body.Latitude,
 			"longitude": body.Longitude,
+		},
+	})
+}
+
+// SetOnlineStatus PATCH /api/v1/drivers/me/status
+// Auth: driver (JWT). Mengambil driver_id dari JWT claim `user_id` dan
+// status online dari body, lalu menyimpan ke users.is_online. Saat offline,
+// Service menghapus key lokasi driver di Redis (instant offline).
+func (h *Handler) SetOnlineStatus(c *gin.Context) {
+	driverIDStr := c.GetString("user_id")
+	if driverIDStr == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+	driverID, err := uuid.Parse(driverIDStr)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid user identity")
+		return
+	}
+
+	var body setOnlineStatusRequestBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+
+	if err := h.svc.SetOnlineStatus(c.Request.Context(), driverID, body.IsOnline); err != nil {
+		writeError(c, statusForError(err), codeForError(err), err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"driver_id": driverID,
+			"is_online": body.IsOnline,
 		},
 	})
 }
@@ -149,6 +191,8 @@ func statusForError(err error) int {
 	case errors.Is(err, ErrInvalidCoordinates),
 		errors.Is(err, ErrInvalidRadius):
 		return http.StatusUnprocessableEntity
+	case errors.Is(err, ErrDriverNotFound):
+		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
 	}
@@ -161,6 +205,8 @@ func codeForError(err error) string {
 		return "INVALID_COORDINATES"
 	case errors.Is(err, ErrInvalidRadius):
 		return "INVALID_RADIUS"
+	case errors.Is(err, ErrDriverNotFound):
+		return "DRIVER_NOT_FOUND"
 	default:
 		return "INTERNAL_SERVER_ERROR"
 	}

@@ -4587,8 +4587,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 176 item (TD-051 di-reserve/skip)
-                                       (69 FIXED + 53 CLOSED + 14 DEFERRED + 40 OPEN = 176)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 182 item (TD-051 di-reserve/skip)
+                                       (82 FIXED + 54 CLOSED + 14 DEFERRED + 32 OPEN = 182)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4923,8 +4923,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 176 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 68 item, 53 item CLOSED (FIXED/CLOSED 121), 14 item DEFERRED,
-        40 item OPEN.  [68 + 53 + 14 + 40 = 175 = TOTAL]
+STATUS: ✅ FIXED 82 item, 54 item CLOSED (FIXED/CLOSED 136), 14 item DEFERRED,
+        32 item OPEN.  [82 + 54 + 14 + 32 = 182 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5223,21 +5223,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-09, sesi TD-109 — wontfix 403 by design, TD-109 OPEN → CLOSED):
-   - Total hutang teridentifikasi      : 176 item (TD-051 di-reserve/skip; 176 item aktif terdaftar).
-   - ✅ FIXED                           : 69 item
-   - CLOSED                             : 53 item (9 lama TD-011 s/d TD-019 + 5 via triage
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S19f — sync counter §2/§3):
+   - Total hutang teridentifikasi      : 182 item (TD-051 di-reserve/skip; 182 item aktif terdaftar).
+   - ✅ FIXED                           : 82 item
+   - CLOSED                             : 54 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 122 item
+   - FIXED/CLOSED                       : 136 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 40 item (sisa setelah sesi TD-109 = SEDANG 30 + RENDAH 10;
+   - ❌ OPEN                              : 32 item (sisa setelah sesi S19f = SEDANG 22 + RENDAH 10;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [69 + 53 + 14 + 40 = 176 = TOTAL]
+      [82 + 54 + 14 + 32 = 182 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9353,7 +9353,7 @@ Referensi  : S19a CEK (reframe TD-122 CLOSED), food/service.go:80,
              send/service.go:83, ride/service.go:627/653
 
 ID         : TD-186
-Kategori   : KODE / BLOCKER
+Kategori   : KODE / TINGGI
 Judul      : `is_online` driver TIDAK PERNAH di-set di kode — matching
              engine butuh is_online=TRUE.
 Bukti      : (a) Grep `is_online` di internal/ (non-test) = 2 hasil:
@@ -9371,7 +9371,18 @@ Solusi     : (a) Cek endpoint toggle online driver missing (kemungkinan
              implementasi endpoint + handler + repo method. (c) Consider:
              auto-online saat location update + auto-offline saat TTL habis.
 Prioritas  : TINGGI
-Status     : OPEN
+Note       : Severity di-downgrade dari BLOCKER ke TINGGI per S19c CEK
+             (2026-10-13). Bukti:
+             (a) Redis path `readNearbyRedis` (location/service.go:155-186)
+                 TIDAK filter is_online → driver bisa muncul via Redis.
+             (b) `GetAvailableRideOrders` (driver/repository.go:409-441)
+                 TIDAK pakai is_online → accept flow tetap jalan.
+             (c) Push matching masih placeholder (send/service.go:1585).
+             Yang beneran broken: /drivers/nearby DB fallback + future push.
+             Tetap TINGGI karena intent doc (ROADMAP 02:1231,1332,
+             HALAMAN:1087, E2E:145) + Redis path fragility.
+             Fix direncanakan S19d (endpoint explicit + Redis cleanup).
+Status     : ✅ FIXED (2026-10-13, sesi S19d)
 Referensi  : S19a CEK, location/repository.go:79, migrations/001:64
 
 ID         : TD-187
@@ -9411,6 +9422,36 @@ CHANGELOG — 2026-10-13 (sesi S18f, TD-176 FULLY CLOSED — send-side):
 - Catatan: commit c779afc (WIP unit) punya message jujur — klaim fix yang
   memang sudah di-commit. Beda dari pola 7fa3140 (food WIP misleading).
 
+ID         : TD-188
+Kategori   : TESTING
+Judul      : internal/location package TIDAK punya integration test
+             (hanya pgxmock + miniredis). SQL SetDriverOnlineStatus belum
+             diverifikasi terhadap PostgreSQL nyata.
+Bukti      : (a) Sebelum S19d: `ls internal/location/` hanya 4 file .go
+             (handler, repository, service, worker), 0 file _test.go.
+             (b) S19d menambah 3 test file (unit): repository_test.go
+             (pgxmock), service_test.go (pgxmock + miniredis),
+             handler_test.go (gin httptest + mock). Real DB tidak tersentuh.
+             (c) SQL `UPDATE users SET is_online=$2, last_status_update_at=NOW(),
+             updated_at=NOW() WHERE id=$1 AND user_type='driver' AND
+             status='ACTIVE'` — pgxmock hanya cocok string prefix, tidak
+             eksekusi ke PostgreSQL. Bug 42P08 / kolom salah / tipe enum
+             tidak akan ketangkap.
+             (d) Preseden TD-181 (admin package pgxmock PASS tapi real DB
+             42P08 di UpdateMerchantStatus) — pattern sama.
+Dampak     : Kalau SQL error (tipe mismatch, kolom tidak ada), hanya ketahuan
+             di production/staging saat endpoint benar-benar dipanggil.
+             Tidak ada regression gate.
+Solusi     : Tambah internal/location/repository_integration_test.go dengan
+             build tag `integration` (mirror pattern TD-181: setupPool dari
+             DATABASE_URL, skip kalau kosong). Test minimal: SetDriverOnlineStatus
+             happy path + not-found. CI `go-integration` (TD-167) sudah aktif,
+             jadi langsung jalan begitu file ditambah.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : S19d (temuan saat lapor), TD-181 (preseden pgxmock vs real DB),
+             TD-167 (CI go-integration job)
+
 ========================================================================
 CHANGELOG — 2026-10-13 (sesi S19b, TD-122 close + 3 TD baru):
 - TD-122 CLOSED sebagai INVALID PREMISE. Reframe jadi TD-185.
@@ -9425,4 +9466,17 @@ CHANGELOG — 2026-10-13 (sesi S19b, TD-122 close + 3 TD baru):
 - Delta register: CLOSED +1 (TD-122), OPEN +3 (TD-185/186/187), TOTAL +3.
 - Selanjutnya: S19c = CEK-spesifik TD-186 (verifikasi impact + cek endpoint
   missing). Fix = S19d (butuh keputusan desain).
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S19e, TD-186 finalize + TD-188 register):
+- TD-186 status: OPEN → ✅ FIXED (2026-10-13, sesi S19d). Fix: endpoint
+  PATCH /api/v1/drivers/me/status + Redis cleanup (DEL driver:location:{id}
+  saat offline). Kategori tetap KODE/TINGGI (bukan BLOCKER, sesuai S19c CEK).
+  11 unit test PASS (repository/service/handler).
+- TD-188 entry BARU (TESTING, RENDAH, OPEN) — location package tidak punya
+  integration test; pgxmock tidak eksekusi SQL ke PostgreSQL nyata. Preseden
+  TD-181. Solusi: repository_integration_test.go (tag `integration`).
+- Counter §2/§3 disinkronkan (stale sejak S19b).
+- Delta register: FIXED +1 (TD-186), OPEN net 0 (TD-186 -1, TD-188 +1),
+  TOTAL +1 (TD-188). RENDAH +1 (TD-188).
+- Commit: belum (R10). User commit via PowerShell (S19f).
 

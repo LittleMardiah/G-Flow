@@ -215,6 +215,9 @@ func main() {
 		api.GET("/wallets/:wallet_id/withdrawals", auth.RBACMiddleware("driver", "merchant"), handler.ListWithdrawals)
 		// Driver update lokasi: auth wajib + role driver.
 		api.POST("/drivers/location", auth.RBACMiddleware("driver"), locationHandler.UpdateLocation)
+		// Driver toggle online/offline (TD-186): set users.is_online + cleanup
+		// Redis key driver:location:{id} saat offline.
+		api.PATCH("/drivers/me/status", auth.RBACMiddleware("driver"), locationHandler.SetOnlineStatus)
 		// Driver available orders (TD-009): auth wajib + role driver.
 		api.GET("/drivers/available-orders", auth.RBACMiddleware("driver"), driverHandler.GetAvailableOrders)
 		api.GET("/drivers/me", auth.RBACMiddleware("driver"), driverHandler.GetDriverMe)
