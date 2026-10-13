@@ -2996,7 +2996,8 @@ Solusi     : Guard `if tx != nil` sebelum rollback ATAU ubah pattern
              memanggil Rollback setelah Commit sukses, mis. flag `committed`
              yang di-set sebelum Commit lalu dicek di defer.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-13, sesi S26 — guard `defer tx.Rollback`
+             dengan flag `committed`; set setelah Commit sukses)
 Referensi  : TD-106 (temuan OpenCode)
 
 ID         : TD-158
@@ -4589,7 +4590,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
-                                       (85 FIXED + 55 CLOSED + 14 DEFERRED + 32 OPEN = 186)
+                                       (86 FIXED + 55 CLOSED + 14 DEFERRED + 31 OPEN = 186)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4924,8 +4925,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 85 item, 55 item CLOSED (FIXED/CLOSED 140), 14 item DEFERRED,
-        32 item OPEN.  [85 + 55 + 14 + 32 = 186 = TOTAL]
+STATUS: ✅ FIXED 86 item, 55 item CLOSED (FIXED/CLOSED 141), 14 item DEFERRED,
+        31 item OPEN.  [86 + 55 + 14 + 31 = 186 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5224,21 +5225,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S24 — TD-192 register):
+3. RINGKASAN STATUS TERKINI (2026-10-13, sesi S27 — TD-157 FIXED):
    - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
-   - ✅ FIXED                           : 85 item
+   - ✅ FIXED                           : 86 item
    - CLOSED                             : 55 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 140 item
+   - FIXED/CLOSED                       : 141 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 32 item (sisa setelah sesi S24 = SEDANG 22 + RENDAH 10;
+   - ❌ OPEN                              : 31 item (sisa setelah sesi S27 = SEDANG 22 + RENDAH 9;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [85 + 55 + 14 + 32 = 186 = TOTAL]
+      [86 + 55 + 14 + 31 = 186 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9667,4 +9668,15 @@ CHANGELOG — 2026-10-13 (sesi S24, TD-192 register + counter sync):
 - Counter §2/§3 sync: 85F/55C/14D/32O = 186 (TOTAL +1 dari TD-192).
 - Delta register: TOTAL +1, OPEN +1, SEDANG +1.
 - Commit: belum (R10). User commit via PowerShell (S25).
+
+========================================================================
+CHANGELOG — 2026-10-13 (sesi S27, TD-157 FIXED + counter sync):
+- TD-157 (KODE) Status OPEN → ✅ FIXED. Guard `defer tx.Rollback(ctx)` di
+  worker.go:175/288/398 dengan flag `committed`; set setelah Commit sukses
+  (bukan sebelum — test TestCancelRideOrders_CommitError_SkipsOrder
+  mengunci rollback wajib pada commit-failure). Coverage worker 97.4% →
+  97.6%. [OVERRIDE-1/2 di S26 log].
+- Counter §2/§3 sync: 86F/55C/14D/31O = 186 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-157), OPEN -1, RENDAH -1.
+- Commit: belum (R10). User commit via PowerShell (S28).
 

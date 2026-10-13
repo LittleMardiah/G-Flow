@@ -172,7 +172,12 @@ func (w *Worker) cancelOneFoodOrder(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
 		return err
@@ -221,7 +226,11 @@ func (w *Worker) cancelOneFoodOrder(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	err = tx.Commit(ctx)
+	if err == nil {
+		committed = true
+	}
+	return err
 }
 
 // refundFoodEscrow mengembalikan dana escrow penuh (FOOD_REFUND) ke customer
@@ -285,7 +294,12 @@ func (w *Worker) cancelOneSendOrder(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
 		return err
@@ -331,7 +345,11 @@ func (w *Worker) cancelOneSendOrder(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	err = tx.Commit(ctx)
+	if err == nil {
+		committed = true
+	}
+	return err
 }
 
 // refundSendEscrow mengembalikan dana escrow penuh (SEND_REFUND) ke sender
@@ -395,7 +413,12 @@ func (w *Worker) cancelOneRideOrder(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
 		return err
@@ -441,7 +464,11 @@ func (w *Worker) cancelOneRideOrder(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	err = tx.Commit(ctx)
+	if err == nil {
+		committed = true
+	}
+	return err
 }
 
 // refundRideEscrow mengembalikan dana escrow penuh (RIDE_REFUND) ke customer
