@@ -3,9 +3,9 @@ TEAM CONTRACT — G-Flow Project
 Kesepakatan Kerja: Developer + DeepSeek + OpenCode
 ================================================================================
 
-Version: 2.7.1-GFLOW
+Version: 2.7.2-GFLOW
 Effective: 2026-10-07
-Last Updated: 2026-10-13 (v2.7.1)
+Last Updated: 2026-10-13 (v2.7.2)
 Status: LOCKED
 Project: G-Flow Super-App Ecosystem
 Scope: Backend Go (Gin + pgx + Redis), PostgreSQL/Supabase, 3 Flutter apps, Next.js Admin Panel
@@ -398,6 +398,7 @@ Alignment: RULES Rx / TD-xxx
 | 1.0-GFLOW | 2026-10-07 | Adaptasi dari versi ScIntel; scope diganti ke G-Flow. Struktur, 10 RULES, Autonomy Override dipertahankan.                                          |
 | 2.7-GFLOW | 2026-10-13 | Amend Section 18 — Reviewer Lessons S19 chain (L-S19-01..07). |
 | 2.7.1-GFLOW | 2026-10-13 | Add Section 19 — Task Classification Matrix (docs manual, no OpenCode). |
+| 2.7.2-GFLOW | 2026-10-13 | Add Section 20 — Mutation Protocol (atomic, verify-restore). |
 +-----------+------------+-----------------------------------------------------------------------------------------------------------------------------------------------------+
 
 ================================================================================
@@ -857,3 +858,85 @@ Manual script (bash + python3) untuk docs-only = 100% clean karena:
 
 ================================================================================
 END OF ADDENDUM v2.7.1
+
+================================================================================
+20. ADDENDUM v2.7.2 — MUTATION PROTOCOL (2026-10-13)
+================================================================================
+
+Konteks: Insiden S21-S22 (TD-192) — file service.go ditemukan dalam state
+mutated (if false /* MUTATION-TEST */) tanpa trace 06:07-06:10 WIB.
+Root cause: mutation check dijalankan incremental (apply + test + restore
+sebagai command terpisah) sehingga state intermediet hidup antar-command.
+Section ini formalize Mutation Protocol WAJIB.
+
+--------------------------------------------------------------------------------
+20.1 Mutation Check WAJIB Atomic
+--------------------------------------------------------------------------------
+Mutation check (disable check → verify test FAIL → restore → verify test
+PASS) HARUS dijalankan sebagai SATU script atomic dengan cleanup handler
+(try/finally atau bash trap). DILARANG split antar-command.
+
+Pola python yang BENAR:
+
+    import subprocess, pathlib, sys
+    p = pathlib.Path('internal/ride/service.go')
+    orig = p.read_text()
+    try:
+        p.write_text(orig.replace(TARGET, MUTATED))
+        r = subprocess.run(['go','test','./internal/ride/...'], capture_output=True)
+        if r.returncode == 0:
+            print("FATAL: mutation did not fail test — VACUOUS"); sys.exit(1)
+    finally:
+        p.write_text(orig)  # RESTORE PASTI
+        r2 = subprocess.run(['go','test','./internal/ride/...'], capture_output=True)
+        if r2.returncode != 0:
+            print("FATAL: restore FAILED"); sys.exit(1)
+
+Kunci: try/finally + assertion pada KEDUA sisi + restore di finally.
+
+--------------------------------------------------------------------------------
+20.2 Verify-Restore SEBELUM Exit
+--------------------------------------------------------------------------------
+Setiap mutation check WAJIB verify 4 kondisi sebelum exit:
+  (a) marker scan == 0 (`grep -c 'MUTATION-TEST' file` = 0)
+  (b) sha256sum file == backup pre-mutation
+  (c) test PASS di state restore
+  (d) git diff bersih dari marker
+
+Kalau salah satu gagal → abort + rollback dari backup.
+
+--------------------------------------------------------------------------------
+20.3 Session Isolation
+--------------------------------------------------------------------------------
+Mutation TIDAK BOLEH hidup antar-sesi. Kalau script mutation crash:
+  1. Restore dari backup (cp backup file).
+  2. Verify (marker=0, sha256 match, test PASS).
+  3. Baru lanjut session baru.
+
+DILARANG: jalankan test/session baru saat file masih mutated.
+
+--------------------------------------------------------------------------------
+20.4 Reviewer Discipline (accrue L-S20/L-S21/L-S26)
+--------------------------------------------------------------------------------
+Sebelum kirim script mutation/state-edit ke executor:
+
+  L-S20-01: Pre-verify anchor uniqueness (`grep -cF` semua anchor → count
+            expected).
+  L-S20-02: Pattern dari SOURCE (grep actual), bukan dari memory/target.
+  L-S20-03: Position-based anchor untuk pattern yang bisa match >1 lokasi
+            (footer counter, dll).
+  L-S20-04: PowerShell commit WAJIB gate pada `PY_RC=0` (bukan commit
+            unconditional).
+  L-S21-22-01: Setiap script WAJIB header environment explicit:
+            `# RUN IN WSL ONLY` atau `# RUN IN POWERSHELL ONLY`.
+            Bash heredoc + `&&` + `[ ]` di PowerShell = dialog crash.
+  L-S21-22-02: Mutation/state-edit WAJIB verify-restore SEBELUM exit
+            (bukan setelah, bukan besok).
+  L-S21-22-03: Session isolation — state intermediet tidak boleh hidup
+            antar-command.
+  L-S26-01: Prompt yang menginstruksikan flag/state set timing WAJIB
+            cross-check dengan test yang mengunci behavior. Test =
+            source of truth saat prompt ambigu.
+
+================================================================================
+END OF ADDENDUM v2.7.2
