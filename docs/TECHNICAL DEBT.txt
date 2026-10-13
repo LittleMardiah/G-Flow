@@ -1716,20 +1716,45 @@ Note       : Fixed di commit e735568 (feat(driver): GET /drivers/me profile API
 Referensi  : TD-077 Step B (temuan OpenCode, pre-existing)
 
 ID         : TD-112
-Kategori   : KODE
-Judul      : Inconsistency pagination antar modul: Ride (TD-077 C1)
-             pakai strict validation (page<1 || pageSize<1 || >50 →
-             400 INVALID_REQUEST), Food pakai clamp (page<1→1,
-             pageSize>50→20) + 422 INVALID_PAGE_SIZE.
-Dampak     : API behavior beda antar modul. Mobile consumer harus
-             handle 2 skenario berbeda untuk error yang semantically
-             sama. R6 (konsistensi) violation.
-Solusi     : Pilih 1 pattern (strict 400 ATAU clamp+422) + apply
-             seragam ke food/ride/send. Update handler + service +
-             test.
+Kategori   : KODE / ARSITEKTUR
+Judul      : Inconsistency pagination lintas modul: split 2-2 (strict
+             ride+wallet vs clamp food+send); food internal inconsistent
+             (customer 422 vs merchant 400). PREMISE KOREKSI per S31 CEK.
+Bukti      : (a) STRICT (400): ride/service.go:603 `if page<1 ||
+             pageSize<1 || pageSize>50 { return ErrInvalidPagination }`;
+             wallet/service.go:545 pattern sama + wallet/handler.go:321-335
+             pre-check 400. (b) CLAMP (silent reset): food/service.go:1927-
+             1931 (customer) + :1950-1954 (merchant) → page<1→1,
+             pageSize<1||>50→20; send/service.go:908-912 pattern sama.
+             (c) FOOD INTERNAL INCONSISTENT: food/handler.go:816
+             `page, _ := strconv.Atoi(...)` — parse error DIABAIKAN; :819
+             pageSize parse error → 422 INVALID_PAGE_SIZE; sedangkan
+             food/handler.go:862-869 (merchant) → 400 INVALID_REQUEST.
+             (d) Test terkunci: ride/handler_test.go:981-1012 (400);
+             food/handler_test.go:595 (422); send/handler_test.go:209 (400);
+             wallet/handler_test.go:937,968,1094,1147-48 (400).
+Dampak     : Bukan "1 outlier food" (premise lama SALAH — hasil S31 CEK).
+             Split 2-2: strict (ride+wallet) vs clamp (food+send). Food
+             punya inconsistency INTERNAL (customer 422 vs merchant 400,
+             + bug silent di :816). R6 (konsistensi) violation lintas 4
+             modul. Mobile consumer harus handle 3 varian error (400 strict,
+             400 clamp-reset-silent, 422 strict-food).
+Solusi     : BUTUH KEPUTUSAN PRODUK dulu (breaking change):
+             (A) STRICT 400 (align food+send ke ride+wallet): explicit
+                 reject, meta.page jujur, no silent reset. Breaking:
+                 food consumer 422→400 + test food/handler_test.go:595
+                 harus di-update + consumer mobile adjust. Rekomendasi
+                 teknis reviewer.
+             (B) CLAMP (align ride+wallet ke food+send): preserve silent
+                 reset, breaking untuk ride+wallet consumer.
+             Setelah decision: refactor multi-sesi (4 modul × ≥3 file:
+             handler + service + test) + update E2E/API CONTRACT section
+             pagination + mobile adjust. TIDAK 1 sesi (scope >2 file/modul).
 Prioritas  : SEDANG
 Status     : OPEN
-Referensi  : TD-077 C1 (temuan OpenCode)
+Referensi  : S31 CEK (premise koreksi), TD-077 C1 (temuan awal),
+             R6 konsistensi, S26 (L-S26-01: cross-check test = source of truth)
+
 
 ID         : TD-113
 Kategori   : BACKEND / FITUR
