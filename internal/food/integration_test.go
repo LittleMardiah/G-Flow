@@ -80,6 +80,16 @@ func setupPool(t *testing.T) *pgxpool.Pool {
 		`UPDATE wallets SET balance = 0 WHERE user_id IS NULL`); err != nil {
 		t.Fatalf("gagal reset saldo wallet sistem: %v", err)
 	}
+
+	// TD-142 — reset food fixtures agar hermetic (tidak accumulate lintas run).
+	// Hanya tabel food; users/wallets/system tidak disentuh (FK SET NULL risk).
+	if _, err := pool.Exec(context.Background(), `
+		TRUNCATE food_order_events, food_order_items, food_orders,
+		         food_merchants, merchant_menus, merchant_items,
+		         item_option_groups, item_options, merchant_item_option_groups
+		RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatalf("gagal truncate food fixtures: %v", err)
+	}
 	return pool
 }
 
