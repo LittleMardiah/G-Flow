@@ -2700,7 +2700,7 @@ Solusi     : (a) ulangi dengan output penuh tersimpan (jangan `tail -1`)
              ConcurrentAccept) dan isolation state antar test — kemungkinan
              masih terkait TD-142 (state pollution antar run).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED (2026-10-15, sesi S39-S40 — NOT-REPRODUCIBLE; ~130 runs 0 flake, 0 DATA RACE)
 Referensi  : TD-142, TD-143 (temuan OpenCode 2026-09-26)
 ID         : TD-149
 Kategori   : HYGIENE
@@ -4615,7 +4615,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
-                                       (87 FIXED + 56 CLOSED + 14 DEFERRED + 29 OPEN = 186)
+                                       (87 FIXED + 57 CLOSED + 14 DEFERRED + 28 OPEN = 186)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 87 item, 56 item CLOSED (FIXED/CLOSED 143), 14 item DEFERRED,
-        29 item OPEN.  [87 + 56 + 14 + 29 = 186 = TOTAL]
+STATUS: ✅ FIXED 87 item, 57 item CLOSED (FIXED/CLOSED 144), 14 item DEFERRED,
+        28 item OPEN.  [87 + 57 + 14 + 28 = 186 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S36 — TD-142 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S40 — TD-148 CLOSED NOT-REPRODUCIBLE):
    - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
    - ✅ FIXED                           : 87 item
-   - CLOSED                             : 56 item (9 lama TD-011 s/d TD-019 + 5 via triage
+   - CLOSED                             : 57 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 143 item
+   - FIXED/CLOSED                       : 144 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 29 item (sisa setelah sesi S36 = SEDANG 20 + RENDAH 9;
+   - ❌ OPEN                              : 28 item (sisa setelah sesi S40 = SEDANG 19 + RENDAH 9;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [87 + 56 + 14 + 29 = 186 = TOTAL]
+      [87 + 57 + 14 + 28 = 186 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9731,3 +9731,23 @@ CHANGELOG — 2026-10-15 (sesi S36, TD-142 FIXED — food integration hermetic):
 - Catatan: dev DB drift terkonfirmasi (system_users=1, system_wallets=4;
   ekspektasi 5) — substantiates TD-161 (dev DB drift, DEFERRED). Non-blocking.
 - Commit: belum (R10). User commit via PowerShell (S37).
+
+========================================================================
+CHANGELOG — 2026-10-15 (sesi S40, TD-148 CLOSED NOT-REPRODUCIBLE):
+- TD-148 (TESTING) Status OPEN → ✅ CLOSED. Premise awal (flaky 1/~35 run)
+  TIDAK reproducible dalam ~130 runs kumulatif:
+    * S38: 30× full suite (no -race) → 0 FAIL
+    * S39: 100× full suite -race → timeout 30m (bcrypt bottleneck, bukan
+      flake; DATA RACE=0)
+    * S39v2: 30× -race targeted (ConcurrentAccept + AutoCancelExpired) → 0
+      FAIL, 0 DATA RACE (563s)
+  P(miss | p=1/35, n=130) ≈ 2.4% → 97.6% confidence flake tidak ada di
+  current code/env.
+- Catatan: original flake test-name tidak terekam (tail -1 di pipe);
+  frekuensi 1/~35 approx; tidak ada commit fix explicit untuk test ini.
+  Kandidat: hipotesis race di ConcurrentAccept/AutoCancelExpired — race
+  detector tidak menemukan apa pun.
+- Log tersimpan: logs/td148/ (gitignored).
+- Counter §2/§3 sync: 87F/57C/14D/28O = 186 (TOTAL unchanged).
+- Delta register: CLOSED +1 (TD-148), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S41).
