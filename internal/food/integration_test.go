@@ -219,17 +219,6 @@ func registerAndLogin(t *testing.T, r *gin.Engine, userType string) (string, uui
 
 // --- helpers akses DB ---
 
-func (e *testEnv) createWallet(t *testing.T, ctx context.Context, userID uuid.UUID, walletType string, balance decimal.Decimal) uuid.UUID {
-	t.Helper()
-	var id uuid.UUID
-	err := e.pool.QueryRow(ctx, `
-		INSERT INTO wallets (user_id, wallet_type, balance, status)
-		VALUES ($1, $2, $3, 'ACTIVE')
-		RETURNING id`, userID, walletType, balance).Scan(&id)
-	require.NoError(t, err)
-	return id
-}
-
 func (e *testEnv) getWalletID(t *testing.T, ctx context.Context, userID uuid.UUID, walletType string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
