@@ -4606,7 +4606,7 @@ Note       : Update 2026-10-08 (E2E BLOK 1F-2): send juga
              `PATCH /send-orders/:id` — konsisten dengan food. Scope: 2
              modul (food+send) vs 1 outlier (ride).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED — WONTFIX (2026-10-16, sesi S81 CEK — kode+mobile self-consistent per module: ride=/status, food/send=/:id; align = breaking mobile + cross-layer §11.4.6. API CONTRACT §7.3=/status match kode; §8.4 food outdated → doc-sync saja di docs batch)
 Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
              CONTRACT.txt §8.4, TEAM_CONTRACT R2/R6/R8
 
@@ -4615,7 +4615,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
-                                       (95 FIXED + 59 CLOSED + 14 DEFERRED + 20 OPEN = 188)
+                                       (95 FIXED + 60 CLOSED + 14 DEFERRED + 19 OPEN = 188)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 95 item, 59 item CLOSED (FIXED/CLOSED 154), 14 item DEFERRED,
-        20 item OPEN.  [95 + 59 + 14 + 20 = 188 = TOTAL]
+STATUS: ✅ FIXED 95 item, 60 item CLOSED (FIXED/CLOSED 155), 14 item DEFERRED,
+        19 item OPEN.  [95 + 60 + 14 + 19 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S79 — TD-185 CLOSED WONTFIX):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S82 — TD-179 CLOSED WONTFIX):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
    - ✅ FIXED                           : 95 item
-   - CLOSED                             : 59 item (9 lama TD-011 s/d TD-019 + 5 via triage
+   - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 154 item
+   - FIXED/CLOSED                       : 155 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
    - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [95 + 59 + 14 + 20 = 188 = TOTAL]
+      [95 + 60 + 14 + 19 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9984,3 +9984,17 @@ CHANGELOG — 2026-10-16 (sesi S79, TD-185 CLOSED WONTFIX):
 - Counter §2/§3 sync: 95F/59C/14D/20O = 188 (TOTAL unchanged).
 - Delta register: CLOSED +1 (TD-185), OPEN -1, SEDANG -1.
 - Commit: belum (R10). User commit via PowerShell (S80).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S82, TD-179 CLOSED WONTFIX):
+- TD-179 (KODE/KONSISTENSI) Status OPEN → ✅ CLOSED (WONTFIX-documented).
+  S81 CEK koreksi premise: setiap module self-consistent (ride backend
+  `/status` match ride mobile; food/send backend `/:id` match food/send
+  mobile). Align ride → `/:id` = breaking change 2 mobile (customer
+  ride_service.dart:100 + driver order_service.dart:158) + cross-layer
+  §11.4.6 = STOP. ROI negatif vs konvensi estetik.
+- §8.4 API CONTRACT food masih tulis `/status` (outdated) — doc-sync saja
+  di docs batch (S83+).
+- Counter §2/§3 sync: 95F/60C/14D/19O = 188 (TOTAL unchanged).
+- Delta register: CLOSED +1 (TD-179), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S83).
