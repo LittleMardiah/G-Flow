@@ -421,6 +421,34 @@ func TestUpdateUserStatus_RepoNoRows(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
+// TestUpdateUserStatus_Ban_SetsDeletedAt: TD-053 — aksi ban (status DELETED)
+// mengisi deleted_at (soft-delete). Assert query ban memuat "deleted_at = NOW()".
+func TestUpdateUserStatus_Ban_SetsDeletedAt(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+
+	now := time.Now()
+	mDB.ExpectBegin()
+	mDB.ExpectQuery("deleted_at = NOW").
+		WithArgs("DELETED", testUserID).
+		WillReturnRows(pgxmock.NewRows([]string{"updated_at"}).AddRow(now))
+	mDB.ExpectExec("INSERT INTO admin_action_logs").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+
+	svc := newSvc(t, mDB)
+	res, err := svc.UpdateUserStatus(context.Background(), UserStatusRequest{
+		UserID:  testUserID,
+		AdminID: testAdminID,
+		Action:  "ban",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, testUserID, res.UserID)
+	assert.Equal(t, "DELETED", res.Status)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
 // TestUserActionToStatus memverifikasi pemetaan aksi -> status (4 value).
 func TestUserActionToStatus(t *testing.T) {
 	cases := map[string]string{

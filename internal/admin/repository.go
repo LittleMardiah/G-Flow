@@ -701,8 +701,21 @@ func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*UserRow, e
 // digabung dengan penulisan log aksi admin (audit trail).
 func (r *Repository) UpdateUserStatus(ctx context.Context, tx pgx.Tx, userID uuid.UUID, status string) (time.Time, error) {
 	var updatedAt time.Time
+
+	// TD-053: aksi ban dipetakan ke status DELETED -> soft-delete. Isi
+	// deleted_at agar akun tercatat terhapus lunak (dasar retensi/purge UU PDP,
+	// ROADMAP 4.1.7). Aksi lain (freeze/suspend/unfreeze) tidak menyentuh kolom.
+	softDelete := ""
+	if status == "DELETED" {
+		softDelete = ", deleted_at = NOW()"
+	} else {
+		// TD-053 unfreeze-stale fix: non-DELETED (mis. unfreeze → ACTIVE)
+		// WAJIB clear deleted_at, otherwise driver/repository.go:192
+		// (`WHERE deleted_at IS NULL`) tetap exclude user.
+		softDelete = ", deleted_at = NULL"
+	}
 	err := tx.QueryRow(ctx, `
-		UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2
+		UPDATE users SET status = $1, updated_at = NOW()`+softDelete+` WHERE id = $2
 		RETURNING updated_at
 	`, status, userID).Scan(&updatedAt)
 	return updatedAt, err

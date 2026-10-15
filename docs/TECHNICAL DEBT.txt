@@ -630,7 +630,7 @@ Judul      : Aksi `ban` tidak set kolom deleted_at (soft-delete).
              (ROADMAP 4.1) belum jalan.
 Solusi     : implement soft-delete lengkap saat hardening.
 Prioritas  : SEDANG
-Status     : OPEN — REVERTED (over-replace a8ac9ee flip baris 633; code deleted_at = 0 hit di admin, soft-delete belum dikerjakan. Fix register di S59 per S58 CEK.)
+Status     : ✅ FIXED (2026-10-15, sesi S61 — SET deleted_at=NOW() saat status DELETED/ban di repository.go:702; deferred anon+guard+unfreeze → TD-193)
 
 ID         : TD-054
 Kategori   : SECURITY
@@ -4614,8 +4614,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
-                                       (91 FIXED + 57 CLOSED + 14 DEFERRED + 24 OPEN = 186)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 187 item (TD-051 di-reserve/skip)
+                                       (92 FIXED + 57 CLOSED + 14 DEFERRED + 24 OPEN = 187)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 91 item, 57 item CLOSED (FIXED/CLOSED 148), 14 item DEFERRED,
-        24 item OPEN.  [91 + 57 + 14 + 24 = 186 = TOTAL]
+STATUS: ✅ FIXED 92 item, 57 item CLOSED (FIXED/CLOSED 149), 14 item DEFERRED,
+        24 item OPEN.  [92 + 57 + 14 + 24 = 187 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S59 — register fix TD-053/054 net zero):
-   - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
-   - ✅ FIXED                           : 91 item
+3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S62 — TD-053 FIXED (deleted_at + unfreeze-stale) + TD-193 register):
+   - Total hutang teridentifikasi      : 187 item (TD-051 di-reserve/skip; 187 item aktif terdaftar).
+   - ✅ FIXED                           : 92 item
    - CLOSED                             : 57 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 148 item
+   - FIXED/CLOSED                       : 149 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
    - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [91 + 57 + 14 + 24 = 186 = TOTAL]
+      [92 + 57 + 14 + 24 = 187 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9816,6 +9816,36 @@ CHANGELOG — 2026-10-15 (sesi S56, TD-095 FIXED — gosec blocking):
 - Delta register: FIXED +1 (TD-095), OPEN -1, SEDANG -1.
 - Commit: belum (R10). User commit via PowerShell (S57).
 
+ID         : TD-193
+Kategori   : SECURITY / COMPLIANCE
+Judul      : Soft-delete TD-053 deferred items: anonymization (conflicting
+             specs) + guard active_orders/pending_escrow (undefined).
+             Butuh keputusan produk untuk 2 sub-issue.
+Bukti      : (a) S61+S62 CEK TD-053: FIXED partial (repository.go:702
+             set deleted_at=NOW() on ban; unfreeze-stale fixed S62 with
+             else-branch deleted_at=NULL). Remaining:
+             * Anonymization: ROADMAP 4.1.7 spesifik email
+               `anon_…@deleted.gflow.internal` + phone `+628…`;
+               SECURITY SPEC 10.1 / STP TC-012 / TDD spesifik `.com` +
+               phone NULL + name blanked. KONFLIK 3 dokumen.
+             * Guard: ROADMAP 4.1.7 syarat active_orders=0 AND
+               pending_escrow=0; `pending_escrow` TIDAK TERDEFINISI di
+               code/schema. `CountActiveOrders` platform-wide
+               (repository.go:325), bukan per-user.
+Dampak     : (1) User ter-ban masih tercatat email/phone asli → UU PDP
+             retention tidak compliant. (2) Guard pre-condition soft-
+             delete belum enforce → bisa ban user dengan escrow/active
+             order. Butuh keputusan produk (format anon, definisi
+             pending_escrow) sebelum implementasi.
+Solusi     : (a) USER putuskan format anon (`.internal` vs `.com`, phone
+             mask vs NULL). (b) DEFINE pending_escrow (query? tabel?
+             kolom? per-user aggregate?). Setelah decision: implementasi
+             di internal/admin + test + possibly migration guard.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : S61 + S62 CEK, TD-053 (parent, FIXED partial),
+             ROADMAP 4.1.7, SECURITY SPEC 10.1, STP TC-012
+
 ========================================================================
 CHANGELOG — 2026-10-15 (sesi S59, register fix TD-053/054 net zero):
 - S58 CEK menemukan 2 bug register:
@@ -9831,3 +9861,20 @@ CHANGELOG — 2026-10-15 (sesi S59, register fix TD-053/054 net zero):
   91F/57C/14D/24O = 186.
 - Bukti: S58 CEK (raw), commit 74edaa6 vs a8ac9ee verify, git blame L672.
 - Commit: belum (R10). User commit via PowerShell (S60).
+
+========================================================================
+CHANGELOG — 2026-10-15 (sesi S62, TD-053 FIXED + TD-193 register):
+- TD-053 (KODE) Status OPEN → ✅ FIXED. 
+  * S61: SET deleted_at=NOW() saat status DELETED (ban) di repository.go:702.
+  * S62: unfreeze-stale fix — else branch deleted_at=NULL untuk
+    non-DELETED status (freeze/suspend/unfreeze). Otherwise
+    driver/repository.go:192 (`WHERE deleted_at IS NULL`) tetap exclude.
+  * Test: TestUpdateUserStatus_Ban_SetsDeletedAt + existing tests PASS.
+- TD-193 entry BARU (SECURITY/COMPLIANCE, SEDANG, OPEN) — deferred items:
+  anonymization (3-doc conflicting specs: ROADMAP 4.1.7 `.internal` vs
+  SECURITY SPEC/STP/TDD `.com`+phone NULL) + guard active_orders/
+  pending_escrow (`pending_escrow` undefined di code). Butuh keputusan
+  produk untuk 2 sub-issue.
+- Counter §2/§3 sync: 92F/57C/14D/24O = 187 (TOTAL +1 TD-193).
+- Delta register: FIXED +1 (TD-053), TOTAL +1 (TD-193), OPEN net 0.
+- Commit: belum (R10). User commit via PowerShell (S63).
