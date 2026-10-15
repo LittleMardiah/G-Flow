@@ -1390,7 +1390,7 @@ func TestGetSendOrderHistory(t *testing.T) {
 		Return([]*SendOrder{fSendOrder(sendStatusDelivered, PaymentMethodWallet, nil)}, nil)
 	repo.On("GetStopsByOrderIDs", mock.Anything, mock.Anything).Return(map[uuid.UUID][]*SendOrderStop{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
-	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 0, 0)
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 1, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, total)
 	assert.Len(t, orders, 1)
@@ -1402,7 +1402,7 @@ func TestGetSendOrderHistory_Empty(t *testing.T) {
 	repo.On("CountSendOrdersBySender", mock.Anything, fCustID).Return(0, nil)
 	repo.On("GetSendOrdersBySender", mock.Anything, fCustID, 20, 0).Return([]*SendOrder{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
-	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 1, 0)
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 1, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, total)
 	assert.Empty(t, orders)
@@ -1413,10 +1413,22 @@ func TestGetSendOrderHistory_Paging(t *testing.T) {
 	repo.On("CountSendOrdersBySender", mock.Anything, fCustID).Return(1, nil)
 	repo.On("GetSendOrdersBySender", mock.Anything, fCustID, 20, 40).Return([]*SendOrder{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
-	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 3, 0)
+	orders, total, err := svc.GetSendOrderHistory(context.Background(), fCustID, 3, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Empty(t, orders)
+}
+
+func TestGetSendOrderHistory_InvalidPagination(t *testing.T) {
+	repo := new(mockRepo)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	for _, tc := range []struct {
+		page     int
+		pageSize int
+	}{{0, 20}, {1, 0}, {1, 51}} {
+		_, _, err := svc.GetSendOrderHistory(context.Background(), fCustID, tc.page, tc.pageSize)
+		assert.ErrorIs(t, err, ErrInvalidPagination)
+	}
 }
 
 // TD-153: history attach stops (batch) — verifikasi map lookup.

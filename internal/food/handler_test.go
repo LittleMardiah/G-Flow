@@ -592,7 +592,14 @@ func TestHandler_GetFoodOrderHistory(t *testing.T) {
 	c2.Set("user_id", fCustID.String())
 	h2 := NewHandler(svc2)
 	h2.GetFoodOrderHistory(c2)
-	assert.Equal(t, http.StatusUnprocessableEntity, w2.Code)
+	assert.Equal(t, http.StatusBadRequest, w2.Code)
+
+	svc3, c3, w3 := newFoodHandlerCtx(t, http.MethodGet, "/api/v1/food-orders?page=0", "")
+	c3.Set("user_id", fCustID.String())
+	svc3.On("GetFoodOrderHistory", mock.Anything, fCustID, 0, 20).Return(nil, 0, ErrInvalidPagination)
+	h3 := NewHandler(svc3)
+	h3.GetFoodOrderHistory(c3)
+	assert.Equal(t, http.StatusBadRequest, w3.Code)
 }
 
 func TestHandler_GetMerchantOrders(t *testing.T) {
@@ -672,6 +679,7 @@ func TestHandler_StatusForError(t *testing.T) {
 		{ErrInvalidTransition, http.StatusConflict},
 		{ErrLockTimeout, http.StatusConflict},
 		{ErrInvalidStatus, http.StatusBadRequest},
+		{ErrInvalidPagination, http.StatusBadRequest},
 		{ErrEmptyName, http.StatusUnprocessableEntity},
 		{ErrInvalidPrice, http.StatusUnprocessableEntity},
 		{ErrInsufficientBalance, http.StatusUnprocessableEntity},
@@ -692,6 +700,7 @@ func TestHandler_CodeForError(t *testing.T) {
 	assert.Equal(t, "INSUFFICIENT_STOCK", codeForError(ErrInsufficientStock))
 	assert.Equal(t, "IDEMPOTENCY_KEY_REQUIRED", codeForError(ErrIdempotencyKeyRequired))
 	assert.Equal(t, "LOCK_TIMEOUT", codeForError(ErrLockTimeout))
+	assert.Equal(t, "INVALID_REQUEST", codeForError(ErrInvalidPagination))
 	assert.Equal(t, "INTERNAL_SERVER_ERROR", codeForError(errors.New("other")))
 }
 

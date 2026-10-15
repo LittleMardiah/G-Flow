@@ -811,12 +811,17 @@ func (h *Handler) GetFoodOrder(c *gin.Context) {
 
 // GetFoodOrderHistory GET /api/v1/food-orders?page=&page_size=
 // Auth: customer. Riwayat food order customer dengan pagination (urutan
-// terbaru; default page=1, page_size=20, maks 50).
+// terbaru; default page=1, page_size=20, maks 50). Query invalid → 400
+// INVALID_REQUEST (strict, align ride/send).
 func (h *Handler) GetFoodOrderHistory(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page")
+		return
+	}
 	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if err != nil {
-		writeError(c, http.StatusUnprocessableEntity, "INVALID_PAGE_SIZE", "invalid page_size")
+		writeError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid page_size")
 		return
 	}
 
@@ -987,7 +992,8 @@ func statusForError(err error) int {
 		errors.Is(err, ErrOrderNotReadyForAccept),
 		errors.Is(err, ErrLockTimeout):
 		return http.StatusConflict
-	case errors.Is(err, ErrInvalidStatus):
+	case errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrInvalidPagination):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrMerchantInactive),
 		errors.Is(err, ErrInvalidCoordinates),
@@ -1081,6 +1087,8 @@ func codeForError(err error) string {
 		return "INVALID_DELIVERY_ADDRESS"
 	case errors.Is(err, ErrInvalidStatus):
 		return "INVALID_STATUS"
+	case errors.Is(err, ErrInvalidPagination):
+		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidTransition):
 		return "INVALID_TRANSITION"
 	case errors.Is(err, ErrLockTimeout):

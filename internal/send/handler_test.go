@@ -218,6 +218,13 @@ func TestHandler_GetSendOrderHistory_Errors(t *testing.T) {
 	h4 := NewHandler(svc4)
 	h4.GetSendOrderHistory(c4)
 	assert.Equal(t, http.StatusNotFound, w4.Code)
+
+	svc5, c5, w5 := newSendHandlerCtx(t, http.MethodGet, "/api/v1/send-orders?page=0", "")
+	c5.Set("user_id", fCustID.String())
+	svc5.On("GetSendOrderHistory", mock.Anything, fCustID, 0, 20).Return(nil, 0, ErrInvalidPagination)
+	h5 := NewHandler(svc5)
+	h5.GetSendOrderHistory(c5)
+	assert.Equal(t, http.StatusBadRequest, w5.Code)
 }
 
 func TestHandler_UpdateSendOrderStatus(t *testing.T) {
@@ -390,6 +397,7 @@ func TestHandler_StatusForError(t *testing.T) {
 		{ErrStopsNotDelivered, http.StatusConflict},
 		{ErrInvalidStatus, http.StatusBadRequest},
 		{ErrInvalidStopStatus, http.StatusBadRequest},
+		{ErrInvalidPagination, http.StatusBadRequest},
 		{ErrCustomerInactive, http.StatusUnprocessableEntity},
 		{ErrOverdueDebt, http.StatusUnprocessableEntity},
 		{ErrWalletInactive, http.StatusUnprocessableEntity},
@@ -442,6 +450,7 @@ func TestHandler_CodeForError(t *testing.T) {
 		{ErrInvalidCachedResponse, "IDEMPOTENCY_INVALID_CACHE"},
 		{ErrInvalidStatus, "INVALID_STATUS"},
 		{ErrInvalidStopStatus, "INVALID_STOP_STATUS"},
+		{ErrInvalidPagination, "INVALID_REQUEST"},
 		{ErrInvalidTransition, "INVALID_TRANSITION"},
 		{ErrLockTimeout, "LOCK_TIMEOUT"},
 		{ErrDriverBusy, "DRIVER_BUSY"},

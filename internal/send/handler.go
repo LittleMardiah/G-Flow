@@ -371,7 +371,8 @@ func statusForError(err error) int {
 		errors.Is(err, ErrStopsNotDelivered):
 		return http.StatusConflict
 	case errors.Is(err, ErrInvalidStatus),
-		errors.Is(err, ErrInvalidStopStatus):
+		errors.Is(err, ErrInvalidStopStatus),
+		errors.Is(err, ErrInvalidPagination):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrCustomerInactive),
 		errors.Is(err, ErrOverdueDebt),
@@ -443,6 +444,8 @@ func codeForError(err error) string {
 		return "IDEMPOTENCY_INVALID_CACHE"
 	case errors.Is(err, ErrInvalidStatus):
 		return "INVALID_STATUS"
+	case errors.Is(err, ErrInvalidPagination):
+		return "INVALID_REQUEST"
 	case errors.Is(err, ErrInvalidStopStatus):
 		return "INVALID_STOP_STATUS"
 	case errors.Is(err, ErrInvalidTransition):

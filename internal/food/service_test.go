@@ -1484,7 +1484,7 @@ func TestGetFoodOrderHistory(t *testing.T) {
 	repo.On("CountFoodOrdersByCustomer", mock.Anything, fCustID).Return(2, nil)
 	repo.On("GetFoodOrdersByCustomer", mock.Anything, fCustID, 20, 0).Return([]*FoodOrder{fFoodOrder(foodStatusSettled, PaymentMethodWallet, nil)}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
-	orders, total, err := svc.GetFoodOrderHistory(context.Background(), fCustID, 0, 0)
+	orders, total, err := svc.GetFoodOrderHistory(context.Background(), fCustID, 1, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, total)
 	assert.Len(t, orders, 1)
@@ -1496,10 +1496,22 @@ func TestGetFoodOrderHistory_Paging(t *testing.T) {
 	repo.On("CountFoodOrdersByCustomer", mock.Anything, fCustID).Return(1, nil)
 	repo.On("GetFoodOrdersByCustomer", mock.Anything, fCustID, 20, 40).Return([]*FoodOrder{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
-	orders, total, err := svc.GetFoodOrderHistory(context.Background(), fCustID, 3, 0)
+	orders, total, err := svc.GetFoodOrderHistory(context.Background(), fCustID, 3, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Empty(t, orders)
+}
+
+func TestGetFoodOrderHistory_InvalidPagination(t *testing.T) {
+	repo := new(mockRepo)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	for _, tc := range []struct {
+		page     int
+		pageSize int
+	}{{0, 20}, {1, 0}, {1, 51}} {
+		_, _, err := svc.GetFoodOrderHistory(context.Background(), fCustID, tc.page, tc.pageSize)
+		assert.ErrorIs(t, err, ErrInvalidPagination)
+	}
 }
 
 func TestGetMerchantOrders_OwnerOK(t *testing.T) {
@@ -1590,10 +1602,22 @@ func TestGetMerchantOrders_Paging(t *testing.T) {
 	repo.On("GetFoodOrdersByMerchant", mock.Anything, fMerchID, "DELIVERED", 20, 40).Return([]*FoodOrder{}, nil)
 	repo.On("GetItemsByOrderIDs", mock.Anything, []uuid.UUID{}).Return(map[uuid.UUID][]*FoodOrderItem{}, nil)
 	svc := NewService(repo, nil, nil, new(mockLedger))
-	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "DELIVERED", 3, 0)
+	orders, total, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "DELIVERED", 3, 20)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Empty(t, orders)
+}
+
+func TestGetMerchantOrders_InvalidPagination(t *testing.T) {
+	repo := new(mockRepo)
+	svc := NewService(repo, nil, nil, new(mockLedger))
+	for _, tc := range []struct {
+		page     int
+		pageSize int
+	}{{0, 20}, {1, 0}, {1, 51}} {
+		_, _, err := svc.GetMerchantOrders(context.Background(), fCustID, fMerchID, "", tc.page, tc.pageSize)
+		assert.ErrorIs(t, err, ErrInvalidPagination)
+	}
 }
 
 // helper coverage

@@ -156,6 +156,7 @@ var (
 	ErrEmptyItems             = errors.New("order must contain at least one item")
 	ErrInvalidDeliveryAddress = errors.New("delivery address is required")
 	ErrInvalidStatus          = errors.New("invalid status value")
+	ErrInvalidPagination      = errors.New("invalid page or page_size")
 	ErrInvalidTransition      = errors.New("invalid status transition for current order state")
 	ErrNotAllowed             = errors.New("user is not allowed to access this order")
 	ErrDriverNotFound         = errors.New("driver not found or has no DRIVER wallet")
@@ -1924,11 +1925,8 @@ func (s *Service) GetFoodOrderItems(ctx context.Context, orderID uuid.UUID) ([]*
 // GetFoodOrderHistory mengembalikan riwayat order customer dengan pagination
 // (page mulai 1, page_size 1..50, default 20).
 func (s *Service) GetFoodOrderHistory(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]*FoodOrder, int, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 50 {
-		pageSize = 20
+	if page < 1 || pageSize < 1 || pageSize > 50 {
+		return nil, 0, ErrInvalidPagination
 	}
 	total, err := s.repo.CountFoodOrdersByCustomer(ctx, userID)
 	if err != nil {
@@ -1947,11 +1945,8 @@ func (s *Service) GetFoodOrderHistory(ctx context.Context, userID uuid.UUID, pag
 // bisa mengakses: merchant di-resolve dari userID (GetMerchantByUserID), lalu
 // merchantID di URL harus cocok — selain itu ErrNotMerchantOwner (403).
 func (s *Service) GetMerchantOrders(ctx context.Context, userID, merchantID uuid.UUID, status string, page, pageSize int) ([]*FoodOrder, int, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 50 {
-		pageSize = 20
+	if page < 1 || pageSize < 1 || pageSize > 50 {
+		return nil, 0, ErrInvalidPagination
 	}
 	merchant, err := s.repo.GetMerchantByUserID(ctx, userID)
 	if err != nil {

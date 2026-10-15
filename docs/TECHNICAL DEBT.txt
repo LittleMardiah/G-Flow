@@ -1751,7 +1751,7 @@ Solusi     : BUTUH KEPUTUSAN PRODUK dulu (breaking change):
              handler + service + test) + update E2E/API CONTRACT section
              pagination + mobile adjust. TIDAK 1 sesi (scope >2 file/modul).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S74 — strict 400 align food+send ke ride+wallet; food Atoi bug fixed; INVALID_PAGE_SIZE 422 removed)
 Referensi  : S31 CEK (premise koreksi), TD-077 C1 (temuan awal),
              R6 konsistensi, S26 (L-S26-01: cross-check test = source of truth)
 
@@ -4615,7 +4615,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
-                                       (94 FIXED + 58 CLOSED + 14 DEFERRED + 22 OPEN = 188)
+                                       (95 FIXED + 58 CLOSED + 14 DEFERRED + 21 OPEN = 188)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 94 item, 58 item CLOSED (FIXED/CLOSED 152), 14 item DEFERRED,
-        22 item OPEN.  [94 + 58 + 14 + 22 = 188 = TOTAL]
+STATUS: ✅ FIXED 95 item, 58 item CLOSED (FIXED/CLOSED 153), 14 item DEFERRED,
+        21 item OPEN.  [95 + 58 + 14 + 21 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S72 — TD-193 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S75 — TD-112 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 94 item
+   - ✅ FIXED                           : 95 item
    - CLOSED                             : 58 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 152 item
+   - FIXED/CLOSED                       : 153 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
    - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [94 + 58 + 14 + 22 = 188 = TOTAL]
+      [95 + 58 + 14 + 21 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9953,3 +9953,20 @@ CHANGELOG — 2026-10-16 (sesi S72, TD-193 FIXED — anon on ban):
 - Counter §2/§3 sync: 94F/58C/14D/22O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-193), OPEN -1, SEDANG -1.
 - Commit: belum (R10). User commit via PowerShell (S73).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S75, TD-112 FIXED — strict 400 pagination):
+- TD-112 (KODE/ARSITEKTUR) Status OPEN → ✅ FIXED. Align food+send ke
+  strict 400 (majority + API CONTRACT §4.2 "validate server-side"):
+  * food/service.go: clamp → strict ErrInvalidPagination (2 methods).
+  * food/handler.go: Atoi bug fixed (`page,_ := ...` → capture err);
+    422 INVALID_PAGE_SIZE removed → 400 INVALID_REQUEST.
+  * send/service.go + handler.go: clamp → strict + map sentinel.
+  * 4 test file updated (food/send service+handler).
+- Bukti: S74 CEK+fix, gofmt/build/vet RC=0, unit food+send PASS,
+  INVALID_PAGE_SIZE hits = 0, scope 4 production + 4 test files.
+- Decision roadmap-aware: TD-112 = fix (bukan register), align strict 400
+  (majority kode + API CONTRACT §4.2 > silent clamp).
+- Counter §2/§3 sync: 95F/58C/14D/21O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-112), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S76).

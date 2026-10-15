@@ -139,6 +139,7 @@ var (
 	ErrInvalidCachedResponse  = errors.New("cached idempotency response is invalid")
 	ErrNotAllowed             = errors.New("user is not allowed to access this order")
 	ErrInvalidStatus          = errors.New("invalid status value")
+	ErrInvalidPagination      = errors.New("invalid page or page_size")
 	ErrInvalidTransition      = errors.New("invalid status transition for current order state")
 	ErrDriverNotFound         = errors.New("driver not found or has no DRIVER wallet")
 
@@ -905,11 +906,8 @@ func (s *Service) GetSendOrder(ctx context.Context, orderID, userID uuid.UUID) (
 // GetSendOrderHistory mengembalikan riwayat send order milik sender dengan
 // pagination (page mulai 1, page_size 1..50, default 20), urut created_at DESC.
 func (s *Service) GetSendOrderHistory(ctx context.Context, senderID uuid.UUID, page, pageSize int) ([]*SendOrder, int, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 50 {
-		pageSize = 20
+	if page < 1 || pageSize < 1 || pageSize > 50 {
+		return nil, 0, ErrInvalidPagination
 	}
 	total, err := s.repo.CountSendOrdersBySender(ctx, senderID)
 	if err != nil {
