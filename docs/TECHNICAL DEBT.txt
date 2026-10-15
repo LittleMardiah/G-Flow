@@ -1386,7 +1386,7 @@ Dampak     : Scan gosec tidak menjadikan CI blocking — `-no-fail` membuat
 Solusi     : Hapus `-no-fail` di .github/workflows/ci.yml → gosec jadi blocking
              gate.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-15, sesi S54-S55 — gosec blocking + 2 #nosec false-positives)
 Note       : Split triage-v3: functional OWASP/BOLA suite + trivy/govulncheck
              DROP (fitur >8j non-blocker). Scope tinggal hapus -no-fail.
 Referensi  : audit_r04.log (GAP-13, GAP-20; usulan TD-074)
@@ -4615,7 +4615,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
-                                       (90 FIXED + 57 CLOSED + 14 DEFERRED + 25 OPEN = 186)
+                                       (91 FIXED + 57 CLOSED + 14 DEFERRED + 24 OPEN = 186)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 90 item, 57 item CLOSED (FIXED/CLOSED 147), 14 item DEFERRED,
-        25 item OPEN.  [90 + 57 + 14 + 25 = 186 = TOTAL]
+STATUS: ✅ FIXED 91 item, 57 item CLOSED (FIXED/CLOSED 148), 14 item DEFERRED,
+        24 item OPEN.  [91 + 57 + 14 + 24 = 186 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S52 — TD-149 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S56 — TD-095 FIXED):
    - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
-   - ✅ FIXED                           : 90 item
+   - ✅ FIXED                           : 91 item
    - CLOSED                             : 57 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 147 item
+   - FIXED/CLOSED                       : 148 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 25 item (sisa setelah sesi S52 = SEDANG 17 + RENDAH 8;
+   - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [90 + 57 + 14 + 25 = 186 = TOTAL]
+      [91 + 57 + 14 + 24 = 186 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9799,3 +9799,19 @@ CHANGELOG — 2026-10-15 (sesi S52, TD-149 FIXED — dead code food):
 - Counter §2/§3 sync: 90F/57C/14D/25O = 186 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-149), OPEN -1, RENDAH -1.
 - Commit: belum (R10). User commit via PowerShell (S53).
+
+========================================================================
+CHANGELOG — 2026-10-15 (sesi S56, TD-095 FIXED — gosec blocking):
+- TD-095 (SECURITY) Status OPEN → ✅ FIXED. Hapus `-no-fail` di gosec
+  step (.github/workflows/ci.yml:163) → gosec jadi blocking gate.
+- Suppress 2 false-positives via #nosec (bukan ubah logic):
+  * internal/db/retry.go:51 — G404 `#nosec G404 -- jitter for retry backoff, not security-critical`
+  * internal/admin/lockout.go:36 — G101 `#nosec G101 -- header name, not credential`
+- Bukti: `~/go/bin/gosec ./...` → Files 43, Lines 21247, **Issues: 0**,
+  exit 0 (blocking-ready).
+- Catatan: di sesi S54/S55 gosec PATH issue (`which gosec` fail) bikin
+  GATE-2 false-positive; verify §16.5 konfirmasi gosec binary ada di
+  `~/go/bin/gosec` + scan 0 issue.
+- Counter §2/§3 sync: 91F/57C/14D/24O = 186 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-095), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S57).

@@ -33,7 +33,7 @@ const (
 	lockoutKeyPrefix     = "admin:lockout:"
 	attemptKeyPrefix     = "admin:2fa_attempts:"
 	redisReadTimeout     = 200 * time.Millisecond
-	admin2FASecretHeader = "X-Admin-2FA-Token"
+	admin2FASecretHeader = "X-Admin-2FA-Token" // #nosec G101 -- header name, not credential
 )
 
 // defaultAdmin2FASecret adalah token 2FA statis untuk MVP (simulasi). Hanya

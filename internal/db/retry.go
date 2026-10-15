@@ -48,7 +48,7 @@ func ProcessWithRetry(ctx context.Context, fn func(ctx context.Context) error, i
 		// Backoff sebelum attempt berikutnya (kecuali attempt terakhir).
 		if i < maxAttempts-1 {
 			backoff := baseDelay * (1 << i)
-			jitter := time.Duration(rand.Int63n(int64(jitterMax)))
+			jitter := time.Duration(rand.Int63n(int64(jitterMax))) // #nosec G404 -- jitter for retry backoff, not security-critical
 			select {
 			case <-time.After(backoff + jitter):
 			case <-ctx.Done():
