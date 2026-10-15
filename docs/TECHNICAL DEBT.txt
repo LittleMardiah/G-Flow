@@ -1485,7 +1485,7 @@ Dampak     : Maintenance overhead + risiko divergensi logic.
 Solusi     : Ekstrak shared logic ATAU hapus method service,
              panggil via worker saja.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-15, sesi S44-S45 — Isu B worker refund formula + Isu A dead code removal, 243 LOC)
 Referensi  : TD-067 (commit ini)
 
 ID         : TD-104
@@ -4615,7 +4615,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
-                                       (87 FIXED + 57 CLOSED + 14 DEFERRED + 28 OPEN = 186)
+                                       (88 FIXED + 57 CLOSED + 14 DEFERRED + 27 OPEN = 186)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 186 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 87 item, 57 item CLOSED (FIXED/CLOSED 144), 14 item DEFERRED,
-        28 item OPEN.  [87 + 57 + 14 + 28 = 186 = TOTAL]
+STATUS: ✅ FIXED 88 item, 57 item CLOSED (FIXED/CLOSED 145), 14 item DEFERRED,
+        27 item OPEN.  [88 + 57 + 14 + 27 = 186 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S40 — TD-148 CLOSED NOT-REPRODUCIBLE):
+3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S46 — TD-103 FIXED Isu A+B):
    - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
-   - ✅ FIXED                           : 87 item
+   - ✅ FIXED                           : 88 item
    - CLOSED                             : 57 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 144 item
+   - FIXED/CLOSED                       : 145 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 28 item (sisa setelah sesi S40 = SEDANG 19 + RENDAH 9;
+   - ❌ OPEN                              : 27 item (sisa setelah sesi S46 = SEDANG 18 + RENDAH 9;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [87 + 57 + 14 + 28 = 186 = TOTAL]
+      [88 + 57 + 14 + 27 = 186 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9751,3 +9751,26 @@ CHANGELOG — 2026-10-15 (sesi S40, TD-148 CLOSED NOT-REPRODUCIBLE):
 - Counter §2/§3 sync: 87F/57C/14D/28O = 186 (TOTAL unchanged).
 - Delta register: CLOSED +1 (TD-148), OPEN -1, SEDANG -1.
 - Commit: belum (R10). User commit via PowerShell (S41).
+
+========================================================================
+CHANGELOG — 2026-10-15 (sesi S46, TD-103 FIXED — Isu A + Isu B):
+- TD-103 (ARSITEKTUR) Status OPEN → ✅ FIXED. Dua isu diselesaikan:
+  * Isu B (S44): worker.refundRideEscrow pakai EstimatedFare penuh, bukan
+    fareBasis (EstimatedFare - DiscountAmount). Escrow hold = fareBasis
+    (service.go:473, TD-070) → worker over-refund. Fix: types.go
+    +DiscountAmount; repository.go SELECT/scan; worker.go helper
+    rideRefundAmount mirror fareBasis + zero-skip guard; 15 test mock
+    updated + 1 integrasi baru. Mutation check non-vacuous (FAIL got=5000
+    di mutated state, PASS restored).
+  * Isu A (S45 v3): ride.Service.AutoCancelExpiredOrders = DEAD CODE
+    (0 production caller) + stale comment "cron/scheduler". Hapus menyeluruh:
+    service.go method + interface decl + repository.go
+    GetExpiredSearchingOrders + 4 service test + 1 integrasi + 1 repository
+    test = 5 file ride, 243 LOC deleted. Real path = worker.CancelRideOrders
+    (main.go:325).
+- Bukti: S42 CEK (premise), S43-STOP (divergence), S44 (Isu B fix), S45v3
+  (Isu A fix). GONE_OK grep ride scope (residual 2 komentar worker
+  out-of-scope).
+- Counter §2/§3 sync: 88F/57C/14D/27O = 186 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-103), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S47).

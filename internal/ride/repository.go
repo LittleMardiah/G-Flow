@@ -473,42 +473,10 @@ func (r *Repository) CountOrdersByCustomer(ctx context.Context, customerID uuid.
 // status (bukan hanya cancel), jadi memfilter is_settled di sini akan
 // mengubah error order SETTLED dari 409 (ErrInvalidTransition) jadi 404
 // (ErrOrderNotFound) pada PATCH status. Guard settlement ada di query
-// cancel/expired (GetExpiredSearchingOrders + CancelOrder) dan di worker
+// cancel (CancelOrder) dan di worker
 // (LockRideOrder), cukup untuk menutup jalur refund.
 func (r *Repository) LockOrderForUpdate(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error) {
 	return scanOrderRow(q.QueryRow(ctx, `SELECT `+rideOrderColumns+` FROM ride_orders WHERE id = $1 FOR UPDATE`, orderID))
-}
-
-// GetExpiredSearchingOrders mengembalikan ID order berstatus SEARCHING_DRIVER
-// yang sudah melewati expires_at (dipakai Auto-Cancel Worker). Partial index
-// idx_ride_expires mempercepat pencarian ini.
-//
-// Guard is_settled = FALSE (TD-107): order yang sudah settlement tidak pernah
-// di-cancel otomatis — mencegah refund escrow ke customer atas dana yang
-// sudah dibagi ke driver/platform (ride_orders tidak punya kolom
-// is_refunded, jadi guard-nya mirror LockSendOrder).
-func (r *Repository) GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT id FROM ride_orders
-		WHERE status = 'SEARCHING_DRIVER'
-		  AND is_settled = FALSE
-		  AND expires_at IS NOT NULL
-		  AND expires_at < NOW()
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 // CancelOrder menandai order CANCELLED + cancellation_reason secara atomik

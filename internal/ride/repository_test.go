@@ -431,22 +431,6 @@ func TestRepository_LockOrderForUpdate(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-func TestRepository_GetExpiredSearchingOrders(t *testing.T) {
-	mDB, err := pgxmock.NewPool()
-	assert.NoError(t, err)
-	// Guard is_settled = FALSE (TD-107) ikut diasersikan: order yang sudah
-	// settlement tidak boleh masuk daftar auto-cancel.
-	mDB.ExpectQuery("SELECT id FROM ride_orders WHERE status = 'SEARCHING_DRIVER' AND is_settled = FALSE").
-		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(repoOrderID))
-
-	repo := NewRepository(mDB)
-	ids, err := repo.GetExpiredSearchingOrders(context.Background())
-	assert.NoError(t, err)
-	assert.Len(t, ids, 1)
-	assert.Equal(t, repoOrderID, ids[0])
-	assert.NoError(t, mDB.ExpectationsWereMet())
-}
-
 func TestRepository_CancelOrder_True(t *testing.T) {
 	mDB, err := pgxmock.NewPool()
 	assert.NoError(t, err)

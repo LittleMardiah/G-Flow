@@ -251,7 +251,6 @@ type Repo interface {
 	LockOrderForUpdate(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error)
 	SetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) error
 	GetArrivedAt(ctx context.Context, q Querier, orderID uuid.UUID) (*time.Time, error)
-	GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, error)
 	CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error)
 	CompleteOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus string, actualFare, driverEarning, platformCommission decimal.Decimal) (bool, error)
 	MarkSettled(ctx context.Context, q Querier, orderID uuid.UUID) error
@@ -1456,78 +1455,6 @@ func (s *Service) refundCancellationFee(ctx context.Context, tx pgx.Tx, order *R
 			Description:   "RIDE_REFUND - refund customer minus cancellation fee",
 		},
 	})
-}
-
-// AutoCancelExpiredOrders (Auto-Cancel Worker) membatalkan order yang masih
-// SEARCHING_DRIVER dan sudah melewati expires_at (TTL 15 menit). Setiap order
-// ditangani dalam transaksi terpisah (lock FOR UPDATE → CANCELLED reason
-// EXPIRED → refund escrow → audit event). Mengembalikan jumlah order yang
-// berhasil di-cancel. Worker ini dipanggil by cron/scheduler; pada test
-// dipanggil manual.
-func (s *Service) AutoCancelExpiredOrders(ctx context.Context) (int, error) {
-	ids, err := s.repo.GetExpiredSearchingOrders(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	cancelled := 0
-	for _, id := range ids {
-		order, err := s.repo.GetOrderByID(ctx, id)
-		if err != nil {
-			continue
-		}
-		if order.Status != statusSearchingDriver {
-			continue
-		}
-
-		tx, err := s.db.Begin(ctx)
-		if err != nil {
-			return cancelled, err
-		}
-		txErr := func() error {
-			defer tx.Rollback(ctx)
-			if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3000ms'"); err != nil {
-				return err
-			}
-			locked, err := s.repo.LockOrderForUpdate(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if locked.Status != statusSearchingDriver {
-				return ErrInvalidTransition
-			}
-			ok, err := s.repo.CancelOrder(ctx, tx, id, statusSearchingDriver, reasonExpired, decimal.Zero)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return ErrInvalidTransition
-			}
-			if locked.PaymentMethod == PaymentMethodWallet {
-				if err := s.refundEscrow(ctx, tx, locked); err != nil {
-					return err
-				}
-			}
-			event := RideOrderEvent{
-				OrderID:    id,
-				FromStatus: &locked.Status,
-				ToStatus:   statusCancelled,
-				Reason:     stringPtr(reasonExpired),
-			}
-			if md, err := json.Marshal(map[string]string{"reason": reasonExpired}); err == nil {
-				event.Metadata = md
-			}
-			if err := s.repo.InsertEvent(ctx, tx, event); err != nil {
-				return err
-			}
-			return tx.Commit(ctx)
-		}()
-		if txErr != nil {
-			continue
-		}
-		cancelled++
-	}
-	return cancelled, nil
 }
 
 // ---- helpers transisi status ----

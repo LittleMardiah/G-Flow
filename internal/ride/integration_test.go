@@ -859,43 +859,6 @@ func TestIntegrationRide_DriverEmergencyCancel(t *testing.T) {
 	assertCancelEvent(t, e, ctx, orderID, "DRIVER_EMERGENCY")
 }
 
-// TC-INT-RD-007 — Auto-Cancel Worker: order SEARCHING_DRIVER yang melewati
-// expires_at (TTL 15 menit) dibatalkan dengan reason EXPIRED + refund.
-func TestIntegrationRide_AutoCancelExpired(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	ctx := context.Background()
-	e := newTestEnv(t)
-
-	custToken, custID := registerAndLogin(t, e.r, "customer")
-	custWallet := e.getWalletID(t, ctx, custID, "CUSTOMER")
-	topupCustomer(t, e, custToken, custWallet, "100000")
-	orderID, _ := bookRide(t, e, custToken, "WALLET")
-
-	// Paksa order kedaluwarsa (simulasi TTL 15 menit sudah lewat).
-	_, err := e.pool.Exec(ctx,
-		`UPDATE ride_orders SET expires_at = NOW() - INTERVAL '15 minutes' WHERE id = $1`, orderID)
-	require.NoError(t, err)
-
-	// Auto-cancel worker (seperti scheduler) — dipanggil manual di test.
-	svc := ride.NewService(ride.NewRepository(e.pool), wallet.NewLedgerService(e.pool), nil, e.pool)
-	cancelled, err := svc.AutoCancelExpiredOrders(ctx)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, cancelled, 1)
-
-	order := getOrder(t, e, ctx, orderID)
-	require.Equal(t, "CANCELLED", order.Status)
-	require.NotNil(t, order.CancellationReason)
-	require.Equal(t, "EXPIRED", *order.CancellationReason)
-
-	// Refund penuh escrow ke customer.
-	require.True(t, e.getBalance(t, ctx, custWallet).Equal(decimal.NewFromInt(100000)))
-
-	assertLedgerBalanced(t, e, ctx, orderID)
-	assertCancelEvent(t, e, ctx, orderID, "EXPIRED")
-}
-
 // TC-INT-RD-008 — Settlement CASH (COD): komisi platform 20% di-debit dari
 // wallet driver. Positif: balance masih ≥ -50.000 → driver tetap ACTIVE.
 // Negatif: balance menembus ceiling -50.000 → driver SUSPENDED.

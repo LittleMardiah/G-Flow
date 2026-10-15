@@ -154,11 +154,6 @@ func (m *mockRepo) LockOrderForUpdate(ctx context.Context, q Querier, orderID uu
 	return args.Get(0).(*RideOrder), args.Error(1)
 }
 
-func (m *mockRepo) GetExpiredSearchingOrders(ctx context.Context) ([]uuid.UUID, error) {
-	args := m.Called(ctx)
-	return args.Get(0).([]uuid.UUID), args.Error(1)
-}
-
 func (m *mockRepo) CancelOrder(ctx context.Context, q Querier, orderID uuid.UUID, fromStatus, reason string, fee decimal.Decimal) (bool, error) {
 	args := m.Called(ctx, q, orderID, fromStatus, reason, fee)
 	return args.Bool(0), args.Error(1)
@@ -2095,39 +2090,6 @@ func TestSettlement_CashPayment_BelowCeiling_Suspended(t *testing.T) {
 	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
-// Auto-Cancel Worker
-
-func TestAutoCancelExpiredOrders(t *testing.T) {
-	repo := new(mockRepo)
-	lgr := new(mockLedger)
-	mDB, err := pgxmock.NewPool()
-	assert.NoError(t, err)
-
-	order := svcOrder(statusSearchingDriver, PaymentMethodWallet, nil)
-	repo.On("GetExpiredSearchingOrders", mock.Anything).Return([]uuid.UUID{svcOrderID}, nil)
-	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(order, nil).Once()
-	repo.On("LockOrderForUpdate", mock.Anything, mock.Anything, svcOrderID).Return(order, nil)
-	repo.On("CancelOrder", mock.Anything, mock.Anything, svcOrderID, statusSearchingDriver, reasonExpired, decimal.Zero).Return(true, nil)
-	repo.On("SystemWalletID", mock.Anything, mock.Anything, WalletTypeSystemEscrow).Return(svcEscrowID, nil)
-	lgr.On("CreateLedgerEntries", mock.AnythingOfType("[]wallet.LedgerEntry")).Return(nil)
-	repo.On("InsertEvent", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	mDB.ExpectBegin()
-	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
-	mDB.ExpectCommit()
-
-	svc := NewService(repo, lgr, nil, mDB)
-	cancelled, err := svc.AutoCancelExpiredOrders(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, 1, cancelled)
-	repo.AssertExpectations(t)
-	lgr.AssertExpectations(t)
-	assert.NoError(t, mDB.ExpectationsWereMet())
-}
-
 // helpers
 
 func TestHaversineKm(t *testing.T) {
@@ -2623,52 +2585,6 @@ func TestSettlement_WalletPayment_SystemWalletErr(t *testing.T) {
 		OrderID: svcOrderID, UserID: svcDriverID, Status: statusCompleted, IdempotencyKey: idemKey,
 	})
 	assert.ErrorIs(t, err, ErrWalletNotFound)
-	repo.AssertExpectations(t)
-}
-
-func TestAutoCancel_NonSearchingSkip(t *testing.T) {
-	repo := new(mockRepo)
-	lgr := new(mockLedger)
-	mDB, _ := pgxmock.NewPool()
-
-	repo.On("GetExpiredSearchingOrders", mock.Anything).Return([]uuid.UUID{svcOrderID}, nil)
-	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(svcOrder(statusDriverAssigned, PaymentMethodWallet, nil), nil)
-
-	svc := NewService(repo, lgr, nil, mDB)
-	cancelled, err := svc.AutoCancelExpiredOrders(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, 0, cancelled)
-	repo.AssertExpectations(t)
-}
-
-func TestAutoCancel_GetOrderErrSkip(t *testing.T) {
-	repo := new(mockRepo)
-	lgr := new(mockLedger)
-	mDB, _ := pgxmock.NewPool()
-
-	repo.On("GetExpiredSearchingOrders", mock.Anything).Return([]uuid.UUID{svcOrderID}, nil)
-	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(nil, ErrOrderNotFound)
-
-	svc := NewService(repo, lgr, nil, mDB)
-	cancelled, err := svc.AutoCancelExpiredOrders(context.Background())
-	assert.NoError(t, err)
-	assert.Equal(t, 0, cancelled)
-	repo.AssertExpectations(t)
-}
-
-func TestAutoCancel_BeginErr(t *testing.T) {
-	repo := new(mockRepo)
-	lgr := new(mockLedger)
-	mDB, err := pgxmock.NewPool()
-	assert.NoError(t, err)
-
-	repo.On("GetExpiredSearchingOrders", mock.Anything).Return([]uuid.UUID{svcOrderID}, nil)
-	repo.On("GetOrderByID", mock.Anything, svcOrderID).Return(svcOrder(statusSearchingDriver, PaymentMethodWallet, nil), nil)
-	mDB.ExpectBegin().WillReturnError(errors.New("begin failed"))
-
-	svc := NewService(repo, lgr, nil, mDB)
-	_, err = svc.AutoCancelExpiredOrders(context.Background())
-	assert.EqualError(t, err, "begin failed")
 	repo.AssertExpectations(t)
 }
 
