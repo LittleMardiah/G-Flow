@@ -41,6 +41,8 @@ func Logger() gin.HandlerFunc {
 
 		c.Next()
 
+		observeStatus(c.Writer.Status())
+
 		attrs := []slog.Attr{
 			slog.String("request_id", reqID),
 			slog.String("method", c.Request.Method),

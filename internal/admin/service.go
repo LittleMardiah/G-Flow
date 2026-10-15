@@ -40,6 +40,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/g-flow/g-flow/internal/auth"
+	"github.com/g-flow/g-flow/internal/middleware"
 	"github.com/g-flow/g-flow/internal/wallet"
 )
 
@@ -605,8 +606,9 @@ type TransactionList struct {
 	Transactions []TransactionItem `json:"transactions"`
 }
 
-// GetDashboardKPIs merangkum KPI halaman dashboard admin. Error rate masih
-// stub 0.0 karena tracking error belum ada (TD-046).
+// GetDashboardKPIs merangkum KPI halaman dashboard admin. Error rate =
+// rasio response 5xx / total response pada window 24 jam dari counter
+// in-memory middleware (TD-046).
 func (s *Service) GetDashboardKPIs(ctx context.Context) (*DashboardKPIs, error) {
 	activeOrders, err := s.repo.CountActiveOrders(ctx)
 	if err != nil {
@@ -634,7 +636,7 @@ func (s *Service) GetDashboardKPIs(ctx context.Context) (*DashboardKPIs, error) 
 		TotalTransactionVolume: jsonDecimal(volume),
 		AvgFare:                jsonDecimal(avgFare),
 		RevenueToday:           jsonDecimal(revenue),
-		ErrorRate:              0.0,
+		ErrorRate:              middleware.GetErrorRate(),
 		OrderStatusBreakdown:   breakdown,
 	}, nil
 }
