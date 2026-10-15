@@ -242,7 +242,7 @@ func (r *Repository) ExpiredRideOrderIDs(ctx context.Context) ([]uuid.UUID, erro
 // ErrRideOrderNotFound jika order tidak ada / sudah settlement.
 func (r *Repository) LockRideOrder(ctx context.Context, q Querier, orderID uuid.UUID) (*RideOrder, error) {
 	return scanRideOrderRow(q.QueryRow(ctx, `
-		SELECT id, customer_wallet_id, payment_method, status, estimated_fare
+		SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount
 		FROM ride_orders WHERE id = $1 AND is_settled = FALSE FOR UPDATE NOWAIT
 	`, orderID))
 }
@@ -308,7 +308,7 @@ func scanSendOrderRow(row pgx.Row) (*SendOrder, error) {
 func scanRideOrderRow(row pgx.Row) (*RideOrder, error) {
 	var o RideOrder
 	err := row.Scan(
-		&o.ID, &o.CustomerWalletID, &o.PaymentMethod, &o.Status, &o.EstimatedFare,
+		&o.ID, &o.CustomerWalletID, &o.PaymentMethod, &o.Status, &o.EstimatedFare, &o.DiscountAmount,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRideOrderNotFound

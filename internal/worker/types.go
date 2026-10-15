@@ -105,6 +105,7 @@ type RideOrder struct {
 	PaymentMethod    string
 	Status           string
 	EstimatedFare    decimal.Decimal
+	DiscountAmount   *decimal.Decimal
 }
 
 // RideOrderEvent adalah baris tabel ride_order_events (audit trail).

@@ -142,10 +142,10 @@ func TestCancelRideOrders_WalletRefund(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
 		WithArgs(workerOrderID).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
-			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusSearchingDriver, workerFare))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare", "discount_amount"}).
+			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusSearchingDriver, workerFare, nil))
 	mDB.ExpectQuery("SELECT id FROM wallets WHERE wallet_type").
 		WithArgs("SYSTEM_ESCROW").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(workerEscrowID))
@@ -180,10 +180,10 @@ func TestCancelRideOrders_CashNoRefund(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount").
 		WithArgs(workerOrderID).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
-			AddRow(workerOrderID, &custWallet, "CASH", rideStatusSearchingDriver, workerFare))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare", "discount_amount"}).
+			AddRow(workerOrderID, &custWallet, "CASH", rideStatusSearchingDriver, workerFare, nil))
 	mDB.ExpectExec("UPDATE ride_orders").
 		WithArgs(workerOrderID, rideStatusSearchingDriver).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
@@ -210,10 +210,10 @@ func TestCancelRideOrders_AlreadyCancelled_Skip(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount").
 		WithArgs(workerOrderID).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
-			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusCancelled, workerFare))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare", "discount_amount"}).
+			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusCancelled, workerFare, nil))
 
 	got := w.CancelRideOrders(context.Background())
 
@@ -241,10 +241,10 @@ func expectRideTxOpen(mDB pgxmock.PgxPoolIface, id uuid.UUID, wallet any, paymen
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
 		WithArgs(id).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
-			AddRow(id, wallet, payment, status, fare))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare", "discount_amount"}).
+			AddRow(id, wallet, payment, status, fare, nil))
 }
 
 // expectRideOneOrder menggabungkan query ID expired (satu order) dengan
@@ -341,7 +341,7 @@ func TestCancelRideOrders_LockTimeout55P03_SkipThenContinue(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount").
 		WithArgs(workerOrderID).
 		WillReturnError(&pgconn.PgError{Code: "55P03"})
 	mDB.ExpectRollback()
@@ -372,7 +372,7 @@ func TestCancelRideOrders_LockGenericError_SkipsOrder(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount").
 		WithArgs(workerOrderID).
 		WillReturnError(&pgconn.PgError{Code: "57014", Message: "query canceled"})
 	mDB.ExpectRollback()
@@ -393,7 +393,7 @@ func TestCancelRideOrders_LockNoRows_SkipsOrder(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount").
 		WithArgs(workerOrderID).
 		WillReturnError(pgx.ErrNoRows)
 	mDB.ExpectRollback()
@@ -419,7 +419,7 @@ func TestCancelRideOrders_AlreadySettled_LockGuardSkipsOrder(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
 		WithArgs(workerOrderID).
 		WillReturnError(pgx.ErrNoRows)
 	mDB.ExpectRollback()
@@ -447,10 +447,10 @@ func TestCancelRideOrders_CancelCASGuard_NoRowChanged(t *testing.T) {
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount FROM ride_orders WHERE id = .* AND is_settled = FALSE FOR UPDATE NOWAIT").
 		WithArgs(workerOrderID).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare"}).
-			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusSearchingDriver, workerFare))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "estimated_fare", "discount_amount"}).
+			AddRow(workerOrderID, &custWallet, paymentMethodWallet, rideStatusSearchingDriver, workerFare, nil))
 	expectEscrowLookupAndWalletLock(mDB)
 	setupLedgerCapture(lgr)
 	// CAS cancel ditolak guard settlement → RowsAffected 0 → rollback penuh.
@@ -1382,7 +1382,7 @@ func TestCancelRideOrders_PartialFailure_ContinuesToRemainingOrders(t *testing.T
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
 		WillReturnResult(pgconn.NewCommandTag("SET"))
-	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare").
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, estimated_fare, discount_amount").
 		WithArgs(workerOrderID2).
 		WillReturnError(&pgconn.PgError{Code: "55P03"})
 	mDB.ExpectRollback()

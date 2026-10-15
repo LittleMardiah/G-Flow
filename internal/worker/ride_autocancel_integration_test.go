@@ -242,6 +242,113 @@ func TestIntegrationWorker_AutoCancelRideExpiredIdempotent(t *testing.T) {
 	require.Equal(t, 2, refunds, "tepat 2 entri RIDE_REFUND (1 DEBIT escrow + 1 CREDIT customer)")
 }
 
+// seedExpiredRideOrderDiscounted membuat ride order WALLET berstatus
+// SEARCHING_DRIVER yang sudah lewat expires_at DENGAN diskon voucher (TD-070):
+// escrow yang ditahan = estimated_fare - discount_amount, bukan estimated_fare
+// penuh. Meniru Booking yang menahan hanya fare basis di SYSTEM_ESCROW.
+func seedExpiredRideOrderDiscounted(t *testing.T, pool *pgxpool.Pool, fare, discount decimal.Decimal) (orderID, walletID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+
+	email := "td103" + uuid.NewString() + "@test.com"
+	var userID uuid.UUID
+	require.NoError(t, pool.QueryRow(ctx, `
+		INSERT INTO users (email, password_hash, name, user_type, status)
+		VALUES ($1, 'x', 'TD-103 Customer', 'customer', 'ACTIVE')
+		RETURNING id`, email).Scan(&userID))
+	require.NoError(t, pool.QueryRow(ctx, `
+		INSERT INTO wallets (user_id, wallet_type, balance, status)
+		VALUES ($1, 'CUSTOMER', 0, 'ACTIVE') RETURNING id`, userID).Scan(&walletID))
+
+	orderID = uuid.New()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO ride_orders
+			(id, customer_id, customer_wallet_id, payment_method, status,
+			 pickup_lat, pickup_lng, pickup_address,
+			 dropoff_lat, dropoff_lng, dropoff_address,
+			 estimated_fare, discount_amount, base_fare, per_km_rate,
+			 expires_at, created_at)
+		VALUES ($1, $2, $3, 'WALLET', 'SEARCHING_DRIVER',
+			-6.20000000, 106.81666667, 'Jl. Test Pickup',
+			-6.17500000, 106.82722222, 'Jl. Test Dropoff',
+			$4, $5, 10000, 4000, NOW() - INTERVAL '15 minutes', NOW() - INTERVAL '20 minutes')`,
+		orderID, userID, walletID, fare, discount)
+	require.NoError(t, err)
+
+	// Escrow hanya menahan fare basis (fare - discount), sesuai TD-070.
+	hold := fare.Sub(discount)
+	escrowID := systemWalletIDOf(t, pool, "SYSTEM_ESCROW")
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx) // no-op setelah Commit
+	require.NoError(t, wallet.NewLedgerService(pool).CreateLedgerEntries(ctx, tx, []wallet.LedgerEntry{
+		{WalletID: walletID, EntryType: wallet.EntryDebit, Amount: hold,
+			ReferenceID: orderID, ReferenceType: "RIDE_ESCROW",
+			Description: "TD-103 seed: fare basis ditahan di escrow"},
+		{WalletID: escrowID, EntryType: wallet.EntryCredit, Amount: hold,
+			ReferenceID: orderID, ReferenceType: "RIDE_ESCROW",
+			Description: "TD-103 seed: escrow menerima fare basis"},
+	}))
+	require.NoError(t, tx.Commit(ctx))
+	return orderID, walletID
+}
+
+// TestIntegrationWorker_AutoCancelRideExpired_DiscountedRefund (TD-103/Isu B) —
+// refund escrow ride WAJIB memakai fare basis (estimated_fare - discount_amount),
+// bukan estimated_fare penuh. Order voucher 5.000 dari fare 20.000 hanya menahan
+// 15.000 di escrow; auto-cancel harus mengembalikan 15.000 — bukan 20.000 (yang
+// membuat saldo customer surplus 5.000 dan escrow minus).
+func TestIntegrationWorker_AutoCancelRideExpired_DiscountedRefund(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	pool := setupWorkerPool(t)
+
+	fare := decimal.NewFromInt(20000)
+	discount := decimal.NewFromInt(5000)
+	hold := fare.Sub(discount)
+	orderID, custWallet := seedExpiredRideOrderDiscounted(t, pool, fare, discount)
+
+	// Sanity: yang ditahan hanya fare basis, bukan fare penuh.
+	require.True(t, walletBalance(t, pool, custWallet).Equal(hold.Neg()),
+		"hanya fare basis yang boleh ditahan: got=%s want=%s",
+		walletBalance(t, pool, custWallet), hold.Neg())
+
+	w := newIntegrationWorker(t, pool)
+	require.GreaterOrEqual(t, w.CancelRideOrders(ctx), 1, "order expired harus ter-cancel")
+
+	// Refund fare basis tepat -> saldo customer kembali 0. Kalau bug (refund
+	// estimated_fare penuh), saldo jadi +discount.
+	got := walletBalance(t, pool, custWallet)
+	require.True(t, got.IsZero(),
+		"refund harus fare basis: saldo harus 0, got=%s (refund penuh -> +%s)", got, discount)
+
+	// Ledger RIDE_REFUND: tepat 2 entri, total CREDIT = fare basis (bukan penuh).
+	var debits, credits int
+	var creditTotal decimal.Decimal
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE entry_type='DEBIT'),
+			count(*) FILTER (WHERE entry_type='CREDIT'),
+			COALESCE(sum(amount) FILTER (WHERE entry_type='CREDIT'), 0)
+		FROM ledger_entries
+		WHERE reference_id = $1 AND reference_type = 'RIDE_REFUND'`, orderID).
+		Scan(&debits, &credits, &creditTotal))
+	require.Equal(t, 1, debits, "tepat 1 DEBIT dari escrow")
+	require.Equal(t, 1, credits, "tepat 1 CREDIT ke customer")
+	require.True(t, creditTotal.Equal(hold),
+		"RIDE_REFUND harus fare basis %s, got %s", hold, creditTotal)
+
+	// Order tetap CANCELLED/EXPIRED.
+	var status, reason string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT status, cancellation_reason FROM ride_orders WHERE id = $1`, orderID).
+		Scan(&status, &reason))
+	require.Equal(t, "CANCELLED", status)
+	require.Equal(t, "EXPIRED", reason)
+}
+
 // testRedisURL mengembalikan REDIS_URL dari env (untuk CI), fallback ke
 // port dev lokal 6380. TD-167: env-driven supaya CI (Redis:6379) dan
 // dev lokal (Redis:6380) sama-sama jalan.

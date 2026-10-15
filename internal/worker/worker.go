@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 )
 
 // Redis adalah subset operasi Redis yang dipakai Worker untuk distributed
@@ -471,12 +472,31 @@ func (w *Worker) cancelOneRideOrder(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// refundRideEscrow mengembalikan dana escrow penuh (RIDE_REFUND) ke customer
-// wallet untuk ride order WALLET yang di-cancel. Lock wallets ORDER BY id ASC
-// (deadlock-free, sesuai Mandat Lock Hierarchy).
+// rideRefundAmount menghitung besar refund escrow ride setelah diskon voucher
+// (TD-070): estimated_fare - discount_amount, minimal 0. Selaras dengan
+// ride.fareBasis di service layer; tanpa voucher sama dengan estimated_fare.
+func rideRefundAmount(order *RideOrder) decimal.Decimal {
+	amount := order.EstimatedFare
+	if order.DiscountAmount != nil && order.DiscountAmount.IsPositive() {
+		amount = amount.Sub(*order.DiscountAmount)
+	}
+	if amount.IsNegative() {
+		return decimal.Zero
+	}
+	return amount
+}
+
+// refundRideEscrow mengembalikan dana escrow sesuai fare basis (estimated_fare
+// - discount_amount, TD-070) ke customer wallet untuk ride order WALLET yang
+// di-cancel. No-op kalau tidak ada dana escrow (basis 0). Lock wallets ORDER BY
+// id ASC (deadlock-free, sesuai Mandat Lock Hierarchy).
 func (w *Worker) refundRideEscrow(ctx context.Context, tx pgx.Tx, order *RideOrder) error {
 	if order.CustomerWalletID == nil {
 		return ErrWalletNotFound
+	}
+	amount := rideRefundAmount(order)
+	if !amount.IsPositive() {
+		return nil
 	}
 	escrowID, err := w.repo.SystemWalletID(ctx, tx, "SYSTEM_ESCROW")
 	if err != nil {
@@ -489,7 +509,7 @@ func (w *Worker) refundRideEscrow(ctx context.Context, tx pgx.Tx, order *RideOrd
 		{
 			WalletID:      escrowID,
 			EntryType:     wallet.EntryDebit,
-			Amount:        order.EstimatedFare,
+			Amount:        amount,
 			ReferenceID:   order.ID,
 			ReferenceType: referenceTypeRideRefund,
 			Description:   "RIDE_REFUND - escrow release to customer (auto-cancel EXPIRED)",
@@ -497,10 +517,10 @@ func (w *Worker) refundRideEscrow(ctx context.Context, tx pgx.Tx, order *RideOrd
 		{
 			WalletID:      *order.CustomerWalletID,
 			EntryType:     wallet.EntryCredit,
-			Amount:        order.EstimatedFare,
+			Amount:        amount,
 			ReferenceID:   order.ID,
 			ReferenceType: referenceTypeRideRefund,
-			Description:   "RIDE_REFUND - full refund customer wallet (auto-cancel EXPIRED)",
+			Description:   "RIDE_REFUND - fare basis refund customer wallet (auto-cancel EXPIRED)",
 		},
 	})
 }
@@ -526,7 +546,7 @@ func (w *Worker) purgeIdempotencyCache(ctx context.Context) int {
 	return int(tag.RowsAffected())
 }
 
-// 
+//
 
 // lockWalletsAsc mengunci sejumlah wallet dengan urutan id menaik dalam satu
 // statement. ORDER BY id ASC menghindari deadlock antar transaksi.
