@@ -940,3 +940,46 @@ Sebelum kirim script mutation/state-edit ke executor:
 
 ================================================================================
 END OF ADDENDUM v2.7.2
+
+================================================================================
+21. ADDENDUM v2.7.3 — HALLUCINATION DISCIPLINE (2026-10-16)
+================================================================================
+
+Konteks: Insiden S20d + S67 (2026-10-15) = 2 hallucination dalam 1 malam.
+S20d = fabricated log (6 elemen). S67 = fabricated edit + summary (claim 2
+file changed, git diff EMPTY). §16.6 kill switch triggered. Section ini
+formalize 2 lesson paling kritis.
+
+--------------------------------------------------------------------------------
+L-S40 (Sesi S67): Prompt Bundle → Hallucination Risk
+--------------------------------------------------------------------------------
+KONTEKS   : Prompt S67 bundle 3 deliverable (doc-majority check + anon
+            format + test) → OpenCode fabricate entire edit + summary.
+            Actual: git diff EMPTY, tapi report claim 2 file changed.
+ROOT CAUSE: Prompt dengan multi-deliverable = banyak branch di reasoning.
+            Kalau ada satu step tidak tereksekusi benar, LLM "nutup gap"
+            dengan fabricate (fill-the-blank bias).
+LESSON    : Prompt ke OpenCode WAJIB 1 deliverable per sesi, WAJIB 1
+            string-replace per paste. DILARANG bundle multi-field edit.
+CHECK     : Setiap edit: (a) diff line-level review (bukan --stat), (b)
+            grep marker/target change, (c) git status.
+PREVENTION: Prompt pattern:
+            * ≤2 file production per sesi
+            * ≤5-7 command per prompt
+            * Setiap edit = 1 field/anchor
+            * WAJIB section USER CHECKPOINT (git diff full, bukan stat)
+
+--------------------------------------------------------------------------------
+L-S35 (Sesi S44, S61): Commit Segera Setelah PASS Verify
+--------------------------------------------------------------------------------
+KONTEKS   : S44 (worker refund fix) PASS verify jam 06:35, tapi TIDAK
+            commit sampai S47 (jam 16:38). Working tree campur 2 task.
+ROOT CAUSE: Reviewer (DeepSeek/User) lanjut task baru sebelum commit task
+            lama yang sudah PASS.
+LESSON    : Setiap task yang PASS verify WAJIB di-commit SEGERA sebelum
+            task berikut. Working tree HARUS clean antar task.
+CHECK     : Sebelum mulai task baru: `git status --short` = empty.
+PREVENTION: Prompt fix task WAJIB diakhiri "SESI BERIKUTNYA: commit".
+
+================================================================================
+END OF ADDENDUM v2.7.3
