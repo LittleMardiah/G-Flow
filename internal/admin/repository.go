@@ -705,19 +705,30 @@ func (r *Repository) UpdateUserStatus(ctx context.Context, tx pgx.Tx, userID uui
 	// TD-053: aksi ban dipetakan ke status DELETED -> soft-delete. Isi
 	// deleted_at agar akun tercatat terhapus lunak (dasar retensi/purge UU PDP,
 	// ROADMAP 4.1.7). Aksi lain (freeze/suspend/unfreeze) tidak menyentuh kolom.
-	softDelete := ""
+	// TD-053 + TD-193: ban (DELETED) = soft-delete + anonymization
+	// (SECURITY SPEC 10.1 — 3:1 majority vs ROADMAP 4.1.7). Format email
+	// deleted_<uuid>@deleted.gflow.com (UNIQUE karena id unik).
+	// Unfreeze (non-DELETED) clear deleted_at saja (S62 fix).
+	var sql string
 	if status == "DELETED" {
-		softDelete = ", deleted_at = NOW()"
+		sql = `UPDATE users SET
+			status = $1,
+			updated_at = NOW(),
+			deleted_at = NOW(),
+			email = 'deleted_' || id::text || '@deleted.gflow.com',
+			phone = NULL,
+			name = 'Deleted User'
+			WHERE id = $2
+			RETURNING updated_at`
 	} else {
-		// TD-053 unfreeze-stale fix: non-DELETED (mis. unfreeze → ACTIVE)
-		// WAJIB clear deleted_at, otherwise driver/repository.go:192
-		// (`WHERE deleted_at IS NULL`) tetap exclude user.
-		softDelete = ", deleted_at = NULL"
+		sql = `UPDATE users SET
+			status = $1,
+			updated_at = NOW(),
+			deleted_at = NULL
+			WHERE id = $2
+			RETURNING updated_at`
 	}
-	err := tx.QueryRow(ctx, `
-		UPDATE users SET status = $1, updated_at = NOW()`+softDelete+` WHERE id = $2
-		RETURNING updated_at
-	`, status, userID).Scan(&updatedAt)
+	err := tx.QueryRow(ctx, sql, status, userID).Scan(&updatedAt)
 	return updatedAt, err
 }
 

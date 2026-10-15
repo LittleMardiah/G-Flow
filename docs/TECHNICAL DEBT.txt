@@ -4614,8 +4614,8 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 2. RINGKASAN
 ================================================================================
 
-TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 187 item (TD-051 di-reserve/skip)
-                                       (93 FIXED + 57 CLOSED + 14 DEFERRED + 23 OPEN = 187)
+TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
+                                       (94 FIXED + 58 CLOSED + 14 DEFERRED + 22 OPEN = 188)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 187 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 93 item, 57 item CLOSED (FIXED/CLOSED 150), 14 item DEFERRED,
-        23 item OPEN.  [93 + 57 + 14 + 23 = 187 = TOTAL]
+STATUS: ✅ FIXED 94 item, 58 item CLOSED (FIXED/CLOSED 152), 14 item DEFERRED,
+        22 item OPEN.  [94 + 58 + 14 + 22 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S65 — TD-046 FIXED):
-   - Total hutang teridentifikasi      : 187 item (TD-051 di-reserve/skip; 187 item aktif terdaftar).
-   - ✅ FIXED                           : 93 item
-   - CLOSED                             : 57 item (9 lama TD-011 s/d TD-019 + 5 via triage
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S72 — TD-193 FIXED):
+   - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
+   - ✅ FIXED                           : 94 item
+   - CLOSED                             : 58 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 150 item
+   - FIXED/CLOSED                       : 152 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
    - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [93 + 57 + 14 + 23 = 187 = TOTAL]
+      [94 + 58 + 14 + 22 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9842,7 +9842,7 @@ Solusi     : (a) USER putuskan format anon (`.internal` vs `.com`, phone
              kolom? per-user aggregate?). Setelah decision: implementasi
              di internal/admin + test + possibly migration guard.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S70 — anonymization: email deleted_<uuid>@deleted.gflow.com, phone NULL, name 'Deleted User' saat ban (SECURITY SPEC 10.1 3:1 majority); guard pending_escrow undefined — butuh product decision, defer via Note)
 Referensi  : S61 + S62 CEK, TD-053 (parent, FIXED partial),
              ROADMAP 4.1.7, SECURITY SPEC 10.1, STP TC-012
 
@@ -9879,6 +9879,35 @@ CHANGELOG — 2026-10-15 (sesi S62, TD-053 FIXED + TD-193 register):
 - Delta register: FIXED +1 (TD-053), TOTAL +1 (TD-193), OPEN net 0.
 - Commit: belum (R10). User commit via PowerShell (S63).
 
+ID         : TD-194
+Kategori   : INCIDENT / RELIABILITY
+Judul      : OpenCode hallucination S67 — fabricated edit + summary (claim
+             2 file changed, git diff EMPTY). §16.6 kill switch triggered
+             (2nd incident same night: S20d + S67).
+Bukti      : (a) S67 log claim "Edits applied" + "ANON FORMAT USED: email
+             deleted_{id}@deleted.gflow.com, phone NULL, name 'Deleted
+             User'" + git diff --stat "2 file changed". (b) §16.5 User
+             Checkpoint (2026-10-15 21:38 WIB): git status EMPTY, git diff
+             EMPTY, HEAD = ed9bf00 (S66). Zero changes made. (c) Claim
+             "current code sets name='' at line 708" FALSE — line 708 =
+             comment, no `name=` in UpdateUserStatus. (d) 2nd hallucination
+             same night (1st = S20d fabricated log 6 elemen).
+Dampak     : Trust breaker. §16.5 mitigation prevented commit of
+             hallucinated diff. Zero damage (working tree clean), tapi
+             pattern = escalate jika tidak ada discipline.
+Solusi     : ✅ MITIGATED via Section 21 v2.7.3 (TEAM_CONTRACT.txt L945-985):
+             * L-S40: prompt 1 deliverable per sesi + 1 string-replace per
+               paste. DILARANG bundle multi-field edit.
+             * L-S35: commit segera setelah PASS verify.
+             * §16.5 User Checkpoint WAJIB (git diff full, bukan --stat)
+               setelah setiap OpenCode report.
+             * §16.6 kill switch: reset session + prompt kecil.
+Prioritas  : TINGGI
+Status     : ✅ CLOSED (2026-10-16, sesi S68 — mitigasi Section 21 L-S40 +
+             §16.5 checkpoint enforced; root cause = prompt bundle →
+             formalized as prevention)
+Referensi  : S20d (TD-190, 1st hallucination), S67 (2nd), §16.6, Section 21
+
 ========================================================================
 CHANGELOG — 2026-10-15 (sesi S65, TD-046 FIXED — error_rate KPI):
 - TD-046 (KODE) Status OPEN → ✅ FIXED. Implementasi in-memory counter
@@ -9897,3 +9926,30 @@ CHANGELOG — 2026-10-15 (sesi S65, TD-046 FIXED — error_rate KPI):
 - Counter §2/§3 sync: 93F/57C/14D/23O = 187 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-046), OPEN -1, RENDAH -1.
 - Commit: belum (R10). User commit via PowerShell (S66).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S68, Section 21 v2.7.3 + TD-194 CLOSED):
+- Section 21 v2.7.3 added to TEAM_CONTRACT.txt (L945-985): L-S40 (prompt
+  bundle → hallucination risk) + L-S35 (commit segera setelah PASS).
+- TD-194 entry BARU (INCIDENT/RELIABILITY, TINGGI) Status langsung ✅ CLOSED
+  (mitigasi Section 21 L-S40 + §16.5 checkpoint enforced). Root cause =
+  prompt bundle → formalized as prevention.
+- Counter §2/§3 sync: 93F/58C/14D/23O = 188 (TOTAL +1 TD-194).
+- Delta register: CLOSED +1 (TD-194), TOTAL +1, OPEN net 0.
+- Commit: belum (R10). User commit via PowerShell (S69).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S72, TD-193 FIXED — anon on ban):
+- TD-193 (SECURITY/COMPLIANCE) Status OPEN → ✅ FIXED. Anonymization
+  saat ban (status DELETED) di repository.go UpdateUserStatus:
+  * email = 'deleted_' || id::text || '@deleted.gflow.com'
+  * phone = NULL
+  * name = 'Deleted User'
+  Per SECURITY SPEC 10.1 (3:1 majority vs ROADMAP 4.1.7 minority).
+- Sub-item guard `pending_escrow` DEFERRED via Note (undefined di
+  code/schema, butuh product decision).
+- Bukti: S70 WSL manual edit (deterministic string replace, no OpenCode
+  per L-S40); gofmt/build/vet/unit admin RC=0.
+- Counter §2/§3 sync: 94F/58C/14D/22O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-193), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S73).
