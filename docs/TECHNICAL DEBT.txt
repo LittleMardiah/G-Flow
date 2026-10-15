@@ -4615,7 +4615,7 @@ Referensi  : E2E 2026-10-08 (temuan di luar scope demo prep, R8), API
 ================================================================================
 
 TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
-                                       (95 FIXED + 58 CLOSED + 14 DEFERRED + 21 OPEN = 188)
+                                       (95 FIXED + 59 CLOSED + 14 DEFERRED + 20 OPEN = 188)
 - KRITIS  : 8 item  (TD-001, TD-002, TD-023, TD-067, TD-077, TD-087, TD-089, TD-120)
 - TINGGI  : 42 item (TD-003 s/d TD-010, TD-020, TD-024, TD-025, TD-027,
             TD-030, TD-049, TD-050, TD-058, TD-059, TD-060, TD-061,
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 95 item, 58 item CLOSED (FIXED/CLOSED 153), 14 item DEFERRED,
-        21 item OPEN.  [95 + 58 + 14 + 21 = 188 = TOTAL]
+STATUS: ✅ FIXED 95 item, 59 item CLOSED (FIXED/CLOSED 154), 14 item DEFERRED,
+        20 item OPEN.  [95 + 59 + 14 + 20 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S75 — TD-112 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S79 — TD-185 CLOSED WONTFIX):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
    - ✅ FIXED                           : 95 item
-   - CLOSED                             : 58 item (9 lama TD-011 s/d TD-019 + 5 via triage
+   - CLOSED                             : 59 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 153 item
+   - FIXED/CLOSED                       : 154 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
    - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [95 + 58 + 14 + 21 = 188 = TOTAL]
+      [95 + 59 + 14 + 20 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9375,7 +9375,7 @@ Solusi     : (a) Keputusan produk: single-order atau multi-order?
                constraint by design.
              (b) Implementasi + test concurrency lintas modul.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ CLOSED — WONTFIX (2026-10-16, sesi S78 — MVP decision single-order per ROADMAP 02 §2.3; multi-order = roadmap future via Phase 3 §3.10, tracked via test contract TestIntegrationSend_TC_SEND_003. Note: bukan dead code — implementasi gap Phase 3. Guard IDLE global dipertahankan sebagai MVP simplification.)
 Referensi  : S19a CEK (reframe TD-122 CLOSED), food/service.go:80,
              send/service.go:83, ride/service.go:627/653
 
@@ -9970,3 +9970,17 @@ CHANGELOG — 2026-10-16 (sesi S75, TD-112 FIXED — strict 400 pagination):
 - Counter §2/§3 sync: 95F/58C/14D/21O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-112), OPEN -1, SEDANG -1.
 - Commit: belum (R10). User commit via PowerShell (S76).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S79, TD-185 CLOSED WONTFIX):
+- TD-185 (ARSITEKTUR) Status OPEN → ✅ CLOSED (WONTFIX-documented).
+  Keputusan roadmap-aware: MVP = single-order via working_status guard
+  IDLE global (ROADMAP 02 §2.3). Multi-order = roadmap future (Phase 3
+  §3.10), tracked via test contract TestIntegrationSend_TC_SEND_003
+  (422 DRIVER_CAPACITY_EXCEEDED reachable via setDriverIdle helper).
+- S77 CEK koreksi premise: BUKAN dead code — implementasi gap Phase 3.
+  Prompt S77 salah grep (`driverMaxActiveOrders` vs actual
+  `driverMaxActiveFoodOrders`) + miss `TC_SEND_003` contract test.
+- Counter §2/§3 sync: 95F/59C/14D/20O = 188 (TOTAL unchanged).
+- Delta register: CLOSED +1 (TD-185), OPEN -1, SEDANG -1.
+- Commit: belum (R10). User commit via PowerShell (S80).
