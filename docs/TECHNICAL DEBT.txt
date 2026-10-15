@@ -630,7 +630,7 @@ Judul      : Aksi `ban` tidak set kolom deleted_at (soft-delete).
              (ROADMAP 4.1) belum jalan.
 Solusi     : implement soft-delete lengkap saat hardening.
 Prioritas  : SEDANG
-Status     : ✅ FIXED (2026-10-09, sesi TD-054)
+Status     : OPEN — REVERTED (over-replace a8ac9ee flip baris 633; code deleted_at = 0 hit di admin, soft-delete belum dikerjakan. Fix register di S59 per S58 CEK.)
 
 ID         : TD-054
 Kategori   : SECURITY
@@ -669,7 +669,7 @@ Note       : Fixed di sesi TD-054 (2026-10-09). UpdateUserStatus handler
 
 
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-09, commit a8ac9ee — register stale, di-close di S59)
 
 ID         : TD-055
 Kategori   : KODE
@@ -5250,7 +5250,7 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S56 — TD-095 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-15, sesi S59 — register fix TD-053/054 net zero):
    - Total hutang teridentifikasi      : 186 item (TD-051 di-reserve/skip; 186 item aktif terdaftar).
    - ✅ FIXED                           : 91 item
    - CLOSED                             : 57 item (9 lama TD-011 s/d TD-019 + 5 via triage
@@ -9815,3 +9815,19 @@ CHANGELOG — 2026-10-15 (sesi S56, TD-095 FIXED — gosec blocking):
 - Counter §2/§3 sync: 91F/57C/14D/24O = 186 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-095), OPEN -1, SEDANG -1.
 - Commit: belum (R10). User commit via PowerShell (S57).
+
+========================================================================
+CHANGELOG — 2026-10-15 (sesi S59, register fix TD-053/054 net zero):
+- S58 CEK menemukan 2 bug register:
+  * TD-054: register `OPEN` padahal code FIXED via commit a8ac9ee
+    (2026-10-09, handler.go:607-625 enforce 2FA + lockout; 3 test PASS:
+    TestHandler_UpdateUserStatus_{RequireTwoFA,InvalidTwoFA,Lockout}).
+    → Status di-update: OPEN → ✅ FIXED.
+  * TD-053: register `✅ FIXED (2026-10-09, sesi TD-054)` = FALSE.
+    Commit a8ac9ee flip baris 633 (TD-053) bukan 672 (TD-054) → over-
+    replace. Code: grep deleted_at di internal/admin = 0 hit → soft-delete
+    belum dikerjakan. → Status di-revert: ✅ FIXED → OPEN.
+- Counter §2/§3 TIDAK berubah (net zero: TD-054 +1F -1O, TD-053 -1F +1O):
+  91F/57C/14D/24O = 186.
+- Bukti: S58 CEK (raw), commit 74edaa6 vs a8ac9ee verify, git blame L672.
+- Commit: belum (R10). User commit via PowerShell (S60).
