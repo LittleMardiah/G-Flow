@@ -26,7 +26,7 @@ function statusVariant(status: UserStatus): "green" | "amber" | "red" | "gray" {
       return "amber";
     case "SUSPENDED":
       return "amber";
-    case "BANNED":
+    case "DELETED":
       return "red";
     default:
       return "gray";
@@ -94,7 +94,7 @@ export function UsersClient() {
               <option value="ACTIVE">ACTIVE</option>
               <option value="FROZEN">FROZEN</option>
               <option value="SUSPENDED">SUSPENDED</option>
-              <option value="BANNED">BANNED</option>
+              <option value="DELETED">DELETED</option>
             </Select>
             <Input
               value={filters.search}
@@ -319,7 +319,7 @@ function statusFromAction(
     case "suspend":
       return "SUSPENDED";
     case "ban":
-      return "BANNED";
+      return "DELETED";
     case "unfreeze":
       return "ACTIVE";
   }

@@ -55,7 +55,7 @@ export interface BalanceVerification {
 }
 
 export type UserRole = "CUSTOMER" | "DRIVER" | "MERCHANT" | "ADMIN";
-export type UserStatus = "ACTIVE" | "FROZEN" | "SUSPENDED" | "BANNED";
+export type UserStatus = "ACTIVE" | "FROZEN" | "SUSPENDED" | "DELETED";
 
 export interface AdminUser {
   id: string;
