@@ -2820,7 +2820,7 @@ Solusi     : Fallback display (address atau "Penerima N") kalau nama null.
              send_tracking_screen.dart:307) atau getter displayName baru di
              SendStop.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S113 — customer_app SendStop.displayName getter + tracking wire + regression test; analyze RC=0, 119 test PASS)
 Referensi  : TD-126 (temuan OpenCode)
 
 ID         : TD-153
@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 110 item, 60 item CLOSED (FIXED/CLOSED 170), 14 item DEFERRED,
-        4 item OPEN.  [110 + 60 + 14 + 4 = 188 = TOTAL]
+STATUS: ✅ FIXED 111 item, 60 item CLOSED (FIXED/CLOSED 171), 14 item DEFERRED,
+        3 item OPEN.  [111 + 60 + 14 + 3 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S108c — TD-022 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S114 — TD-152 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 110 item
+   - ✅ FIXED                           : 111 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 170 item
+   - FIXED/CLOSED                       : 171 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 4 item (sisa setelah sesi S108c = SEDANG 1 + RENDAH 3;
+   - ❌ OPEN                              : 3 item (sisa setelah sesi S114 = SEDANG 0 + RENDAH 3;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [110 + 60 + 14 + 4 = 188 = TOTAL]
+      [111 + 60 + 14 + 3 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10197,3 +10197,36 @@ CHANGELOG — 2026-10-16 (sesi S108 chain: S108 + S108b-2 + S108b-3 + S108c, TD-
 - Counter §2/§3 sync: 110F/60C/14D/4O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-022), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S109).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S113+S114, TD-152 FIXED + Flutter SDK v2):
+- TD-152 (MOBILE / UX) Status OPEN → ✅ FIXED.
+- S113 FIX: apps/customer_app/lib/models/send_stop.dart:55 — getter baru
+  `displayName` = recipientName(trim non-empty) else 'Penerima ${order}'.
+  send_tracking_screen.dart:304 — wire `${stop.displayName}`.
+  test/models_extended_test.dart — 1 regression test (empty name fallback).
+  analyze RC=0, test 119 PASS (baseline 118 + 1).
+- [OVERRIDE-1] premise TD-152 (recipient_name nullable) dikoreksi:
+  Dart field non-nullable String='' (wire nullable → collapse ''), bug
+  manifest = empty string bukan null. Fix logic ekivalen.
+- [OVERRIDE-2] design decision: skip dropoffAddress fallback di displayName
+  untuk hindari double-render (locationLabel sudah tampil di line 307).
+  Fallback ke 'Penerima ${order}' — sesuai TD-152 Solusi explicit permits.
+- FLUTTER SDK UPGRADE (S110-S112 chain, tidak masuk register TD):
+  * Linux SDK ~/flutter 3.22.3/Dart 3.4.4 → 3.47.7/Dart 3.13.5 (fresh clone
+    stable channel).
+  * .bashrc fix: prepend $HOME/flutter/bin (was append) → Linux SDK priority
+    vs Windows interop PATH.
+  * Cleanup: tarball 750 MB + old SDK 1.9 GB (WSL) + /mnt/d/flutter 3.13 GB
+    (PowerShell) = ~5.8 GB freed.
+  * Note: /mnt/d/flutter rename gagal via WSL mv (permission denied Windows
+    fs); deleted via PowerShell Remove-Item — Lesson L-S111-02.
+- Reviewer errors accrue v2.7.4: #84-#91 (S110-S111 CEK), #92 (S113 premise
+  nullable), #93 (S113 dropoff fallback tanpa pre-CEK render), #94 (S113
+  path space anchor).
+- Lesson accrue L-S111-01..02 + L-S113-01: test .bashrc via `bash -i` (not
+  `-c`); Windows fs ops use PowerShell (not WSL mv/rm); mobile model nullable
+  WAJIB grep Dart type aktual.
+- Counter §2/§3 sync: 111F/60C/14D/3O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-152), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S115).
