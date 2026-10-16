@@ -4950,7 +4950,7 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 96 item, 60 item CLOSED (FIXED/CLOSED 155), 14 item DEFERRED,
+STATUS: ✅ FIXED 96 item, 60 item CLOSED (FIXED/CLOSED 156), 14 item DEFERRED,
         18 item OPEN.  [96 + 60 + 14 + 18 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S82 — TD-179 CLOSED WONTFIX):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S87 — TD-076 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 95 item
+   - ✅ FIXED                           : 96 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 155 item
+   - FIXED/CLOSED                       : 156 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 24 item (sisa setelah sesi S56 = SEDANG 16 + RENDAH 8;
+   - ❌ OPEN                              : 18 item (sisa setelah sesi S87 = SEDANG 11 + RENDAH 7;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [95 + 60 + 14 + 19 = 188 = TOTAL]
+      [96 + 60 + 14 + 18 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
