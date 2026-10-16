@@ -1,6 +1,19 @@
 ================================================================================
 TECHNICAL DEBT REGISTER - G-Flow (Phase 1-3)
 ================================================================================
+FORMAT STANDARD (TD-171, 2026-10-16 sesi S99c):
+  Field `Status :` WAJIB salah satu enum strict (going-forward):
+    - `FIXED`
+    - `CLOSED`
+    - `DEFERRED`
+    - `OPEN`
+  Metadata (commit hash, date, alasan) → taruh di field `Note :` (bukan
+  inline di Status). Emoji ✅/🔵/❌ boleh sebagai display prefix, TIDAK
+  sebagai parse anchor.
+  Parser robust: normalisasi (strip emoji, kurung, metadata) lalu match enum.
+  Retroaktif 188 entry TIDAK di-rewrite (risk tinggi); entry baru WAJIB
+  follow standard ini.
+
 Tanggal       : 2026-08-30
 Status        : Aktif - Daftar hutang teknis akumulatif Phase 1-3 yang perlu
                 diperbaiki sebelum production release (Phase 4 Hardening)
@@ -469,7 +482,7 @@ Judul      : API CONTRACT.txt §10 (Admin Endpoints) outdated vs
              pakai `/api/v1/admin/login`, `/api/v1/admin/users/{id}/{action}`,
              `/api/v1/admin/transactions/{id}/reverse`.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 
 ID         : TD-046
 Kategori   : KODE
@@ -1434,7 +1447,7 @@ Dampak     : Keputusan arsitektur (lock hierarchy, enum, RLS, PgBouncer, dll) ti
 Solusi     : Buat ADR-001..007 di docs/adr/.
 Estimasi   : 3-4 jam
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : audit_r04.log (GAP-14; usulan TD-076)
 
 ID         : TD-100
@@ -1456,7 +1469,7 @@ Dampak     : Dokumentasi API menyesatkan; integrasi manual & API test kurang pra
 Solusi     : Sync openapi dengan route aktual + serve Swagger UI + Postman collection.
 Estimasi   : 3-4 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : audit_r04.log (GAP-11, GAP-19; usulan TD-078)
 
 ID         : TD-102
@@ -2395,7 +2408,7 @@ Dampak     : Developer baru bisa bingung semantics; seed voucher salah
 Solusi     : Dokumentasi di komentar kode + schema comment, ATAU ubah
              NULL jadi nilai default (mis. 100% cap).
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : TD-070 (temuan OpenCode)
 
 ID         : TD-137
@@ -2618,7 +2631,7 @@ Solusi     : Update §7.4 "API CONTRACT" agar sama dengan
              rideDriverResponse (internal/ride/handler.go:247-253).
              Kode = source of truth (R2).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : TD-113 (temuan OpenCode)
 
 ID         : TD-146
@@ -3450,7 +3463,7 @@ Solusi     : Sync kedua file dengan state migration aktual: di
              tertangkap otomatis tanpa harus ketahuan saat menulis
              dokumen berikutnya.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : TD-047/048 (temuan OpenCode — sesi tempat jumlah label enum
              diverifikasi 8 dan kedua file docs dicatat stale di "CATATAN
              DI LUAR SCOPE" tanpa diperbaiki), TD-161 (drift dev DB
@@ -4175,7 +4188,7 @@ Solusi     : 1) Standarkan format: `Status : <VERB>` sebagai satu token
              `Status-Code : FIXED|CLOSED|DEFERRED|OPEN` supaya parsing
              tidak bergantung string bebas sama sekali.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : TD-133 (temuan OpenCode — parser dijalankan SEBELUM
              menulis angka; preseden disiplin "verify, jangan tebak"),
              TD-107 (blok "CATATAN STALE" §3 — bukti header pernah
@@ -4951,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 98 item, 60 item CLOSED (FIXED/CLOSED 158), 14 item DEFERRED,
-        16 item OPEN.  [98 + 60 + 14 + 16 = 188 = TOTAL]
+STATUS: ✅ FIXED 107 item, 60 item CLOSED (FIXED/CLOSED 167), 14 item DEFERRED,
+        7 item OPEN.  [107 + 60 + 14 + 7 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5251,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S97 — TD-026 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S100 — 9 docs TD FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 98 item
+   - ✅ FIXED                           : 107 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 158 item
+   - FIXED/CLOSED                       : 167 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 16 item (sisa setelah sesi S97 = SEDANG 9 + RENDAH 7;
+   - ❌ OPEN                              : 7 item (sisa setelah sesi S100 = SEDANG 3 + RENDAH 4;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [98 + 60 + 14 + 16 = 188 = TOTAL]
+      [107 + 60 + 14 + 7 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9180,7 +9193,7 @@ Dampak     : Developer/integrator baru baca doc → cari table `admin_actions` y
 Bukti      : (a) docs/DATABASE SCHEMA.txt §24 "ADMIN_ACTIONS TABLE" — `CREATE TABLE admin_actions (...)`. (b) migrations/010_admin_lockouts.up.sql:26 — `CREATE TABLE IF NOT EXISTS admin_action_logs`. (c) Live DB `\dt` = `admin_action_logs` + `admin_lockouts` (no `admin_actions`). (d) Grep `admin_actions` di migrations/*.sql = 0 hasil (hanya di doc).
 Solusi     : Update docs/DATABASE SCHEMA.txt (rename `admin_actions` → `admin_action_logs`) ATAU tambahkan note "renamed since v10.4 → lihat migration 010". Pilih satu, konsisten dengan doc sync policy.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : TD-178 (temuan sesi ini, R8 — dicatat tidak diperbaiki), migration 010
 
 ID         : TD-181
@@ -9538,7 +9551,7 @@ Solusi     : Butuh KEPUTUSAN User (produk/dokumentasi, bukan mekanis):
              Rekomendasi teknis: (b) atau (c) untuk hindari double maintenance.
              Menunggu keputusan User.
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S99a+S99b+S99c — docs batch manual §19.1)
 Referensi  : S20a (Section 18 v2.7 di .txt, .md tidak disentuh per R8),
              R6 konsistensi
 
@@ -10083,3 +10096,27 @@ CHANGELOG — 2026-10-16 (sesi S94+S94v2+S95+S96+S96v2+S96v3+S96v5, TD-026 FIXED
 - Counter §2/§3 sync: 98F/60C/14D/16O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-026), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S98).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S99a+S99b+S99c+S100, docs batch MANUAL §19.1 — 9 TD FIXED):
+- 9 docs-only TD ditutup via MANUAL §19.1 (bukan OpenCode — no compile step):
+  * TD-045: API CONTRACT §10 admin endpoints — sync note + actual paths.
+  * TD-099: docs/adr/ README + 7 stub ADR (001-007 dari ROADMAP 04 §4.4.3).
+  * TD-101: docs/openapi.yaml — drift note header (STALE vs kode).
+  * TD-136: max_discount NULL = unlimited — doc comment di DATABASE SCHEMA.
+  * TD-145: API CONTRACT §7.4 — driver object + field baru note.
+  * TD-163: enum wallet_type_enum 5→8 label — DB SCHEMA + schema_clean.sql.
+  * TD-171: register format standard — enum strict going-forward di header.
+  * TD-180: DATABASE SCHEMA admin_actions → admin_action_logs (+ note).
+  * TD-189: TEAM_CONTRACT.md — deprecated stub pointer ke .txt.
+- Sesi manual spread S99a → S99c (~45 min docs, 0 code change).
+- Reviewer errors accrue v2.7.4: #65 (CRLF pre-CEK miss di schema_clean.sql,
+  revert + redo newline preserve → diff 1061 → 1/-1), #66 (pattern count=1
+  pre-CEK miss), #67 (TD-189 section count asumsi), #68 (TD-180 false alarm
+  idx_admin_actions prefix), #69 (paste garble recurrence).
+- Lesson L-S99-01..03: docs-edit python3 WAJIB `open(newline='')` preserve;
+  setiap pattern replace WAJIB pre-CEK `grep -c` = 1; docs reference check
+  WAJIB grep-based, bukan asumsi.
+- Counter §2/§3 sync: 107F/60C/14D/7O = 188 (TOTAL unchanged).
+- Delta register: FIXED +9, OPEN -9.
+- Commit: belum (R10). User commit via PowerShell (S101).
