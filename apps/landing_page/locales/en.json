@@ -10,110 +10,122 @@
     "toggleLang": "Switch language"
   },
   "hero": {
-    "badge": "v1.0 — Portfolio Project",
-    "title": "Super App for Everything You Need",
-    "subtitle": "One integrated ecosystem for ride, food, send, and wallet — fast, secure, and effortless to use.",
-    "demo": "View Demo",
-    "github": "GitHub Repo"
-  },
-  "features": {
-    "badge": "Features",
-    "title": "Four Services, One Ecosystem",
-    "subtitle": "Designed as a modular monolith with a unified API, every feature runs fast and reliably.",
-    "ride": {
-      "title": "G-Ride",
-      "desc": "Book a ride in seconds with real-time driver dispatch and reliable cancellation handling."
+    "badge": "24/7 Service",
+    "title": "Pay • Order • Deliver.",
+    "titleAccent": "One App for Everything.",
+    "subtitle": "Daily mobility, your favorite food delivery, instant package delivery, and seamless digital transactions — all in one secure and transparent app.",
+    "ctaPrimary": "Get Started",
+    "ctaSecondary": "View Services",
+    "stats": {
+      "rating": { "title": "No Ratings Yet", "desc": "App Store • Play Store" },
+      "transparent": { "title": "Transparent", "desc": "No hidden fees" },
+      "realtime": { "title": "Real-Time", "desc": "Orders tracked live" }
     },
-    "food": {
-      "title": "G-Food",
-      "desc": "Order from your favorite merchants with secure 4-way settlement between customers, merchants, and drivers."
-    },
-    "send": {
-      "title": "G-Send",
-      "desc": "Send packages instantly with multi-stop routes, real-time driver tracking, and 3-way payment splits."
-    },
-    "wallet": {
-      "title": "PayPulse",
-      "desc": "Digital wallet with double-entry ledger, instant top-up, transfers, and JWT + RBAC security."
-    }
-  },
-  "screenshots": {
-    "badge": "The App",
-    "title": "See the App in Action",
-    "subtitle": "Screenshots of the G-Flow customer app across devices.",
-    "items": {
-      "home": {
-        "title": "Home",
-        "desc": "Every service — ride, food, send, and wallet — on a single screen."
-      },
-      "ride": {
-        "title": "G-Ride",
-        "desc": "Book a ride and track your driver in real time."
-      },
+    "mockups": {
       "food": {
         "title": "G-Food",
-        "desc": "Explore merchants and order your favorite meals."
+        "status": "Out for Delivery",
+        "item": "Nasi Bebek Betutu Spesial",
+        "driver": "Driver: Verified Partner",
+        "eta": "Real-Time ETA"
+      },
+      "send": {
+        "title": "G-Send Instant",
+        "status": "Tracked",
+        "trackingLabel": "Tracking Number",
+        "destination": "Destination: Sudirman, Jakarta",
+        "otp": "OTP: ••••"
+      },
+      "pay": {
+        "welcome": "Welcome",
+        "user": "Verified User",
+        "balanceLabel": "PayPulse Balance",
+        "actionPay": "Pay",
+        "actionTopUp": "Top Up",
+        "actionHistory": "History",
+        "rideDone": "Ride Completed",
+        "rideSaved": "Route Saved"
       }
     }
   },
-  "tech": {
-    "badge": "Technology",
-    "title": "Built on Modern Technology",
-    "subtitle": "A robust, scalable stack from backend to mobile apps.",
-    "go": {
-      "name": "Go",
-      "desc": "High-performance modular monolith backend with Gin, JWT, and graceful shutdown."
+  "features": {
+    "main": {
+      "badge": "Main Ecosystem",
+      "title": "Daily Services Designed for Your Time Efficiency.",
+      "subtitle": "Every feature is built with a focus on response speed, fleet reliability, and transparent fares with no hidden fees."
     },
-    "flutter": {
-      "name": "Flutter",
-      "desc": "Cross-platform customer, driver, and merchant apps in a single codebase."
+    "rideCard": {
+      "badge": "G-Ride & G-Car",
+      "title": "Fast Mobility Without Traffic Hassle",
+      "desc": "Nearby pickups with verified vehicles and upfront fixed fares with no surge surprises.",
+      "check1": "Verified fleet pickups with clear estimates",
+      "check2": "High-precision real-time location tracking",
+      "check3": "Security protection on every trip",
+      "route": "Kuningan Sentral → Grand Indonesia",
+      "routeSub": "Urban route • Real-time ETA",
+      "tag": "Upfront Fixed Fare"
     },
-    "next": {
-      "name": "Next.js",
-      "desc": "React framework for the admin panel and fast, SEO-friendly web pages."
+    "food": {
+      "badge": "G-Food",
+      "title": "Hot Meals Delivered Straight to Your Table",
+      "desc": "Curated culinary partners with insulated bags to keep food temperature optimal.",
+      "check1": "Curated local restaurants & favorites",
+      "check2": "Accurate prep & delivery estimates by minute",
+      "check3": "Fair delivery promos at checkout",
+      "footerLeft": "Special Insulated Bags",
+      "footerRight": "Hygienically Maintained"
     },
-    "supabase": {
-      "name": "Supabase",
-      "desc": "Managed PostgreSQL for data storage and deployment infrastructure."
+    "send": {
+      "badge": "G-Send",
+      "title": "Send Documents & Packages Today",
+      "desc": "Secure on-demand logistics with photo proof of delivery and recipient verification code.",
+      "check1": "Guaranteed instant & same-day delivery",
+      "check2": "Photo proof of delivery in-app",
+      "check3": "Insurance for high-value items",
+      "footerLeft": "Secure Validation",
+      "footerRight": "OTP Required"
     },
-    "redis": {
-      "name": "Redis",
-      "desc": "Idempotency, token blacklist, and real-time driver location tracking."
+    "wallet": {
+      "badge": "PayPulse by G-Flow",
+      "title": "Smart Digital Wallet & One-Tap Transactions",
+      "desc": "One integrated balance for all mobility needs, QRIS scans at nationwide merchants, and instant interbank transfers with no hassle.",
+      "check1": "Multi-layered banking-grade encryption and biometric auth",
+      "check2": "Instant QRIS payments at nationwide merchants",
+      "check3": "Clean expense history with auto-categorization",
+      "miniTitle": "Nationwide QRIS Ready",
+      "miniSub": "Compatible with QRIS merchants across Indonesia",
+      "badge1": "Rewards Program",
+      "badge2": "Quick Scan"
+    },
+    "mitra": {
+      "badge": "Growth Opportunity",
+      "title": "Grow Together with G-Flow Network",
+      "subtitle": "Achieve financial independence with entrepreneurs and drivers in an open ecosystem."
+    },
+    "driver": {
+      "title": "Join as a Driver Partner",
+      "desc": "Set your own working hours freely. Get transparent bonus schemes, work accident protection, and daily earnings withdrawal with no hidden cuts.",
+      "bullet1": "Daily direct transfer to bank account",
+      "bullet2": "Active partner welfare & accident insurance",
+      "cta": "Register as Driver Partner"
+    },
+    "merchant": {
+      "title": "Grow Your Culinary Business & Ventures",
+      "desc": "Expand your reach citywide via Merchant Hub. Access real-time sales reports, instant menu catalog management, and targeted promotional campaigns.",
+      "bullet1": "Analytics dashboard for menu performance & peak hours",
+      "bullet2": "Verified promotional materials support in-app",
+      "cta": "Register on Merchant Hub"
     }
   },
-  "testimonials": {
-    "badge": "Testimonials",
-    "title": "What Users Say",
-    "subtitle": "Impressions from people who tried the G-Flow ecosystem.",
-    "t1": {
-      "initials": "RK",
-      "name": "Rina Kartika",
-      "role": "Daily User",
-      "quote": "Switching between services without leaving the app feels incredibly smooth. Payments are really fast too."
-    },
-    "t2": {
-      "initials": "BS",
-      "name": "Budi Santoso",
-      "role": "Driver",
-      "quote": "Orders come in neatly and earnings are clearly estimated. Multi-stop features boosted my income."
-    },
-    "t3": {
-      "initials": "SP",
-      "name": "Sinta Puspita",
-      "role": "Merchant Owner",
-      "quote": "The merchant dashboard is very helpful. Orders and sales reports are real-time and easy to understand."
-    }
-  },
-  "cta": {
-    "title": "Ready to Build Together?",
-    "subtitle": "Check the code on GitHub or contact me for further discussion.",
-    "github": "GitHub",
-    "contact": "Contact Me"
-  },
+  "screenshots": {"badge": "App","title": "See the App in Action","subtitle": "Snapshots of the G-Flow customer app across devices.","items": {"home": {"title": "Home","desc": "All services — ride, food, send, and wallet — in one screen."},"ride": {"title": "G-Ride","desc": "Book a ride and track your driver in real-time."},"food": {"title": "G-Food","desc": "Browse merchants and order your favorite meals."}}},
+  "tech": {"badge": "Technology","title": "Built on Modern Technology","subtitle": "Robust and scalable stack from backend to mobile apps.","go": {"name": "Go","desc": "High-performance modular monolith backend with Gin, JWT, and graceful shutdown."},"flutter": {"name": "Flutter","desc": "Cross-platform customer, driver, and merchant apps in a single codebase."},"next": {"name": "Next.js","desc": "React framework for admin panel and fast, SEO-friendly web pages."},"supabase": {"name": "Supabase","desc": "Managed PostgreSQL for data storage and deployment infrastructure."},"redis": {"name": "Redis","desc": "Idempotency, token blacklist, and real-time driver location tracking."}},
+  "testimonials": {"badge": "Testimonials","title": "What Users Say","subtitle": "Impressions from people who tried the G-Flow ecosystem.","t1": {"initials": "RK","name": "Rina Kartika","role": "Daily User","quote": "Switching between services without leaving the app feels incredibly smooth. Payments are really fast too."},"t2": {"initials": "BS","name": "Budi Santoso","role": "Driver","quote": "Orders come in neatly and earnings are clearly estimated. Multi-stop features boosted my income."},"t3": {"initials": "SP","name": "Sinta Puspita","role": "Merchant Owner","quote": "The merchant dashboard is very helpful. Orders and sales reports are real-time and easy to understand."}},
+  "cta": {"eyebrow": "Contact Us","title": "Let's Build the Ecosystem Together with G-Flow","subtitle": "Have questions about corporate partnerships, large-scale fleet integration, or operational support? Our team is ready to talk with you directly.","emailLabel": "Partnership Email","phoneLabel": "Operational Phone","phoneHours": "Monday – Friday, 08.00 – 18.00 WIB","officeLabel": "Head Office","officeLine1": "G-Flow Tower, SCBD Area Lot 28","officeLine2": "Jl. Jend. Sudirman Kav. 52-53, South Jakarta 12190","responseNote": "Official partnership responses are guaranteed within 1x24 working hours.","formTitle": "Partnership Form","formDesc": "Fill in your business or institution's initial details. This form will open your email app and draft a submission to kemitraan@gflow.id.","nameLabel": "Full Name","namePlaceholder": "Example: Faris Adrian","contactLabel": "Business Email / WhatsApp","contactPlaceholder": "faris@company.co.id","categoryLabel": "Partnership Category","optionFleet": "Corporate Fleet Partner","optionMerchant": "National Merchant Integration","optionPaypulse": "PayPulse Ecosystem Partnership","optionGeneral": "General & Media Inquiries","messageLabel": "Message / Collaboration Needs","messagePlaceholder": "Briefly describe the type of partnership you'd like to run with G-Flow...","submit": "Send Partnership Request","success": "Your email app has been opened. We look forward to your submission at kemitraan@gflow.id.","mailSubject": "Partnership Request — {name}","mailBody": "Name: {name}\nContact: {contact}\nCategory: {category}\nMessage:\n{message}"},
   "footer": {
-    "social": "Follow",
-    "desc": "Super-app ecosystem: G-Ride, G-Food, G-Send, and PayPulse — built with Go and Flutter.",
-    "rights": "Copyright © {year} G-Flow. All rights reserved.",
-    "madeWith": "Built with Go, Flutter & Next.js"
+    "tagline": "Indonesian Ecosystem",
+    "privacy": "Privacy Policy",
+    "terms": "Terms & Conditions",
+    "docs": "Developer Docs",
+    "github": "GitHub"
   }
 }

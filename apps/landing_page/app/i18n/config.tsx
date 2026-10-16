@@ -6,13 +6,34 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useState,
+  useSyncExternalStore,
 } from "react";
 import type { ReactNode } from "react";
 import id from "@/locales/id.json";
 import en from "@/locales/en.json";
 
 export type Lang = "id" | "en";
+
+const LOCALE_KEY = "gflow_locale";
+const LOCALE_EVENT = "gflow-locale-change";
+
+function subscribeLocale(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(LOCALE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(LOCALE_EVENT, callback);
+  };
+}
+
+function getLocaleSnapshot(): Lang {
+  const saved = localStorage.getItem(LOCALE_KEY);
+  return saved === "en" ? "en" : "id";
+}
+
+function getLocaleServerSnapshot(): Lang {
+  return "id";
+}
 
 export const dictionaries = { id, en } as const;
 export type Dictionary = (typeof dictionaries)["id"];
@@ -26,13 +47,20 @@ type ContextValue = {
 const LangContext = createContext<ContextValue | null>(null);
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>("id");
+  const lang = useSyncExternalStore(
+    subscribeLocale,
+    getLocaleSnapshot,
+    getLocaleServerSnapshot,
+  );
 
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
 
-  const setLang = useCallback((next: Lang) => setLangState(next), []);
+  const setLang = useCallback((next: Lang) => {
+    localStorage.setItem(LOCALE_KEY, next);
+    window.dispatchEvent(new Event(LOCALE_EVENT));
+  }, []);
 
   const t = useCallback(
     (key: string, vars?: Record<string, string | number>) => {

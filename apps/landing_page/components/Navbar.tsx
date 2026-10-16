@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { useLang } from "@/app/i18n/config";
 
 const LINKS: { href: string; label: string; primary?: boolean }[] = [
   { href: "#beranda", label: "Beranda", primary: true },
@@ -9,6 +12,8 @@ const LINKS: { href: string; label: string; primary?: boolean }[] = [
 ];
 
 export default function Navbar() {
+  const { lang, setLang, t } = useLang();
+
   return (
     <header className="fixed inset-x-0 top-0 z-50 h-16 w-full border-b border-border-subtle bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 w-full max-w-[1240px] items-center justify-between gap-4 px-4 lg:px-8">
@@ -46,6 +51,36 @@ export default function Navbar() {
         </nav>
 
         <div className="flex shrink-0 items-center gap-3">
+          <div
+            className="inline-flex items-center rounded-full border border-border-subtle bg-surface-elevated p-0.5"
+            role="group"
+            aria-label={t("nav.toggleLang")}
+          >
+            <button
+              type="button"
+              onClick={() => setLang("id")}
+              aria-pressed={lang === "id"}
+              className={
+                lang === "id"
+                  ? "rounded-full bg-primary px-2.5 py-1 font-label text-xs font-semibold text-surface-container-lowest"
+                  : "rounded-full px-2.5 py-1 font-label text-xs font-semibold text-text-secondary transition-colors hover:text-text-primary"
+              }
+            >
+              ID
+            </button>
+            <button
+              type="button"
+              onClick={() => setLang("en")}
+              aria-pressed={lang === "en"}
+              className={
+                lang === "en"
+                  ? "rounded-full bg-primary px-2.5 py-1 font-label text-xs font-semibold text-surface-container-lowest"
+                  : "rounded-full px-2.5 py-1 font-label text-xs font-semibold text-text-secondary transition-colors hover:text-text-primary"
+              }
+            >
+              EN
+            </button>
+          </div>
           <Link
             href="#kontak"
             className="inline-flex items-center justify-center rounded-full bg-primary-container px-5 py-2.5 font-label font-semibold text-surface-container-lowest shadow-[0_4px_16px_rgba(255,149,0,0.25)] transition-all hover:opacity-90"

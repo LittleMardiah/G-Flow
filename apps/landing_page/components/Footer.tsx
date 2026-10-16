@@ -1,7 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import { MaterialIcon } from "@/components/ui/MaterialIcon";
+import { useLang } from "@/app/i18n/config";
 
 export default function Footer() {
+  const { t } = useLang();
   const year = new Date().getFullYear();
 
   return (
@@ -10,7 +14,9 @@ export default function Footer() {
         <div className="flex items-center gap-3 font-body text-sm text-text-secondary">
           <span className="font-display text-xl text-text-primary">G-Flow</span>
           <span className="text-border-subtle">|</span>
-          <span>© {year} • Ekosistem Indonesia</span>
+          <span>
+            © {year} • {t("footer.tagline")}
+          </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-6 font-body text-sm text-text-muted">
@@ -18,20 +24,20 @@ export default function Footer() {
             href="/docs#privasi"
             className="text-text-muted transition-colors hover:text-text-secondary"
           >
-            Kebijakan Privasi
+            {t("footer.privacy")}
           </Link>
           <Link
             href="/docs#syarat"
             className="text-text-muted transition-colors hover:text-text-secondary"
           >
-            Syarat &amp; Ketentuan
+            {t("footer.terms")}
           </Link>
           <Link
             href="/docs"
             className="inline-flex items-center gap-1.5 text-text-muted transition-colors hover:text-text-secondary"
           >
             <MaterialIcon name="terminal" className="text-[16px]" />
-            Developer Docs
+            {t("footer.docs")}
           </Link>
           <a
             href="https://github.com/LittleMardiah/G-Flow"
@@ -40,7 +46,7 @@ export default function Footer() {
             className="inline-flex items-center gap-1.5 text-text-muted transition-colors hover:text-text-secondary"
           >
             <MaterialIcon name="code" className="text-[16px]" />
-            GitHub
+            {t("footer.github")}
           </a>
         </div>
       </div>
