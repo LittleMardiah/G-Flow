@@ -330,7 +330,7 @@ Solusi     : Bangun tombol toggle ID/EN di Navbar (pakai i18n context
              yang udah ada di app/i18n/config.tsx).
 Estimasi   : 2-3 jam
 Prioritas  : RENDAH
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S108 chain (S108+S108b-2+S108b-3) — landing i18n full wire: Navbar toggle + Hero/CTA/Features/Footer 113 strings ID/EN; useSyncExternalStore + localStorage persist; tsc/lint/build RC=0)
 
 ID         : TD-023
 Kategori   : SECURITY
@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 109 item, 60 item CLOSED (FIXED/CLOSED 169), 14 item DEFERRED,
-        5 item OPEN.  [109 + 60 + 14 + 5 = 188 = TOTAL]
+STATUS: ✅ FIXED 110 item, 60 item CLOSED (FIXED/CLOSED 170), 14 item DEFERRED,
+        4 item OPEN.  [110 + 60 + 14 + 4 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S106 — TD-182 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S108c — TD-022 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 109 item
+   - ✅ FIXED                           : 110 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 169 item
+   - FIXED/CLOSED                       : 170 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 5 item (sisa setelah sesi S106 = SEDANG 2 + RENDAH 3;
+   - ❌ OPEN                              : 4 item (sisa setelah sesi S108c = SEDANG 1 + RENDAH 3;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [109 + 60 + 14 + 5 = 188 = TOTAL]
+      [110 + 60 + 14 + 4 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10167,3 +10167,33 @@ CHANGELOG — 2026-10-16 (sesi S105+S106, TD-182 FIXED):
 - Counter §2/§3 sync: 109F/60C/14D/5O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-182), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S107).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S108 chain: S108 + S108b-2 + S108b-3 + S108c, TD-022 FIXED):
+- TD-022 (MOBILE — landing i18n toggle) Status OPEN → ✅ FIXED.
+- S108: Navbar toggle ID/EN pill + config useSyncExternalStore pattern +
+  layout mount LanguageProvider. Catches critical bug: Provider belum
+  mounted (S108 CEK) — i18n context tidak aktif sebelum fix.
+- S108b (STOP): pre-CEK reveal — dict locales/ STALE (69 keys, tidak match
+  current TSX copy) + scope real ~118 keys × 2 lang. STOP R9, butuh
+  decision Owner.
+- S108b-2: Hero (31 strings) + CTA (26 strings) wire + rewrite hero.*/cta.*
+  dict. 57 leaves each ID==EN.
+- S108b-3: Features (51) + Footer (5) wire + rewrite features.*/footer.*
+  dict. 56 leaves each ID==EN.
+- TD-022 final coverage: 7 TSX wired (Navbar, Hero, CTA, Features, Footer,
+  + Screenshots/Testimonials/TechStack sudah OK sebelumnya) + 2 JSON
+  rewrite (hero/cta/features/footer). 169 total t() calls ID/EN.
+- Reviewer errors accrue v2.7.4: #76 (S108 scope gate ≤3 TSX → half-baked,
+  Provider belum mount), #77 (S108 prompt tidak instruct wire semua
+  section), #78 (S108b gate "keys ~50-100" tanpa pre-CEK real count →
+  actual 118+), #79 (S108b path assumption app/i18n/locales/ ≠ ./locales/
+  → preseden #51/#57/#71), #80 (S108b-2 estimate 61 → actual 57), #81
+  (S108b-3 path escape `\ ` di prompt → tool fail 2×, quote fix), #82
+  (S108b-3 estimate accuracy OK).
+- Lesson accrue L-S108-01..03: prompt i18n WAJIB pre-CEK real scope
+  (grep count dict + hardcoded count per section); prompt anchor WAJIB
+  grep -n LIVE; path dengan space WAJIB quote konsisten.
+- Counter §2/§3 sync: 110F/60C/14D/4O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-022), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S109).
