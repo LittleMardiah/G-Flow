@@ -634,7 +634,7 @@ Judul      : DB CHECK status_valid cuma izinkan ACTIVE/SUSPENDED/FROZEN/DELETED
 Solusi     : tambah BANNED ke CHECK migration, atau ubah types.ts/users-client
              ke DELETED.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S102 — Option B frontend align BANNED→DELETED per R2, no schema change; tsc/lint/build RC=0)
 
 ID         : TD-053
 Kategori   : KODE
@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 107 item, 60 item CLOSED (FIXED/CLOSED 167), 14 item DEFERRED,
-        7 item OPEN.  [107 + 60 + 14 + 7 = 188 = TOTAL]
+STATUS: ✅ FIXED 108 item, 60 item CLOSED (FIXED/CLOSED 168), 14 item DEFERRED,
+        6 item OPEN.  [108 + 60 + 14 + 6 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S100 — 9 docs TD FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S103 — TD-052 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 107 item
+   - ✅ FIXED                           : 108 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 167 item
+   - FIXED/CLOSED                       : 168 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 7 item (sisa setelah sesi S100 = SEDANG 3 + RENDAH 4;
+   - ❌ OPEN                              : 6 item (sisa setelah sesi S103 = SEDANG 3 + RENDAH 3;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [107 + 60 + 14 + 7 = 188 = TOTAL]
+      [108 + 60 + 14 + 6 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10120,3 +10120,29 @@ CHANGELOG — 2026-10-16 (sesi S99a+S99b+S99c+S100, docs batch MANUAL §19.1 —
 - Counter §2/§3 sync: 107F/60C/14D/7O = 188 (TOTAL unchanged).
 - Delta register: FIXED +9, OPEN -9.
 - Commit: belum (R10). User commit via PowerShell (S101).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S102+S103, TD-052 FIXED — Option B frontend align):
+- TD-052 (KODE) Status OPEN → ✅ FIXED.
+- KEPUTUSAN OWNER (Option B): TIDAK ubah schema. Frontend admin_web
+  di-align ke backend yang sudah pakai DELETED (R2 = source of truth).
+  Alternatif A (schema CHECK + BANNED) = §11.4.1 STOP + migration,
+  rejected (attack surface, tidak worth it untuk display-only drift).
+- S102 FIX (2 file TS, +4/-4):
+  * apps/admin_web/src/lib/types.ts:58 — UserStatus union BANNED→DELETED.
+  * apps/admin_web/src/components/users/users-client.tsx:29, :97, :322 —
+    case DELETED + option + statusFromAction. Action name tetap "ban"
+    (backend service.go:873-874 map ban→DELETED).
+- S102 VERIFY: tsc RC=0, lint RC=0, build RC=0, BANNED_GONE_SRC,
+  DELETED wired 4 lokasi.
+- Premise Owner CORRECT: backend service.go:873-874 + migration CHECK
+  ('ACTIVE','SUSPENDED','FROZEN','DELETED') — no BANNED anywhere di Go.
+- Reviewer errors accrue v2.7.4: #70 (commit message "9 TD" di commit 1
+  padahal close di commit 2 — cosmetic), #71 (stale line refs S102 prompt
+  service.go:717-729 vs aktual 873-874 — RECURRENCE #51/#57), #72
+  (users-client.tsx:322 site tidak di-predict).
+- Lesson accrue L-S102-01: prompt anchor WAJIB grep -n LIVE — bukan
+  copy dari TD entry yang berumur >1 minggu.
+- Counter §2/§3 sync: 108F/60C/14D/6O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-052), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S104).
