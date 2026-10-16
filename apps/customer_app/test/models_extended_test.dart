@@ -148,6 +148,27 @@ void main() {
       expect(s.dropoffAddress, 'Jl. Baru');
       expect(s.dropoffLat, -6.2);
     });
+
+    // TD-152: recipient_name null/kosong → displayName fallback "Penerima N".
+    test('displayName fallback nama kosong', () {
+      final named = SendStop.fromJson(const {
+        'id': 'n1',
+        'stop_number': 1,
+        'recipient_name': 'Budi',
+      });
+      expect(named.displayName, 'Budi');
+
+      final unnamed = SendStop.fromJson(const {'id': 'n2', 'stop_number': 2});
+      expect(unnamed.recipientName, isEmpty);
+      expect(unnamed.displayName, 'Penerima 2');
+
+      final blank = SendStop.fromJson(const {
+        'id': 'n3',
+        'stop_number': 4,
+        'recipient_name': '   ',
+      });
+      expect(blank.displayName, 'Penerima 4');
+    });
   });
 
   group('SendOrder', () {

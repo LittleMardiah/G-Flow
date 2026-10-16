@@ -301,7 +301,7 @@ class _StopsCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Stop ${stop.order}: ${stop.recipientName}',
+                  'Stop ${stop.order}: ${stop.displayName}',
                   style: theme.textTheme.bodyMedium,
                 ),
                 if (stop.locationLabel case final location?)

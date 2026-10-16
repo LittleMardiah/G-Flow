@@ -49,6 +49,12 @@ class SendStop {
     return '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}';
   }
 
+  /// Nama tampilan stop untuk UI (TD-152): nama penerima bila ada, selain itu
+  /// fallback generik "Penerima N". Alamat/koordinat tetap ditampilkan
+  /// terpisah lewat [locationLabel].
+  String get displayName =>
+      recipientName.trim().isNotEmpty ? recipientName : 'Penerima $order';
+
   factory SendStop.fromJson(Map<String, dynamic> j) {
     return SendStop(
       id: _str(j['stop_id']) ?? _str(j['id']) ?? '',
