@@ -37,7 +37,6 @@ var allowedUserTypes = map[string]bool{
 const (
 	walletTypeCustomer = "CUSTOMER"
 	walletTypeDriver   = "DRIVER"
-	walletTypeMerchant = "MERCHANT"
 )
 
 // Handler menerima request HTTP terkait autentikasi.

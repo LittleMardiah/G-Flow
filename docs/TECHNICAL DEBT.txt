@@ -3693,7 +3693,7 @@ Solusi     : YANG DIREKOMENDASIKAN: hentikan
              bahwa 404 selama onboarding itu normal — tapi itu hanya
              menutup gejala, tidak menutup test merah.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S90 — Option A accepted by design; dead const walletTypeMerchant removed; investigation (c) confirmed only food/repository.go InsertMerchantWallet as sole prod MERCHANT INSERT path; admin const at service.go:52 confirmed LIVE not dead)
 Referensi  : TD-121 (temuan OpenCode — sesi yang menemukan gap ini
              saat menulis test integrasi /wallets/me), TD-128 (asal
              perubahan `walletsForUserType` merchant + Note yang
@@ -4950,8 +4950,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 96 item, 60 item CLOSED (FIXED/CLOSED 156), 14 item DEFERRED,
-        18 item OPEN.  [96 + 60 + 14 + 18 = 188 = TOTAL]
+STATUS: ✅ FIXED 97 item, 60 item CLOSED (FIXED/CLOSED 157), 14 item DEFERRED,
+        17 item OPEN.  [97 + 60 + 14 + 17 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5250,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S87 — TD-076 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S92 — TD-165 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 96 item
+   - ✅ FIXED                           : 97 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 156 item
+   - FIXED/CLOSED                       : 157 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 18 item (sisa setelah sesi S87 = SEDANG 11 + RENDAH 7;
+   - ❌ OPEN                              : 17 item (sisa setelah sesi S92 = SEDANG 10 + RENDAH 7;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [96 + 60 + 14 + 18 = 188 = TOTAL]
+      [97 + 60 + 14 + 17 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10019,3 +10019,23 @@ CHANGELOG — 2026-10-16 (sesi S85+S85b, TD-076 FIXED):
 - Counter §2/§3 sync: 96F/60C/14D/18O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-076), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S87).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S90+S91+S92, TD-165 FULL FIXED — Option A):
+- TD-165 (BACKEND / FITUR) Status OPEN → ✅ FIXED.
+- KEPUTUSAN USER (Option A): merchant auth-register = CUSTOMER-only
+  PERMANENT. Wallet MERCHANT hanya lahir via POST /merchants/register.
+  GET /wallets/me?type=MERCHANT → 404 sebelum onboarding = EXPECTED
+  (bukan bug). Design konsisten sejak commit 8b0a583 (revert TD-128).
+- Sub-item (b) FIXED (S90): dead const walletTypeMerchant dihapus dari
+  internal/auth/handler.go:40. Diff: -1 line.
+- Sub-item (c) DONE (S90+S91): investigation full-scan — hanya
+  internal/food/repository.go InsertMerchantWallet yang INSERT wallet
+  MERCHANT di prod. Admin const (service.go:52) LIVE (4 use-site), bukan
+  dead. Wallet/food package const = LIVE.
+- Sub-item (a) CLOSED by design (Option A).
+- Side-effect S90: gofmt -w menambahkan trailing newline di
+  handler_test.go (1 char, hygiene). [OVERRIDE-1] diterima.
+- Counter §2/§3 sync: 97F/60C/14D/17O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-165), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S93).
