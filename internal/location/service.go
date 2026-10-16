@@ -40,6 +40,10 @@ const (
 	// bila updated_at tidak lebih tua dari 60 detik.
 	freshWindow = 60 * time.Second
 
+	// postgresFreshWindow adalah ambang kesegaran untuk fallback PostgreSQL
+	// (sinkron dgn ROADMAP 02 §2.6 line 772).
+	postgresFreshWindow = 30 * time.Second
+
 	// Earth radius (km) untuk haversine.
 	earthRadiusKm = 6371.0
 )

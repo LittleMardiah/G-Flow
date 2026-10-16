@@ -10,6 +10,7 @@ package location
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -89,8 +90,12 @@ func (r *Repository) SetDriverOnlineStatus(ctx context.Context, driverID uuid.UU
 // GetNearbyDrivers mencari driver aktif (IDLE & online) dalam radius radiusKm
 // dari koordinat (lat,lng). Memakai earthdistance.ll_to_earth untuk filter
 // jarak dan join ke users agar hanya driver memenuhi syarat yang dikembalikan.
+//
+// Ambang kesegaran lokasi diambil dari postgresFreshWindow (single source of
+// truth, sinkron dgn fallback Redis freshWindow) via format integer — bukan
+// string SQL dari input user, sehingga aman dari SQL injection.
 func (r *Repository) GetNearbyDrivers(ctx context.Context, lat, lng float64, radiusKm float64) ([]NearbyDriver, error) {
-	rows, err := r.db.Query(ctx, `
+	query := fmt.Sprintf(`
 		SELECT dl.driver_id, dl.current_lat, dl.current_lng,
 		       ROUND(
 		         earth_distance(ll_to_earth($1, $2), ll_to_earth(dl.current_lat, dl.current_lng)) / 1000.0,
@@ -102,9 +107,12 @@ func (r *Repository) GetNearbyDrivers(ctx context.Context, lat, lng float64, rad
 		  AND u.working_status = 'IDLE'
 		  AND u.is_online = TRUE
 		  AND u.status = 'ACTIVE'
+		  AND dl.updated_at >= NOW() - INTERVAL '%d seconds'
 		  AND earth_distance(ll_to_earth($1, $2), ll_to_earth(dl.current_lat, dl.current_lng)) / 1000.0 <= $3
 		ORDER BY distance_km ASC
-	`, lat, lng, radiusKm)
+	`, int(postgresFreshWindow.Seconds()))
+
+	rows, err := r.db.Query(ctx, query, lat, lng, radiusKm)
 	if err != nil {
 		return nil, err
 	}

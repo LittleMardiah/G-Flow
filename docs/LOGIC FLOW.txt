@@ -302,7 +302,7 @@ DRIVER MINIMUM BALANCE CHECK:
   AND balance >= users.min_balance_threshold
 
 DRIVER HEARTBEAT FILTER (Bug #33):
-  -- Redis: GEOADD driver:locations with TTL 45 seconds
+  -- Redis: GEOADD driver:locations with TTL 60 seconds
   -- Query only drivers with active heartbeat
   -- Do NOT use PostgreSQL for real-time location writes (Bug #40)
 
@@ -956,7 +956,7 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 ┌─────────────────────────────────────────────────────────────────────┐
 │ 1. HEARTBEAT VALIDATION — FIXED (Bugs #33, #37, #48)               │
 ├─────────────────────────────────────────────────────────────────────┤
-│   -- Use Redis with TTL 45 seconds                                │
+│   -- Use Redis with TTL 60 seconds                                │
 │   -- Server timestamp ONLY (NOT client timestamp)                 │
 │                                                                     │
 │   -- Sanity check (Bug #37):                                      │
@@ -1020,7 +1020,7 @@ VALID SEND_ORDER_STATUS_ENUM VALUES:
 - ✅ Webhook: Terminal state + is_late_settlement for late SUCCESS
 - ✅ Fare quote: TTL-based validation (5 minutes)
 - ✅ Rounding: DECIMAL/NUMERIC + SYSTEM_ROUNDING_ADJUSTMENT
-- ✅ Stale location: Redis TTL (45 seconds), server timestamp only
+- ✅ Stale location: Redis TTL (60 seconds), server timestamp only
 - ✅ Saga: Event publisher outside DB transaction
 - ✅ Matching TTL: 3 minutes / 5 driver attempts
 - ✅ Fraud prevention: Sybil driver negative balance blocking, projected balance
