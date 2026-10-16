@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 108 item, 60 item CLOSED (FIXED/CLOSED 168), 14 item DEFERRED,
-        6 item OPEN.  [108 + 60 + 14 + 6 = 188 = TOTAL]
+STATUS: ✅ FIXED 109 item, 60 item CLOSED (FIXED/CLOSED 169), 14 item DEFERRED,
+        5 item OPEN.  [109 + 60 + 14 + 5 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S103 — TD-052 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S106 — TD-182 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 108 item
+   - ✅ FIXED                           : 109 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 168 item
+   - FIXED/CLOSED                       : 169 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 6 item (sisa setelah sesi S103 = SEDANG 3 + RENDAH 3;
+   - ❌ OPEN                              : 5 item (sisa setelah sesi S106 = SEDANG 2 + RENDAH 3;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [108 + 60 + 14 + 6 = 188 = TOTAL]
+      [109 + 60 + 14 + 5 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9247,7 +9247,7 @@ Solusi     : 1) Tambah dialog/input 2FA di users-client sebelum aksi
              sukses. 4) Optional: perkuat login page supaya 2FA tidak
              "opsional" untuk role admin (kosmetik).
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-16, sesi S105 — admin_web users-client prompt 2FA explicit; tsc/lint/build RC=0; mirror reversal page pattern)
 Referensi  : TD-054 (backend enforce 2FA, sesi ini), TD-178 (pattern
              admin 2FA reversal)
 
@@ -10146,3 +10146,24 @@ CHANGELOG — 2026-10-16 (sesi S102+S103, TD-052 FIXED — Option B frontend ali
 - Counter §2/§3 sync: 108F/60C/14D/6O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-052), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S104).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S105+S106, TD-182 FIXED):
+- TD-182 (MOBILE / UX) Status OPEN → ✅ FIXED.
+- S105 FIX: apps/admin_web/src/components/users/users-client.tsx:57-72 —
+  performAction prompt 2FA explicit via window.prompt sebelum mutate;
+  abort kalau null/empty; setItem/removeItem localStorage mirror pattern
+  reversal page. tsc/lint/build RC=0. Scope 1 file +10/-0.
+- Konteks TD-054: backend UpdateUserStatus sudah enforce 2FA + lockout
+  (commit a8ac9ee). TD-182 = UX gap frontend, no backend change.
+- Pattern consistency R6: inline localStorage.setItem/removeItem di
+  users-client + reversal page + api.ts — 3 lokasi inline (TIDAK ada
+  helper khusus 2FA). Mirror reversal page = correct.
+- Reviewer errors accrue v2.7.4: #73 (prompt flag "reuse helper" tanpa
+  pre-CEK helper existence — verified no helper, inline OK), #74 (STEP 3
+  `cd ../..` trigger external_directory rule — recovery via split command).
+- Lesson accrue L-S105-01: prompt WAJIB pre-CEK helper existence via
+  `grep -n "export function.*2FA\|setAdmin" api.ts` sebelum flag "reuse".
+- Counter §2/§3 sync: 109F/60C/14D/5O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-182), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S107).
