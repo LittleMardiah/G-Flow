@@ -54,6 +54,11 @@ export function UsersClient() {
 
   const performAction = (actionName: "freeze" | "suspend" | "ban" | "unfreeze") => {
     if (!selected) return;
+    const twoFa = window.prompt("Masukkan 2FA token:");
+    if (twoFa === null || !twoFa.trim()) return;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("admin_2fa_token", twoFa.trim());
+    }
     action.mutate(
       { userId: selected.id, action: actionName },
       {
@@ -61,6 +66,11 @@ export function UsersClient() {
           setSelected((prev) =>
             prev ? { ...prev, status: statusFromAction(actionName) } : prev,
           );
+        },
+        onError: () => {
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem("admin_2fa_token");
+          }
         },
       },
     );
