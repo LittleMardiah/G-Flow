@@ -346,11 +346,12 @@ Status     : ✅ FIXED (2026-09-22, sync from code — main.go:179
 
 ID         : TD-026
 Kategori   : KODE
-Judul      : internal/admin/handler.go:82-84 — recordFailedAttempt return
-             value dibuang. Lockout 15 menit di-hardcode di SQL (lockout.go:135,
-             :160) terpisah dari konstanta lockoutDuration (lockout.go:28).
+Judul      : internal/admin/handler.go (4 silent sites: :108, :194, :621, :730)
+             — recordFailedAttempt return value dibuang. Lockout 15 menit
+             di-hardcode di SQL (lockout.go:227, :252) terpisah dari konstanta
+             lockoutDuration (lockout.go:31).
 Prioritas  : SEDANG
-Status     : OPEN (rencana: STEP 1E)
+Status     : ✅ FIXED (2026-10-16, sesi S94v2 — parameterized $N SQL ($N * INTERVAL '1 second') + 4 handler warn log + mutation §20 PASS non-vacuous + PG float8 verified live)
 
 ID         : TD-027
 Kategori   : FITUR
@@ -4950,8 +4951,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 97 item, 60 item CLOSED (FIXED/CLOSED 157), 14 item DEFERRED,
-        17 item OPEN.  [97 + 60 + 14 + 17 = 188 = TOTAL]
+STATUS: ✅ FIXED 98 item, 60 item CLOSED (FIXED/CLOSED 158), 14 item DEFERRED,
+        16 item OPEN.  [98 + 60 + 14 + 16 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5250,21 +5251,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S92 — TD-165 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S97 — TD-026 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 97 item
+   - ✅ FIXED                           : 98 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 157 item
+   - FIXED/CLOSED                       : 158 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 17 item (sisa setelah sesi S92 = SEDANG 10 + RENDAH 7;
+   - ❌ OPEN                              : 16 item (sisa setelah sesi S97 = SEDANG 9 + RENDAH 7;
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [97 + 60 + 14 + 17 = 188 = TOTAL]
+      [98 + 60 + 14 + 16 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10039,3 +10040,46 @@ CHANGELOG — 2026-10-16 (sesi S90+S91+S92, TD-165 FULL FIXED — Option A):
 - Counter §2/§3 sync: 97F/60C/14D/17O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-165), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S93).
+
+========================================================================
+CHANGELOG — 2026-10-16 (sesi S94+S94v2+S95+S96+S96v2+S96v3+S96v5, TD-026 FIXED + worker const extract):
+- TD-026 (KODE) Status OPEN → ✅ FIXED.
+  * S94 STOP: prompt stale line refs (lockout.go:28/135/160 + handler.go:82-84
+    ≠ aktual :31/:227/:252 + :108/:194/:621/:730). Scope 4 handler sites +
+    test budget pgxmock arg-count miss (2 test file butuh expand).
+  * S94v2 FIX (Owner authorized §11.4.2): parameterized SQL
+    `NOW() + ($N * INTERVAL '1 second')` + arg `int(lockoutDuration.Seconds())`
+    di lockout.go:227/:252; 4 handler sites di-wrap fail-open log
+    `if _, err := h.recordFailedAttempt(...); err != nil { logger.Warn }`.
+    Test matcher: plain-arg reflect.DeepEqual (pgxmock v4.9 absten DeepEqual
+    symbol — verified). Mutation §20 PASS non-vacuous.
+  * S95 VERIFY: PG PREPARE live — `parameter_types = {uuid, "double precision"}`
+    → pgx Int64Valuer → Float8Codec safe, zero behavior change.
+- Worker const extract (S96 chain, per Owner directive "FIXED jangan register"):
+  * internal/worker/types.go:44-50 — FoodAutocancelCutoffMin int64 = 15,
+    SendAutocancelCutoffMin int64 = 10 (var block, doc comment).
+  * internal/worker/repository.go:67/:149 — `NOW() - ($1 * INTERVAL '1 minute')`
+    + arg binding (idiomatic pgx, no Sprintf).
+  * Scope koreksi premis S96: line 66 = FOOD autocancel, bukan ride
+    (ExpiredRideOrderIDs pakai expires_at, tidak ada INTERVAL). Line 147 = SEND.
+  * S96v2 STOP: parameterisasi pecah 35 test (pgxmock ExpectQuery tanpa
+    WithArgs = enforce 0 args). Scope expand butuh test patch.
+  * S96v3 FIX: 16 call sites `.WithArgs(pgxmock.AnyArg())` + 1 value-lock test
+    (TestCancelFoodOrders_CutoffValueLocked, WithArgs(int64(15))).
+    Mutation §20 genuine non-vacuous (15→0 → FAIL).
+  * S96v5 cleanup: redundant `.WithArgs().WithArgs()` di 2 sites (food+send
+    expectEmptySweep) dihapus via python3 atomic.
+- Reviewer errors accrue v2.7.4: #51 (stale line refs S94), #52 (handler 4
+  sites assumption), #53 (test budget miss), #54 (mutation vacuous-by-design),
+  #55 (login_lockout_test.go outside initial gate), #56 (DeepEqual capability
+  miss), #57 (ride vs food confusion S96), #58 (1 hardcode gate assumption),
+  #59 (fixture cross-wire S96), #60 (pgxmock arg-count pre-CEK miss),
+  #61 (const vs var block ambiguity), #62 (redundant WithArgs append),
+  #63 (redundant spec unclear), #64 (const type spec miss).
+- Lesson accrue L-S94-01..04 + L-S96-01..06: prompt CEK WAJIB grep -n live
+  (bukan copy TD historis), pre-CEK pgxmock blast radius (grep -c ExpectQuery)
+  SEBELUM gate "N prod file", pre-CEK library API capability sebelum spec
+  assertion, prompt 1 deliverable §21 L-S40 konsisten.
+- Counter §2/§3 sync: 98F/60C/14D/16O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-026), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S98).
