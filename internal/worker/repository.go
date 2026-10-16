@@ -57,14 +57,15 @@ func NewRepository(db RepoDB) *Repository {
 // ---- Food orders ----
 
 // ExpiredFoodOrderIDs mengembalikan ID food order berstatus 'CREATED' yang
-// sudah melewati batas waktu cancel (created_at < NOW() - 15 menit). Partial
+// sudah melewati batas waktu cancel (created_at < NOW() - FoodAutocancelCutoffMin
+// menit). Partial
 // index idx_food_orders_auto_cancel mempercepat query ini.
 func (r *Repository) ExpiredFoodOrderIDs(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id FROM food_orders
 		WHERE status = 'CREATED'
-		  AND created_at < NOW() - INTERVAL '15 minutes'
-	`)
+		  AND created_at < NOW() - ($1 * INTERVAL '1 minute')
+	`, FoodAutocancelCutoffMin)
 	if err != nil {
 		return nil, err
 	}
@@ -138,14 +139,15 @@ func (r *Repository) SystemWalletID(ctx context.Context, q Querier, walletType s
 // ---- Send orders ----
 
 // ExpiredSendOrderIDs mengembalikan ID send order berstatus 'SEARCHING_DRIVER'
-// yang sudah melewati batas waktu cancel (created_at < NOW() - 10 menit).
+// yang sudah melewati batas waktu cancel (created_at < NOW() -
+// SendAutocancelCutoffMin menit).
 // Partial index idx_send_orders_auto_cancel mempercepat query ini.
 func (r *Repository) ExpiredSendOrderIDs(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id FROM send_orders
 		WHERE status = 'SEARCHING_DRIVER'
-		  AND created_at < NOW() - INTERVAL '10 minutes'
-	`)
+		  AND created_at < NOW() - ($1 * INTERVAL '1 minute')
+	`, SendAutocancelCutoffMin)
 	if err != nil {
 		return nil, err
 	}

@@ -106,9 +106,9 @@ func assertRefundEntries(t *testing.T, entries *[]wallet.LedgerEntry, escrowID, 
 // expectEmptySweep mengatur ekspektasi 3 query ID expired kosong (food → send
 // → ride), yaitu sweep yang tidak menemukan order untuk diproses.
 func expectEmptySweep(mDB pgxmock.PgxPoolIface) {
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}))
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}))
 	mDB.ExpectQuery("SELECT id FROM ride_orders").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}))
@@ -667,7 +667,7 @@ func TestCancelFoodOrders_WalletRefund(t *testing.T) {
 	w, lgr := newTestWorker(t, mDB)
 
 	custWallet := workerCustWallet
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(workerOrderID))
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
@@ -703,7 +703,7 @@ func TestCancelFoodOrders_WalletRefund(t *testing.T) {
 
 // expectFoodOrderIDs mengatur ekspektasi query ID food order expired.
 func expectFoodOrderIDs(mDB pgxmock.PgxPoolIface, rows *pgxmock.Rows) {
-	mDB.ExpectQuery("SELECT id FROM food_orders").WillReturnRows(rows)
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).WillReturnRows(rows)
 }
 
 // expectFoodTxOpen mengatur ekspektasi transaksi sampai baris order ter-lock.
@@ -728,7 +728,7 @@ func TestCancelFoodOrders_QueryError_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	w, lgr := newTestWorker(t, mDB)
 
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnError(errors.New("conn refused"))
 
 	got := w.CancelFoodOrders(context.Background())
@@ -743,7 +743,7 @@ func TestCancelFoodOrders_QueryRowsErr_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	w, lgr := newTestWorker(t, mDB)
 
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).
 			AddRow(workerOrderID).
 			CloseError(errors.New("connection reset by peer")))
@@ -935,7 +935,7 @@ func TestCancelSendOrders_WalletRefund(t *testing.T) {
 	w, lgr := newTestWorker(t, mDB)
 
 	senderWallet := workerCustWallet
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(workerOrderID))
 	mDB.ExpectBegin()
 	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
@@ -971,7 +971,7 @@ func TestCancelSendOrders_WalletRefund(t *testing.T) {
 
 // expectSendOrderIDs mengatur ekspektasi query ID send order expired.
 func expectSendOrderIDs(mDB pgxmock.PgxPoolIface, rows *pgxmock.Rows) {
-	mDB.ExpectQuery("SELECT id FROM send_orders").WillReturnRows(rows)
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).WillReturnRows(rows)
 }
 
 // expectSendTxOpen mengatur ekspektasi transaksi sampai baris order ter-lock.
@@ -996,7 +996,7 @@ func TestCancelSendOrders_QueryError_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	w, lgr := newTestWorker(t, mDB)
 
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnError(errors.New("conn refused"))
 
 	got := w.CancelSendOrders(context.Background())
@@ -1011,7 +1011,7 @@ func TestCancelSendOrders_QueryRowsErr_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	w, lgr := newTestWorker(t, mDB)
 
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).
 			AddRow(workerOrderID).
 			CloseError(errors.New("connection reset by peer")))
@@ -1251,7 +1251,7 @@ func TestCancelFoodOrders_ExpiredIDsRowScanError_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	w, lgr := newTestWorker(t, mDB)
 
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(42))
 
 	got := w.CancelFoodOrders(context.Background())
@@ -1343,7 +1343,7 @@ func TestCancelSendOrders_ExpiredIDsRowScanError_ReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	w, lgr := newTestWorker(t, mDB)
 
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(42))
 
 	got := w.CancelSendOrders(context.Background())
@@ -1476,9 +1476,9 @@ func TestWorker_SweepOnce_NilRedis_GracefulSingleInstance(t *testing.T) {
 
 	// Tanpa Redis, single-instance dianggap pemilik lock: semua sweep berjalan
 	// (food → send → ride), semua kosong → return 0.
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}))
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}))
 	mDB.ExpectQuery("SELECT id FROM ride_orders").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}))
@@ -1600,9 +1600,9 @@ func TestWorker_Run_PurgesExpiredIdempotency_StopsOnContextCancel(t *testing.T) 
 	// Sweep pertama dijalankan langsung oleh Run sebelum tick pertama.
 	expectEmptySweep(mDB)
 	// Sweep pada tick berikutnya: jumlah tick tidak deterministik.
-	mDB.ExpectQuery("SELECT id FROM food_orders").
+	mDB.ExpectQuery("SELECT id FROM food_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"})).Maybe()
-	mDB.ExpectQuery("SELECT id FROM send_orders").
+	mDB.ExpectQuery("SELECT id FROM send_orders").WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"})).Maybe()
 	mDB.ExpectQuery("SELECT id FROM ride_orders").
 		WillReturnRows(pgxmock.NewRows([]string{"id"})).Maybe()
@@ -1629,5 +1629,42 @@ func TestWorker_Run_PurgesExpiredIdempotency_StopsOnContextCancel(t *testing.T) 
 	}
 
 	lgr.AssertNotCalled(t, "CreateLedgerEntries")
+	require.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestCancelFoodOrders_CutoffValueLocked(t *testing.T) {
+	mDB, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	w, lgr := newTestWorker(t, mDB)
+
+	custWallet := workerCustWallet
+	mDB.ExpectQuery("SELECT id FROM food_orders").
+		WithArgs(int64(15)).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(workerOrderID))
+	mDB.ExpectBegin()
+	mDB.ExpectExec("SET LOCAL statement_timeout").WithArgs().
+		WillReturnResult(pgconn.NewCommandTag("SET"))
+	mDB.ExpectQuery("SELECT id, customer_wallet_id, payment_method, status, is_refunded, is_settled, total_amount").
+		WithArgs(workerOrderID).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "customer_wallet_id", "payment_method", "status", "is_refunded", "is_settled", "total_amount"}).
+			AddRow(workerOrderID, &custWallet, paymentMethodWallet, foodStatusCreated, false, false, workerFare))
+	mDB.ExpectQuery("SELECT id FROM wallets WHERE wallet_type").
+		WithArgs("SYSTEM_ESCROW").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(workerEscrowID))
+	mDB.ExpectExec("SELECT id FROM wallets WHERE id = ANY").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("SELECT 2"))
+	setupLedgerCapture(lgr)
+	mDB.ExpectExec("UPDATE food_orders").
+		WithArgs(workerOrderID, foodStatusCreated, pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
+	mDB.ExpectExec("INSERT INTO food_order_events").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+	mDB.ExpectCommit()
+
+	got := w.CancelFoodOrders(context.Background())
+	assert.Equal(t, 1, got)
+	lgr.AssertExpectations(t)
 	require.NoError(t, mDB.ExpectationsWereMet())
 }

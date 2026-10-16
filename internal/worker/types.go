@@ -41,6 +41,14 @@ var (
 	// yang kedaluwarsa (expires_at < NOW()), dijalankan dalam worker loop (TD-002).
 	IdempotencyPurgeInterval = time.Hour
 
+	// FoodAutocancelCutoffMin adalah cutoff filter auto-cancel, minutes
+	// (food order: created_at < NOW() - N menit).
+	FoodAutocancelCutoffMin int64 = 15
+
+	// SendAutocancelCutoffMin adalah cutoff filter auto-cancel, minutes
+	// (send order: created_at < NOW() - N menit).
+	SendAutocancelCutoffMin int64 = 10
+
 	// CancellationReason EXPIRED (ROADMAP 03 §3.7).
 	cancellationReasonExpired = "EXPIRED"
 
