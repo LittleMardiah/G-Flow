@@ -746,6 +746,18 @@ PATCH /rides/{order_id}/status
     * Trigger creates ledger entries post-completion
 
 7.4 GET RIDE DETAILS
+────────────────────────────────────────────────────────────────────────────
+NOTE (TD-145, 2026-10-16 sesi S99b-2): response sekarang menyertakan objek
+`driver` + field baru. Kode = source of truth (R2):
+  internal/ride/handler.go:247-253 (rideDriverResponse)
+  internal/ride/service.go:530-534 (maskDriverPhone)
+Field yang di-expose (bukan `driver_id` saja lagi):
+  - driver: { id, name, phone_masked, vehicle_type, vehicle_plate }
+  - pickup_address, dropoff_address, base_fare, per_km_rate
+  - cancellation_reason, cancellation_fee, expires_at, assigned_at,
+    pickup_at, is_settled
+Refer ke openapi.yaml untuk spec authoritative.
+
 ────────────────────────────────────────────────────────────────────────────────
 
 GET /rides/{order_id}
@@ -1166,6 +1178,17 @@ GET /send-orders
 
 ================================================================================
 10. ADMIN ENDPOINTS
+────────────────────────────────────────────────────────────────────────────
+NOTE (TD-045, 2026-10-16 sesi S99b): endpoint paths below are OUTDATED.
+Actual implementation (source of truth = cmd/api/main.go):
+  - POST   /api/v1/admin/login
+  - PATCH  /api/v1/admin/users/{user_id}/freeze | /suspend | /ban
+  - POST   /api/v1/admin/transactions/{id}/reverse
+  - PATCH  /api/v1/admin/merchants/{id}/status
+  - GET    /api/v1/admin/ledger/verify (global) + /verify/{wallet_id}
+  - POST   /api/v1/admin/withdrawals/{id}/approve
+Refer to openapi.yaml (to be regenerated) for the authoritative spec.
+
 ================================================================================
 
 10.1 ADMIN AUTHENTICATION

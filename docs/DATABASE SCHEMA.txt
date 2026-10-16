@@ -30,7 +30,7 @@ CREATE EXTENSION IF NOT EXISTS earthdistance;
 ================================================================================
 
 CREATE TYPE user_type_enum AS ENUM ('customer', 'driver', 'merchant', 'admin', 'system');
-CREATE TYPE wallet_type_enum AS ENUM ('CUSTOMER', 'DRIVER', 'MERCHANT', 'SYSTEM_ESCROW', 'SYSTEM_PLATFORM');
+CREATE TYPE wallet_type_enum AS ENUM ('CUSTOMER', 'DRIVER', 'MERCHANT', 'SYSTEM_ESCROW', 'SYSTEM_PLATFORM', 'SYSTEM_BANK_GATEWAY', 'SYSTEM_RECEIVABLE_OVERDRAFT', 'SYSTEM_PLATFORM_SUBSIDY');
 CREATE TYPE entry_type_enum AS ENUM ('DEBIT', 'CREDIT');
 CREATE TYPE order_status_enum AS ENUM (
   'CREATED', 'SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'DRIVER_ARRIVED',
@@ -629,7 +629,7 @@ CREATE TABLE IF NOT EXISTS vouchers (
   
   discount_type voucher_discount_type_enum NOT NULL,
   discount_value NUMERIC(10,2) NOT NULL,
-  max_discount NUMERIC(10,2),
+  max_discount NUMERIC(10,2),  -- NULL = unlimited; non-NULL = cap absolute discount
   
   applicable_services order_type_enum[] DEFAULT ARRAY['RIDE'::order_type_enum, 'FOOD'::order_type_enum, 'SEND'::order_type_enum],
   
@@ -1591,7 +1591,8 @@ CREATE POLICY "System can insert send events" ON send_order_events
 2️⃣4️⃣ ADMIN_ACTIONS TABLE
 ────────────────────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS admin_actions (
+-- NOTE (TD-180): renamed to `admin_action_logs` since migration 010. See migrations/010_admin_lockouts.up.sql:26.
+CREATE TABLE IF NOT EXISTS admin_action_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   
   admin_id UUID NOT NULL,
@@ -1616,12 +1617,12 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_admin_actions_admin ON admin_actions(admin_id);
-CREATE INDEX idx_admin_actions_created ON admin_actions(created_at DESC);
-CREATE INDEX idx_admin_actions_target ON admin_actions(target_resource_type, target_resource_id);
+CREATE INDEX idx_admin_actions_admin ON admin_action_logs(admin_id);
+CREATE INDEX idx_admin_actions_created ON admin_action_logs(created_at DESC);
+CREATE INDEX idx_admin_actions_target ON admin_action_logs(target_resource_type, target_resource_id);
 
-ALTER TABLE admin_actions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Admins can view all actions" ON admin_actions
+ALTER TABLE admin_action_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admins can view all actions" ON admin_action_logs
   FOR ALL USING (
     (auth.jwt() ->> 'user_type') = 'admin'
   );

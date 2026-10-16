@@ -1,3 +1,9 @@
+# ⚠️ STALE (TD-101, 2026-10-16 sesi S99b-3):
+# This file is STALE vs cmd/api/main.go (source of truth, R2).
+# Known drift: driver object (TD-145), admin paths (TD-045), BANNED enum
+# (TD-052), withdrawal approve, merchants/:id/status, ledger/verify global.
+# Authoritative docs (manusia): docs/API CONTRACT.txt.
+# TODO (bukan scope S99): regenerate from kode + serve Swagger UI di /docs.
 openapi: 3.0.3
 info:
   title: G-Flow Super-App API
