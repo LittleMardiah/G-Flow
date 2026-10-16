@@ -105,9 +105,10 @@ func (h *Handler) ReverseTransaction(c *gin.Context) {
 		return
 	}
 	if !h.twoFA.Validate(twoFAToken) {
-		attempts, _ := h.recordFailedAttempt(c.Request.Context(), adminID)
+		if _, err := h.recordFailedAttempt(c.Request.Context(), adminID); err != nil {
+			h.logger.Warn("recordFailedAttempt failed", "admin_id", adminID, "error", err)
+		}
 		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
-		_ = attempts
 		return
 	}
 	h.resetAttempts(c.Request.Context(), adminID)
@@ -191,7 +192,9 @@ func (h *Handler) UpdateMerchantStatus(c *gin.Context) {
 		return
 	}
 	if !h.twoFA.Validate(twoFAToken) {
-		_, _ = h.recordFailedAttempt(c.Request.Context(), adminID)
+		if _, err := h.recordFailedAttempt(c.Request.Context(), adminID); err != nil {
+			h.logger.Warn("recordFailedAttempt failed", "admin_id", adminID, "error", err)
+		}
 		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
 		return
 	}
@@ -618,7 +621,9 @@ func (h *Handler) UpdateUserStatus(c *gin.Context) {
 		return
 	}
 	if !h.twoFA.Validate(twoFAToken) {
-		_, _ = h.recordFailedAttempt(c.Request.Context(), adminID)
+		if _, err := h.recordFailedAttempt(c.Request.Context(), adminID); err != nil {
+			h.logger.Warn("recordFailedAttempt failed", "admin_id", adminID, "error", err)
+		}
 		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
 		return
 	}
@@ -727,7 +732,9 @@ func (h *Handler) ApproveWithdrawal(c *gin.Context) {
 		return
 	}
 	if !h.twoFA.Validate(twoFAToken) {
-		_, _ = h.recordFailedAttempt(c.Request.Context(), adminID)
+		if _, err := h.recordFailedAttempt(c.Request.Context(), adminID); err != nil {
+			h.logger.Warn("recordFailedAttempt failed", "admin_id", adminID, "error", err)
+		}
 		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED_2FA", "token 2FA tidak valid")
 		return
 	}

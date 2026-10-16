@@ -224,9 +224,9 @@ func (h *Handler) recordFailedAttempt(ctx context.Context, adminID uuid.UUID) (i
 		lockoutKey := lockoutKeyPrefix + adminID.String()
 		h.redis.Set(ctx, lockoutKey, "1", lockoutDuration)
 		if _, dbErr := h.db.Exec(ctx, `
-			UPDATE admin_lockouts SET locked_until = NOW() + INTERVAL '15 minutes', updated_at = NOW()
+			UPDATE admin_lockouts SET locked_until = NOW() + ($2 * INTERVAL '1 second'), updated_at = NOW()
 			WHERE admin_id = $1
-		`, adminID); dbErr != nil {
+		`, adminID, int(lockoutDuration.Seconds())); dbErr != nil {
 			h.logger.Warn("PostgreSQL lockout persist failed", "admin_id", adminID, "error", dbErr)
 		}
 	}
@@ -249,9 +249,9 @@ func (h *Handler) recordFailedAttemptPG(ctx context.Context, adminID uuid.UUID) 
 	attempts := int64(currentAttempts)
 	if attempts >= maxFailedAttempts {
 		if _, err := h.db.Exec(ctx, `
-			UPDATE admin_lockouts SET locked_until = NOW() + INTERVAL '15 minutes', updated_at = NOW()
+			UPDATE admin_lockouts SET locked_until = NOW() + ($2 * INTERVAL '1 second'), updated_at = NOW()
 			WHERE admin_id = $1
-		`, adminID); err != nil {
+		`, adminID, int(lockoutDuration.Seconds())); err != nil {
 			return 0, err
 		}
 	}

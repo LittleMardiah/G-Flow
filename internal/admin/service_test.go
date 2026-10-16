@@ -553,7 +553,7 @@ func TestRecordFailedAttemptPG_Locks(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"failed_attempts"}).AddRow(3))
 	mDB.ExpectExec("UPDATE admin_lockouts SET locked_until").
-		WithArgs(pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), int(lockoutDuration.Seconds())).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	h := newTestHandler(t, mDB, nil)
@@ -809,7 +809,7 @@ func TestRecordFailedAttempt_Fallback(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"failed_attempts"}).AddRow(3))
 	mDB.ExpectExec("UPDATE admin_lockouts SET locked_until").
-		WithArgs(pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), int(lockoutDuration.Seconds())).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	svc := NewService(NewRepository(mDB), mDB, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
@@ -832,7 +832,7 @@ func TestRecordFailedAttempt_LocksViaRedis(t *testing.T) {
 		WithArgs(pgxmock.AnyArg()).
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	mDB.ExpectExec("UPDATE admin_lockouts SET locked_until").
-		WithArgs(pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), int(lockoutDuration.Seconds())).
 		WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

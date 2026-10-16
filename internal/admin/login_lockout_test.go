@@ -90,7 +90,7 @@ func expectFailedLoginAttempt(t *testing.T, mDB pgxmock.PgxPoolIface, email, use
 		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
 	if applyLock {
 		mDB.ExpectExec(regexpApplyLockoutQuery).
-			WithArgs(pgxmock.AnyArg()).
+			WithArgs(pgxmock.AnyArg(), int(lockoutDuration.Seconds())).
 			WillReturnResult(pgconn.NewCommandTag("UPDATE 1"))
 	}
 }
