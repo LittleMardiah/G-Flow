@@ -12,7 +12,10 @@ import 'package:customer_app/providers/ride_provider.dart';
 import 'package:customer_app/screens/ride/ride_detail_screen.dart';
 import 'package:customer_app/screens/ride/ride_history_screen.dart';
 import 'package:customer_app/services/api_client.dart';
+import 'package:customer_app/screens/ride/ride_booking_screen.dart';
+import 'package:customer_app/providers/wallet_provider.dart';
 import 'package:customer_app/services/ride_service.dart';
+import 'package:customer_app/services/wallet_service.dart';
 
 /// Fake base (pengganti mockito) — pola sama services_test.dart.
 abstract class Fake {
@@ -311,6 +314,49 @@ void main() {
       await pumpEventQueue();
       // Fungsi yang dipakai _confirmCancel untuk menyusun teks fee dialog.
       expect(rideCancellationFeeForStatus(n.state.order?.status), 10000);
+    });
+  });
+
+  group('RideBookingScreen proactive debt gate (TD-196)', () {
+    testWidgets('overdue_debt > 0 -> banner proaktif tanpa booking dulu',
+        (tester) async {
+      final adapter = DioAdapterMock(data: {
+        'success': true,
+        'data': {'wallet_id': 'w1', 'balance': 0, 'overdue_debt': '45000'},
+      });
+      final walletService = WalletService(
+        ApiClient(dio: Dio()..httpClientAdapter = adapter, storage: FakeStorage()),
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [walletServiceProvider.overrideWithValue(walletService)],
+        child: const MaterialApp(home: RideBookingScreen()),
+      ));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(find.textContaining('hutang (overdue)'), findsOneWidget);
+    });
+
+    testWidgets('overdue_debt = 0 -> banner tidak muncul', (tester) async {
+      final adapter = DioAdapterMock(data: {
+        'success': true,
+        'data': {'wallet_id': 'w1', 'balance': 10000, 'overdue_debt': '0'},
+      });
+      final walletService = WalletService(
+        ApiClient(dio: Dio()..httpClientAdapter = adapter, storage: FakeStorage()),
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [walletServiceProvider.overrideWithValue(walletService)],
+        child: const MaterialApp(home: RideBookingScreen()),
+      ));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(find.textContaining('hutang (overdue)'), findsNothing);
     });
   });
 }

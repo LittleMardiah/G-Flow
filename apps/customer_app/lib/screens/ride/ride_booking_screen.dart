@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../config/router.dart';
 import '../../models/ride_order.dart';
 import '../../providers/ride_provider.dart';
+import '../../providers/wallet_provider.dart';
 import '../../services/location_service.dart';
 import '../../services/ride_service.dart';
 
@@ -236,6 +237,15 @@ class _RideBookingScreenState extends ConsumerState<RideBookingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // TD-196 (S122): proactive debt gate. Fetch /wallets/me on mount via
+    // myWalletProvider (auto-load) lalu tampilkan banner bila overdue_debt > 0.
+    // Reactive catch (isOverdueDebtError 422) tetap sebagai fallback.
+    ref.listen<WalletBalanceState>(myWalletProvider, (prev, next) {
+      final debt = next.wallet?.overdueDebt ?? 0;
+      if (debt > 0 && !_overdueDebt) {
+        setState(() => _overdueDebt = true);
+      }
+    });
     return Scaffold(
       appBar: AppBar(
         title: const Text('Book Ride'),

@@ -11,6 +11,7 @@ class Wallet {
     required this.walletId,
     this.userId,
     this.balance = 0,
+    this.overdueDebt = 0,
     this.status,
     this.walletType,
     this.updatedAt,
@@ -19,6 +20,7 @@ class Wallet {
   final String walletId;
   final String? userId;
   final int balance;
+  final double overdueDebt;
   final String? status;
   final String? walletType;
   final DateTime? updatedAt;
@@ -28,6 +30,7 @@ class Wallet {
       walletId: _str(j['wallet_id']) ?? _str(j['id']) ?? '',
       userId: _str(j['user_id']),
       balance: _int(j['balance']),
+      overdueDebt: _num(j['overdue_debt']),
       status: _str(j['status']),
       walletType: _str(j['wallet_type']),
       updatedAt: _date(j['updated_at']),
@@ -39,6 +42,7 @@ class Wallet {
       walletId: walletId,
       userId: userId,
       balance: balance ?? this.balance,
+      overdueDebt: overdueDebt,
       status: status,
       walletType: walletType,
       updatedAt: updatedAt,
@@ -48,6 +52,7 @@ class Wallet {
   static String? _str(Object? v) =>
       v == null ? null : v is String ? v : v.toString();
   static int _int(Object? v) => v is num ? v.round() : (int.tryParse('$v') ?? 0);
+  static double _num(Object? v) => v is num ? v.toDouble() : (double.tryParse('$v') ?? 0);
   static DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v) : null;
 }
 

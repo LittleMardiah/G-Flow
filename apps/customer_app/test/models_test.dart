@@ -6,6 +6,7 @@ import 'package:customer_app/models/merchant.dart';
 import 'package:customer_app/models/menu_item.dart';
 import 'package:customer_app/models/option_choice.dart';
 import 'package:customer_app/models/send_order.dart';
+import 'package:customer_app/models/wallet.dart';
 import 'package:customer_app/providers/cart_provider.dart';
 
 void main() {
@@ -215,6 +216,23 @@ void main() {
       cart.addItem(b, const []);
       expect(cart.state.lines.length, 2);
       expect(cart.state.itemCount, 3);
+    });
+  });
+
+  group('Wallet.fromJson overdue_debt (TD-196)', () {
+    test('string decimal dari backend di-parse ke double', () {
+      final w = Wallet.fromJson({'wallet_id': 'w1', 'balance': 10000, 'overdue_debt': '45000.50'});
+      expect(w.overdueDebt, 45000.50);
+    });
+
+    test('JSON number juga diterima (toleran)', () {
+      final w = Wallet.fromJson({'wallet_id': 'w1', 'balance': 0, 'overdue_debt': 45000});
+      expect(w.overdueDebt, 45000);
+    });
+
+    test('missing / null -> 0 (tanpa hutang)', () {
+      expect(Wallet.fromJson({'wallet_id': 'w1'}).overdueDebt, 0);
+      expect(Wallet.fromJson({'wallet_id': 'w1', 'overdue_debt': null}).overdueDebt, 0);
     });
   });
 }
