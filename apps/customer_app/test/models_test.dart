@@ -142,6 +142,32 @@ void main() {
       expect(o.stops.last.isDelivered, isFalse);
       expect(o.stopsCompleted, 1);
     });
+
+    test('menurunkan fare_breakdown_per_stop (decimal string) — TD-151', () {
+      final o = SendOrder.fromJson(const {
+        'id': 'uuid-send-order-123',
+        'status': 'SEARCHING_DRIVER',
+        'total_fare': 52000,
+        'fare_breakdown_per_stop': [
+          {'stop_order': 1, 'distance_km': '5.0', 'allocated_fare': '7500.00'},
+          {'stop_order': 2, 'distance_km': 8.5, 'allocated_fare': 30000},
+        ],
+      });
+      expect(o.fareBreakdownPerStop.length, 2);
+      expect(o.fareBreakdownPerStop.first.stopOrder, 1);
+      expect(o.fareBreakdownPerStop.first.distanceKm, 5.0);
+      expect(o.fareBreakdownPerStop.first.allocatedFare, 7500);
+      expect(o.fareBreakdownPerStop.last.allocatedFare, 30000);
+    });
+
+    test('fare_breakdown_per_stop absen → list kosong (backward compat)', () {
+      final o = SendOrder.fromJson(const {
+        'id': 'uuid-send-order-456',
+        'status': 'SEARCHING_DRIVER',
+        'stops': [],
+      });
+      expect(o.fareBreakdownPerStop, isEmpty);
+    });
   });
 
   group('CartNotifier', () {

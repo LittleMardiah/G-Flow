@@ -31,6 +31,7 @@ class SendOrder {
     this.createdAt,
     this.stops = const [],
     this.isMock = false,
+    this.fareBreakdownPerStop = const [],
   });
 
   final String id;
@@ -47,6 +48,7 @@ class SendOrder {
   final DateTime? createdAt;
   final List<SendStop> stops;
   final bool isMock;
+  final List<FareBreakdownPerStop> fareBreakdownPerStop;
 
   factory SendOrder.fromJson(Map<String, dynamic> j, {bool isMock = false}) {
     return SendOrder(
@@ -64,6 +66,9 @@ class SendOrder {
       createdAt: _date(j['created_at']),
       stops: _list(j['stops']).map(SendStop.fromJson).toList(),
       isMock: isMock,
+      fareBreakdownPerStop: _list(j['fare_breakdown_per_stop'])
+          .map(FareBreakdownPerStop.fromJson)
+          .toList(),
     );
   }
 
@@ -81,6 +86,37 @@ class SendOrder {
   static double _num(Object? v) => v is num ? v.toDouble() : (double.tryParse('$v') ?? 0);
   static int _int(Object? v) => v is num ? v.round() : (int.tryParse('$v') ?? 0);
   static DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v) : null;
+}
+
+/// Breakdown fare per stop dari response create send order (API CONTRACT 9.1).
+///
+/// Nilai decimal di-marshal backend (shopspring/decimal) sebagai JSON string
+/// ("7500.00"), jadi parser toleran string (pola TD-126).
+class FareBreakdownPerStop {
+  const FareBreakdownPerStop({
+    required this.stopOrder,
+    this.distanceKm = 0,
+    this.allocatedFare = 0,
+  });
+
+  final int stopOrder;
+  final double distanceKm;
+  final int allocatedFare;
+
+  factory FareBreakdownPerStop.fromJson(Map<String, dynamic> j) {
+    return FareBreakdownPerStop(
+      stopOrder: _int(j['stop_order'] ?? j['stop_number'] ?? j['order']),
+      distanceKm: _num(j['distance_km']),
+      allocatedFare: _int(j['allocated_fare']),
+    );
+  }
+
+  static double _num(Object? v) =>
+      v is num ? v.toDouble() : (double.tryParse('$v') ?? 0);
+  static int _int(Object? v) {
+    if (v is num) return v.round();
+    return int.tryParse('$v') ?? double.tryParse('$v')?.round() ?? 0;
+  }
 }
 
 /// Argumen navigasi ke /send-tracking (fallback saat detail backend belum

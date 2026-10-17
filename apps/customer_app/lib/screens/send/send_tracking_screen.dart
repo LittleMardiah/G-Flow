@@ -270,7 +270,10 @@ class _StopsCard extends StatelessWidget {
           children: [
             Text('Stop Status', style: theme.textTheme.titleSmall),
             const SizedBox(height: 10),
-            if (order.stops.isEmpty)
+            if (order.stops.isEmpty && order.fareBreakdownPerStop.isNotEmpty)
+              for (final b in order.fareBreakdownPerStop)
+                _breakdownTile(context, b)
+            else if (order.stops.isEmpty)
               Text('(Detail stop dimuat saat pembuatan)',
                   style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant))
@@ -278,6 +281,35 @@ class _StopsCard extends StatelessWidget {
               for (final stop in order.stops) _stopTile(context, stop),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Alokasi fare per stop dari response create order (TD-151), dipakai saat
+  /// `stops` belum tersedia dari GET detail.
+  Widget _breakdownTile(BuildContext context, FareBreakdownPerStop b) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.receipt_long_outlined,
+              color: theme.colorScheme.primary, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Stop ${b.stopOrder}', style: theme.textTheme.bodyMedium),
+                if (b.distanceKm > 0)
+                  Text(
+                      '${b.distanceKm.toStringAsFixed(1)} km · ${_formatRupiah(b.allocatedFare)}',
+                      style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
