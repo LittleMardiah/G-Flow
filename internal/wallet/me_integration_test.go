@@ -68,14 +68,16 @@ func setupMeRouter(t *testing.T) *gin.Engine {
 	return r
 }
 
-// meResp adalah bentuk response sukses GET /wallets/me sesuai DESIGN TD-120.
+// meResp adalah bentuk response sukses GET /wallets/me sesuai DESIGN TD-120
+// + TD-196 (field overdue_debt).
 type meResp struct {
 	Success bool `json:"success"`
 	Data    struct {
-		WalletID   uuid.UUID       `json:"wallet_id"`
-		Balance    decimal.Decimal `json:"balance"`
-		Status     string          `json:"status"`
-		WalletType string          `json:"wallet_type"`
+		WalletID    uuid.UUID       `json:"wallet_id"`
+		Balance     decimal.Decimal `json:"balance"`
+		Status      string          `json:"status"`
+		WalletType  string          `json:"wallet_type"`
+		OverdueDebt decimal.Decimal `json:"overdue_debt"`
 	} `json:"data"`
 }
 
@@ -157,6 +159,35 @@ func TestIntegrationWalletMe_Customer(t *testing.T) {
 	require.Equal(t, wallet.WalletTypeCustomer, body.Data.WalletType)
 	require.Equal(t, wallet.WalletStatusActive, body.Data.Status)
 	require.True(t, body.Data.Balance.IsZero(), "balance awal = %v, want 0", body.Data.Balance)
+	// TD-196: user baru tidak punya hutang -> overdue_debt = 0.
+	require.True(t, body.Data.OverdueDebt.IsZero(), "overdue_debt awal = %v, want 0", body.Data.OverdueDebt)
+	require.Equal(t, walletIDOf(ctx, t, pool, userID, wallet.WalletTypeCustomer), body.Data.WalletID)
+}
+
+// TestIntegrationWalletMe_OverdueDebt: user dengan overdue_debt > 0 di tabel
+// users -> GET /wallets/me mengembalikan nilai tersebut apa adanya (TD-196).
+// Ini menutup kebutuhan banner hutang proaktif di mobile.
+func TestIntegrationWalletMe_OverdueDebt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	ctx := context.Background()
+	pool := setupPool(t)
+	r := setupMeRouter(t)
+
+	token, userID := meRegisterAndLogin(t, r, "customer")
+
+	// Set hutang langsung di DB — ground truth independen dari endpoint.
+	_, err := pool.Exec(ctx, `UPDATE users SET overdue_debt = 45000 WHERE id = $1`, userID)
+	require.NoError(t, err)
+
+	w := wDoJSON(r, http.MethodGet, "/api/v1/wallets/me?type=CUSTOMER", nil, token)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var body meResp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.True(t, body.Success)
+	require.Equal(t, "45000", body.Data.OverdueDebt.String())
 	require.Equal(t, walletIDOf(ctx, t, pool, userID, wallet.WalletTypeCustomer), body.Data.WalletID)
 }
 

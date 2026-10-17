@@ -388,10 +388,11 @@ func TestHandler_GetMyWallet_Success(t *testing.T) {
 	h := NewHandler(svc)
 
 	svc.On("GetMyWallet", mock.Anything, testHU, WalletTypeCustomer).Return(&MyWallet{
-		WalletID:   testHW,
-		Balance:    decimal.NewFromInt(500000),
-		Status:     WalletStatusActive,
-		WalletType: WalletTypeCustomer,
+		WalletID:    testHW,
+		Balance:     decimal.NewFromInt(500000),
+		Status:      WalletStatusActive,
+		WalletType:  WalletTypeCustomer,
+		OverdueDebt: decimal.NewFromInt(30000),
 	}, nil)
 
 	c, w := newCtx(t, http.MethodGet, "/wallets/me?type=CUSTOMER", nil, "")
@@ -407,6 +408,7 @@ func TestHandler_GetMyWallet_Success(t *testing.T) {
 	assert.Equal(t, testHW.String(), data["wallet_id"])
 	assert.Equal(t, "ACTIVE", data["status"])
 	assert.Equal(t, "CUSTOMER", data["wallet_type"])
+	assert.Equal(t, "30000", data["overdue_debt"])
 	svc.AssertExpectations(t)
 }
 

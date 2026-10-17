@@ -202,10 +202,17 @@ func TestTopUpSuccess(t *testing.T) {
 
 func TestService_GetMyWallet_Success(t *testing.T) {
 	repo := new(mockRepo)
-	svc := NewService(repo, nil, nil, nil)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	svc := NewService(repo, nil, nil, mDB)
 
 	repo.On("GetByUserIDAndType", mock.Anything, testUserID, WalletTypeCustomer).
 		Return(newCustomerWallet(decimal.NewFromInt(150000)), nil)
+
+	// TD-196: overdue_debt=0 untuk user tanpa hutang.
+	mDB.ExpectQuery("SELECT COALESCE\\(overdue_debt").
+		WithArgs(testUserID).
+		WillReturnRows(pgxmock.NewRows([]string{"overdue_debt"}).AddRow(decimal.Zero))
 
 	got, err := svc.GetMyWallet(context.Background(), testUserID, WalletTypeCustomer)
 
@@ -215,7 +222,32 @@ func TestService_GetMyWallet_Success(t *testing.T) {
 	assert.Equal(t, WalletStatusActive, got.Status)
 	assert.Equal(t, WalletTypeCustomer, got.WalletType)
 	assert.Equal(t, "150000", got.Balance.String())
+	assert.True(t, got.OverdueDebt.IsZero())
 	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
+}
+
+func TestService_GetMyWallet_OverdueDebt(t *testing.T) {
+	repo := new(mockRepo)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	svc := NewService(repo, nil, nil, mDB)
+
+	repo.On("GetByUserIDAndType", mock.Anything, testUserID, WalletTypeCustomer).
+		Return(newCustomerWallet(decimal.Zero), nil)
+
+	// TD-196: user dengan hutang -> overdue_debt diekspos apa adanya.
+	mDB.ExpectQuery("SELECT COALESCE\\(overdue_debt").
+		WithArgs(testUserID).
+		WillReturnRows(pgxmock.NewRows([]string{"overdue_debt"}).AddRow(decimal.NewFromInt(25000)))
+
+	got, err := svc.GetMyWallet(context.Background(), testUserID, WalletTypeCustomer)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.Equal(t, "25000", got.OverdueDebt.String())
+	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
 func TestService_GetMyWallet_NotFound(t *testing.T) {
@@ -234,7 +266,9 @@ func TestService_GetMyWallet_NotFound(t *testing.T) {
 
 func TestService_GetMyWallet_DriverType(t *testing.T) {
 	repo := new(mockRepo)
-	svc := NewService(repo, nil, nil, nil)
+	mDB, err := pgxmock.NewPool()
+	assert.NoError(t, err)
+	svc := NewService(repo, nil, nil, mDB)
 
 	driverWallet := &Wallet{
 		ID:      uuid.MustParse("77777777-7777-7777-7777-777777777777"),
@@ -246,12 +280,18 @@ func TestService_GetMyWallet_DriverType(t *testing.T) {
 	repo.On("GetByUserIDAndType", mock.Anything, testUserID, WalletTypeDriver).
 		Return(driverWallet, nil)
 
+	// TD-196: overdue_debt=0 untuk user tanpa hutang.
+	mDB.ExpectQuery("SELECT COALESCE\\(overdue_debt").
+		WithArgs(testUserID).
+		WillReturnRows(pgxmock.NewRows([]string{"overdue_debt"}).AddRow(decimal.Zero))
+
 	got, err := svc.GetMyWallet(context.Background(), testUserID, WalletTypeDriver)
 
 	assert.NoError(t, err)
 	assert.Equal(t, WalletTypeDriver, got.WalletType)
 	assert.Equal(t, "900000", got.Balance.String())
 	repo.AssertExpectations(t)
+	assert.NoError(t, mDB.ExpectationsWereMet())
 }
 
 // ---- Test 2: TopUp idempotency duplicate (L2 COMPLETED cached) ----

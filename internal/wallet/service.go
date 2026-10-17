@@ -125,12 +125,14 @@ type WalletHistory struct {
 
 // MyWallet hasil resolusi GET /wallets/me: profil wallet milik user
 // terautentikasi (TD-120). Field sesuai DESIGN: {wallet_id, balance,
-// status, wallet_type}.
+// status, wallet_type}. TD-196 menambah overdue_debt (level user) supaya
+// mobile bisa menampilkan banner hutang proaktif, bukan hanya reaktif 422.
 type MyWallet struct {
-	WalletID   uuid.UUID       `json:"wallet_id"`
-	Balance    decimal.Decimal `json:"balance"`
-	Status     string          `json:"status"`
-	WalletType string          `json:"wallet_type"`
+	WalletID    uuid.UUID       `json:"wallet_id"`
+	Balance     decimal.Decimal `json:"balance"`
+	Status      string          `json:"status"`
+	WalletType  string          `json:"wallet_type"`
+	OverdueDebt decimal.Decimal `json:"overdue_debt"`
 }
 
 // WalletRepo adalah kontrak repository yang dibutuhkan Service.
@@ -529,11 +531,18 @@ func (s *Service) GetMyWallet(ctx context.Context, userID uuid.UUID, walletType 
 	if err != nil {
 		return nil, err
 	}
+	// TD-196: sertakan overdue_debt (level user) di response /wallets/me
+	// supaya mobile bisa menampilkan peringatan hutang proaktif.
+	overdueDebt, err := s.overdueDebtFor(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	return &MyWallet{
-		WalletID:   w.ID,
-		Balance:    w.Balance,
-		Status:     w.Status,
-		WalletType: w.Type,
+		WalletID:    w.ID,
+		Balance:     w.Balance,
+		Status:      w.Status,
+		WalletType:  w.Type,
+		OverdueDebt: overdueDebt,
 	}, nil
 }
 
