@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 
@@ -24,6 +25,7 @@ class RideService {
 
   /// POST /rides/book (API_CONTRACT 7.1). Menerima koordinat + metode
   /// pembayaran; dikirim dengan X-Idempotency-Key untuk menjamin idempotensi.
+  /// [voucherCode] opsional (TD-070): backend menerima `voucher_code` di body.
   Future<BookRideResult> bookRide({
     required double pickupLat,
     required double pickupLng,
@@ -31,6 +33,7 @@ class RideService {
     required double dropoffLng,
     required String paymentMethod,
     required String idempotencyKey,
+    String? voucherCode,
   }) async {
     final res = await apiClient.post(
       '/api/v1/rides/book',
@@ -41,6 +44,8 @@ class RideService {
         'dropoff_lat': dropoffLat,
         'dropoff_lng': dropoffLng,
         'payment_method': paymentMethod,
+        if (voucherCode != null && voucherCode.trim().isNotEmpty)
+          'voucher_code': voucherCode.trim(),
       },
     );
     final data = res.data is Map<String, dynamic> ? (res.data as Map)['data'] : null;
@@ -104,6 +109,29 @@ class RideService {
     return data is Map<String, dynamic> ? data : const <String, dynamic>{};
   }
 }
+
+/// Estimasi ongkos client-side (API_CONTRACT 7.1: base Rp 10.000 +
+/// Rp 4.000/km) untuk fare preview sebelum booking. Nilai final tetap
+/// dihitung backend.
+int estimateFare({required LatLng pickup, required LatLng dropoff}) {
+  final km = RideMockSimulator.distanceKm(pickup, dropoff);
+  return (10000 + km * 4000).round();
+}
+
+/// Ekstrak `error.code` dari body respons error backend
+/// (`{success:false, error:{code, message}}`). Null jika tidak terbaca.
+String? rideErrorCode(DioException e) {
+  final data = e.response?.data;
+  if (data is Map && data['error'] is Map) {
+    final code = (data['error'] as Map)['code'];
+    if (code is String) return code;
+  }
+  return null;
+}
+
+/// True jika booking ditolak Debt Gate Universal (API_CONTRACT: customer
+/// dengan overdue_debt > 0 ditolak, HTTP 422 OVERDUE_DEBT).
+bool isOverdueDebtError(DioException e) => rideErrorCode(e) == 'OVERDUE_DEBT';
 
 /// Hasil GET /rides list (customer history) — daftar order + jumlah total
 /// halaman dari meta.total_pages untuk menentukan hasMore pada pagination.

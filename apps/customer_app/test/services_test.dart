@@ -27,6 +27,7 @@ class DioAdapterMock extends Fake implements HttpClientAdapter {
   String lastMethod = '';
   String lastQuery = '';
   Map<String, dynamic> lastHeaders = {};
+  Object? lastData;
 
   DioAdapterMock({this.data, this.statusCode = 200});
 
@@ -35,6 +36,7 @@ class DioAdapterMock extends Fake implements HttpClientAdapter {
     lastPath = options.path;
     lastMethod = options.method;
     lastHeaders = options.headers;
+    lastData = options.data;
     final uri = Uri.parse(options.path);
     lastQuery = uri.query;
     return ResponseBody.fromString(
@@ -113,6 +115,78 @@ void main() {
       final svc = RideService(makeApi(dio));
       await svc.cancelRide('r1');
       expect(dio.lastPath, '/api/v1/rides/r1/status');
+    });
+
+    test('bookRide mengirim voucher_code saat diisi', () async {
+      final dio = DioAdapterMock(data: const {'data': {}});
+      final svc = RideService(makeApi(dio));
+      await svc.bookRide(
+        pickupLat: 1,
+        pickupLng: 2,
+        dropoffLat: 3,
+        dropoffLng: 4,
+        paymentMethod: 'WALLET',
+        idempotencyKey: const Uuid().v4(),
+        voucherCode: 'PROMO10',
+      );
+      expect((dio.lastData as Map)['voucher_code'], 'PROMO10');
+    });
+
+    test('bookRide tidak mengirim voucher_code saat kosong', () async {
+      final dio = DioAdapterMock(data: const {'data': {}});
+      final svc = RideService(makeApi(dio));
+      await svc.bookRide(
+        pickupLat: 1,
+        pickupLng: 2,
+        dropoffLat: 3,
+        dropoffLng: 4,
+        paymentMethod: 'WALLET',
+        idempotencyKey: const Uuid().v4(),
+      );
+      expect((dio.lastData as Map).containsKey('voucher_code'), isFalse);
+    });
+  });
+
+  group('Fare preview & debt gate', () {
+    test('estimateFare = base 10.000 + 4.000/km', () {
+      const a = LatLng(-6.2, 106.8);
+      const b = LatLng(-6.25, 106.85);
+      final km = RideMockSimulator.distanceKm(a, b);
+      expect(estimateFare(pickup: a, dropoff: b), (10000 + km * 4000).round());
+    });
+
+    test('estimateFare titik sama = base fare', () {
+      const a = LatLng(1, 1);
+      expect(estimateFare(pickup: a, dropoff: a), 10000);
+    });
+
+    test('rideErrorCode membaca code OVERDUE_DEBT', () {
+      final e = DioException(
+        requestOptions: RequestOptions(path: '/api/v1/rides/book'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/api/v1/rides/book'),
+          statusCode: 422,
+          data: const {
+            'success': false,
+            'error': {'code': 'OVERDUE_DEBT', 'message': 'hutang'},
+          },
+        ),
+      );
+      expect(rideErrorCode(e), 'OVERDUE_DEBT');
+      expect(isOverdueDebtError(e), isTrue);
+    });
+
+    test('rideErrorCode null saat body error tidak terbaca', () {
+      final e = DioException(
+        requestOptions: RequestOptions(path: '/api/v1/rides/book'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/api/v1/rides/book'),
+          statusCode: 500,
+          data: const {'foo': 'bar'},
+        ),
+      );
+      expect(rideErrorCode(e), isNull);
+      expect(isOverdueDebtError(e), isFalse);
     });
   });
 

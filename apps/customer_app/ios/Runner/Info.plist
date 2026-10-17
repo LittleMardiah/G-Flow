@@ -8,6 +8,8 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Customer App</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>G-Flow menggunakan lokasi Anda untuk mengisi titik jemput saat booking ride.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
