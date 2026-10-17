@@ -2797,7 +2797,7 @@ Solusi     : Parse field di send_order_service atau model; tampilkan di
              (pola yang sudah dipakai TD-126 untuk allocated_fare), kalau
              tidak nilainya Rp 0 per stop.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-17, sesi S116 — customer_app parse fare_breakdown_per_stop + FareBreakdownPerStop class + render UI; decimal-string tolerate (TD-126 pattern); analyze RC=0, 121 test PASS)
 Referensi  : TD-126 (temuan OpenCode)
 
 ID         : TD-152
@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 111 item, 60 item CLOSED (FIXED/CLOSED 171), 14 item DEFERRED,
-        3 item OPEN.  [111 + 60 + 14 + 3 = 188 = TOTAL]
+STATUS: ✅ FIXED 112 item, 60 item CLOSED (FIXED/CLOSED 172), 14 item DEFERRED,
+        2 item OPEN.  [112 + 60 + 14 + 2 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-16, sesi S114 — TD-152 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S117 — TD-151 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 111 item
+   - ✅ FIXED                           : 112 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 171 item
+   - FIXED/CLOSED                       : 172 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 3 item (sisa setelah sesi S114 = SEDANG 0 + RENDAH 3;
+   - ❌ OPEN                              : 2 item (sisa setelah sesi S117 = SEDANG 0 + RENDAH 2; TD-073 + TD-170, keduanya Flutter complex)
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [111 + 60 + 14 + 3 = 188 = TOTAL]
+      [112 + 60 + 14 + 2 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10230,3 +10230,30 @@ CHANGELOG — 2026-10-16 (sesi S113+S114, TD-152 FIXED + Flutter SDK v2):
 - Counter §2/§3 sync: 111F/60C/14D/3O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-152), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S115).
+
+========================================================================
+CHANGELOG — 2026-10-17 (sesi S116+S117, TD-151 FIXED):
+- TD-151 (MOBILE / FITUR) Status OPEN → ✅ FIXED.
+- S116 FIX (3 Dart files, +95/-1):
+  * lib/models/send_order.dart — data class baru FareBreakdownPerStop
+    {stopOrder, distanceKm, allocatedFare} (line 95) + field
+    `List<FareBreakdownPerStop> fareBreakdownPerStop` (line 51) + parse
+    di fromJson (:69) tolerant decimal-string ("7500.00" → int, TD-126
+    pattern).
+  * lib/screens/send/send_tracking_screen.dart:273/290 — render breakdown
+    per stop saat `order.stops.isEmpty` (kasus response create) + fallback
+    placeholder. Detail response (stops.*.allocated_fare) tetap tampil via
+    jalur existing :312.
+  * test/models_test.dart — +2 regression test: decimal-string parse,
+    absent-field (backward compat default []).
+- S116 VERIFY: analyze RC=0, test 121 PASS (baseline 119 + 2).
+- Premise S116 VERIFIED live: backend service.go:274 FareBreakdownPerStop
+  []SendStopResponse json "fare_breakdown_per_stop", diisi :464. Mobile
+  fromJson:65 hanya baca `stops` → fix melengkapi.
+- Reviewer errors accrue v2.7.4: #95 (prompt S116 tidak pre-CEK duplikasi
+  render field di jalur stops; OpenCode recover via stops.isEmpty condition).
+- Lesson accrue L-S116-01: prompt mobile parser WAJIB pre-CEK duplikasi
+  field di jalur lain (create vs detail response) sebelum specify render.
+- Counter §2/§3 sync: 112F/60C/14D/2O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-151), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S117-commit).
