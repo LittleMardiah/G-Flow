@@ -4106,7 +4106,7 @@ Solusi     : 1) Tombol "Cancel (Emergency)" di
              3) Dialog konfirmasi + info refund penuh customer,
              4) Wire ke backend PATCH /rides/:id/status.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-17, sesi S118 — driver_app emergency cancel UI: order_service.updateRideStatus +reason param, active_order_detail_screen dialog + button, order_provider wire; backend TD-068 ready; 132 test PASS)
 Referensi  : TD-131 (customer side selesai, driver side baru),
              TD-068 (backend emergency cancel + fee)
 
@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 112 item, 60 item CLOSED (FIXED/CLOSED 172), 14 item DEFERRED,
-        2 item OPEN.  [112 + 60 + 14 + 2 = 188 = TOTAL]
+STATUS: ✅ FIXED 113 item, 60 item CLOSED (FIXED/CLOSED 173), 14 item DEFERRED,
+        1 item OPEN.  [113 + 60 + 14 + 1 = 188 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S117 — TD-151 FIXED):
+3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S119 — TD-170 FIXED):
    - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 112 item
+   - ✅ FIXED                           : 113 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 172 item
+   - FIXED/CLOSED                       : 173 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 2 item (sisa setelah sesi S117 = SEDANG 0 + RENDAH 2; TD-073 + TD-170, keduanya Flutter complex)
+   - ❌ OPEN                              : 1 item (sisa setelah sesi S119 = SEDANG 0 + RENDAH 1; TD-073 geolocator booking, blocked by plugin + emulator)
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [112 + 60 + 14 + 2 = 188 = TOTAL]
+      [113 + 60 + 14 + 1 = 188 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -10257,3 +10257,31 @@ CHANGELOG — 2026-10-17 (sesi S116+S117, TD-151 FIXED):
 - Counter §2/§3 sync: 112F/60C/14D/2O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-151), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S117-commit).
+
+========================================================================
+CHANGELOG — 2026-10-17 (sesi S118+S119, TD-170 FIXED):
+- TD-170 (MOBILE / FITUR) Status OPEN → ✅ FIXED.
+- S118 FIX (3 prod + 1 regression + 2 compile-sync):
+  * lib/services/order_service.dart:156-159 — updateRideStatus extended
+    `{String? reason}` param; body payload `{'reason': ?reason}` (opsional,
+    backward compat).
+  * lib/providers/order_provider.dart:168-169 — updateStatus teruskan
+    `reason` ke service.
+  * lib/screens/active_order_detail_screen.dart:126 — tombol "Cancel
+    (Emergency)" + dialog confirm + `updateStatus(order,'CANCELLED',
+    reason:'DRIVER_EMERGENCY')`.
+  * test/active_order_detail_screen_test.dart — 1 regression test
+    (dialog flow + reason sent).
+  * test/test_helpers.dart + test/order_provider_test.dart — compile-forced
+    signature sync (fake override). Precedent repo commit `596c76a`.
+- S118 VERIFY: analyze RC=0, test 132 PASS (baseline 11 → 132).
+- Backend premise VERIFIED live (service.go:96-97 reasonDriverEmergency =
+  "DRIVER_EMERGENCY", integration_test.go:812-847 via TD-068).
+- Reviewer errors accrue v2.7.4: #96 (prompt S118 gate "≤3 prod + 1 test"
+  tidak specify "compile-forced sync excluded" — OpenCode raise ambiguity,
+  Reviewer decide PASS based on precedent 596c76a).
+- Lesson accrue L-S118-01: prompt signature change WAJIB note
+  "compile-forced test sync NOT counted against gate".
+- Counter §2/§3 sync: 113F/60C/14D/1O = 188 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-170), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S119-commit).
