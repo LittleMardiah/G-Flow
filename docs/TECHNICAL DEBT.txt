@@ -1021,7 +1021,7 @@ Solusi     : Pakai geolocator untuk koordinat real; tambah fare preview, debt wa
             favorites, promo.
 Estimasi   : 3-4 jam
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-17, sesi S120 — 4/5 sub-item: coordinates via geolocator + LocationService, fare preview static formula match API_CONTRACT 7.1, debt warning reactive (OVERDUE_DEBT catch), promo voucher_code; favorites+dopoff geocoding+proactive debt move to TD-195/196/197)
 Referensi  : audit_r02.log (booking screen deviasi)
 
 ID         : TD-074
@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 113 item, 60 item CLOSED (FIXED/CLOSED 173), 14 item DEFERRED,
-        1 item OPEN.  [113 + 60 + 14 + 1 = 188 = TOTAL]
+STATUS: ✅ FIXED 114 item, 60 item CLOSED (FIXED/CLOSED 174), 14 item DEFERRED,
+        3 item OPEN.  [114 + 60 + 14 + 3 = 191 = TOTAL (+3 new TD-195/196/197)]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S119 — TD-170 FIXED):
-   - Total hutang teridentifikasi      : 188 item (TD-051 di-reserve/skip; 188 item aktif terdaftar).
-   - ✅ FIXED                           : 113 item
+3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S120 — TD-073 FIXED partial + 3 new TD):
+   - Total hutang teridentifikasi      : 191 item (TD-051 di-reserve/skip; 191 item aktif terdaftar setelah +3 dari S120).
+   - ✅ FIXED                           : 114 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 173 item
+   - FIXED/CLOSED                       : 174 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 1 item (sisa setelah sesi S119 = SEDANG 0 + RENDAH 1; TD-073 geolocator booking, blocked by plugin + emulator)
+   - ❌ OPEN                              : 3 item (TD-195 favorites, TD-196 proactive debt, TD-197 dropoff geocoding — semua backend-dependent)
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [113 + 60 + 14 + 1 = 188 = TOTAL]
+      [114 + 60 + 14 + 3 = 191 = TOTAL (+3 new items)]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9063,6 +9063,55 @@ CHANGELOG — 2026-10-08 (sesi E2E demo prep, BLOK 1E-3):
 - TD-179 log BARU (path inconsistency food vs ride).
 - FIXED 63 tetap, OPEN 57→58, SEDANG 90→91, TOTAL 172→173.
 
+ID         : TD-195
+Kategori   : MOBILE / FITUR
+Judul      : Ride booking: favorites (saved locations) tidak ada. Backend
+             endpoint `/users/{id}/favorites` (CRUD) tidak ada. Mobile
+             hardcoded (tidak ada UI favorites).
+Dampak     : UX gap — customer harus input pickup/dropoff manual setiap
+             booking. Fitur standar ride-hailing tidak tersedia.
+Solusi     : (1) Backend: migration `user_favorites` table + CRUD endpoints
+             (POST/GET/DELETE `/users/me/favorites`), (2) Mobile: model +
+             service + provider + UI button "Set as favorite" di booking
+             + dropdown quick-select.
+Prioritas  : RENDAH
+Status     : OPEN
+Referensi  : S120a (S120 LAPOR matrix — favorites SKIP dengan alasan backend
+             missing), TD-073 (partial close)
+
+ID         : TD-196
+Kategori   : MOBILE / FITUR + BACKEND
+Judul      : Ride booking debt warning REAKTIF hanya (catch 422
+             OVERDUE_DEBT), tidak PROAKTIF. Endpoint client-facing expose
+             `overdue_debt` field tidak ada (`/users/me` atau sejenis).
+Dampak     : Customer baru tahu hutang setelah klik Book. UX confusing
+             (blocking banner muncul tiba-tiba). Preventif = butuh query
+             proactive sebelum submit.
+Solusi     : (1) Backend: `GET /users/me` (atau extend `/wallets/me`)
+             return `overdue_debt` field, (2) Mobile: fetch on screen mount
+             → show banner blocking tanpa submit.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : S120a (S120 LAPOR matrix — debt warning reactive only),
+             TD-073 (partial close), TD-047 (overdue debt origin)
+
+ID         : TD-197
+Kategori   : MOBILE / FITUR + BACKEND
+Judul      : Ride booking dropoff geocoding/search tidak ada — coords
+             dropoff masih hardcoded atau manual input tanpa search.
+             Backend endpoint places/geocoding tidak ada.
+Dampak     : Customer tidak bisa cari alamat by text. UX gap besar vs
+             kompetitor.
+Solusi     : (1) Backend: integrate geocoding (Nominatim/OSM gratis,
+             atau Google Places) endpoint `GET /places/search?q=`,
+             (2) Mobile: autocomplete search + map pin drop.
+Prioritas  : SEDANG
+Status     : OPEN
+Referensi  : S120a (S120 LAPOR matrix — dropoff geocoding note),
+             TD-073 (partial close)
+
+
+
 ========================================================================
 CHANGELOG — 2026-10-08 (sesi TD-178, admin merchant approve endpoint):
 - Implementasi endpoint PATCH /api/v1/admin/merchants/:id/status (verify/reject/suspend) + 2FA + lockout.
@@ -10285,3 +10334,33 @@ CHANGELOG — 2026-10-17 (sesi S118+S119, TD-170 FIXED):
 - Counter §2/§3 sync: 113F/60C/14D/1O = 188 (TOTAL unchanged).
 - Delta register: FIXED +1 (TD-170), OPEN -1.
 - Commit: belum (R10). User commit via PowerShell (S119-commit).
+
+========================================================================
+CHANGELOG — 2026-10-17 (sesi S120, TD-073 FIXED (partial) + 3 NEW TD):
+- TD-073 (MOBILE / UX) Status OPEN → ✅ FIXED (partial 4/5 sub-item).
+  * FIXED: coordinates via geolocator plugin + LocationService.getCurrentLocation()
+    (permission handling denied/deniedForever/serviceDisabled) + fallback
+    manual input (_locationNote).
+  * FIXED: fare preview static formula base 10.000 + 4.000/km
+    (match API_CONTRACT 7.1) → display live.
+  * FIXED: debt warning reactive (catch 422 OVERDUE_DEBT → blocking banner).
+  * FIXED: promo voucher_code field optional → POST /rides/book body.
+  * SKIP/deferred: favorites (backend missing → TD-195), proactive debt
+    (backend missing → TD-196), dropoff geocoding (backend missing → TD-197).
+- S120 scope: 6 file (ride_booking_screen.dart, location_service.dart
+  (new), ride_service.dart, services_test.dart, AndroidManifest.xml,
+  Info.plist). pubspec.yaml TIDAK diubah (geolocator sudah ada di deps).
+- S120 VERIFY: analyze RC=0, test 127 PASS (121 → 127, +6).
+- 3 NEW TD registered (semua OPEN, backend-dependent):
+  * TD-195 Favorites ride (migration + CRUD + mobile UI).
+  * TD-196 Proactive debt query (backend field expose + mobile banner).
+  * TD-197 Dropoff geocoding (backend places search + mobile autocomplete).
+- Counter §2/§3 sync: 114F/60C/14D/3O = 191 (TOTAL +3 karena entry baru).
+- Delta register: FIXED +1 (TD-073), OPEN +3 (TD-195/196/197), TOTAL 188→191.
+- Reviewer errors accrue v2.7.4: #97 (prompt S120 tidak pre-CEK backend
+  availability sebelum gas → 3 new TD discovered post-fix).
+- Lesson accrue L-S120-01: prompt mobile feature yang depend backend
+  concept WAJIB pre-CEK endpoint availability di STEP 1.
+- BOM drop: ride_booking_screen.dart BOM hilang saat rewrite. Dart tetap
+  valid (analyze RC=0), non-blocker, cosmetic.
+- Commit: belum (R10). User commit via PowerShell (S120-commit).
