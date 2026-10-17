@@ -152,11 +152,17 @@ class OrderService {
     return unwrapData(res.data) ?? const <String, dynamic>{};
   }
 
-  /// PATCH /rides/{order_id}/status — DRIVER_ARRIVED → TRIP_STARTED → COMPLETED.
-  Future<Map<String, dynamic>> updateRideStatus(String orderId, String status) async {
+  /// PATCH /rides/{order_id}/status — DRIVER_ARRIVED → TRIP_STARTED → COMPLETED;
+  /// juga cancel driver (status CANCELLED). `reason` opsional (TD-170/TD-068):
+  /// kirim `DRIVER_EMERGENCY` → fee 0, full refund customer, driver kembali IDLE.
+  /// Tidak dikirim saat null (backward compatible).
+  Future<Map<String, dynamic>> updateRideStatus(String orderId, String status, {String? reason}) async {
     final res = await apiClient.patch(
       '/api/v1/rides/$orderId/status',
-      data: {'status': status},
+      data: {
+        'status': status,
+        'reason': ?reason,
+      },
     );
     return unwrapData(res.data) ?? const <String, dynamic>{};
   }

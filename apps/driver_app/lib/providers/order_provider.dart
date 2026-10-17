@@ -159,13 +159,14 @@ class ActiveOrdersNotifier extends StateNotifier<OrdersListState> {
     }
   }
 
-  /// Update status order (ride: DRIVER_ARRIVED/TRIP_STARTED/COMPLETED;
-  /// food/send: PICKED_UP/IN_TRANSIT/DELIVERED).
-  Future<bool> updateStatus(DriverOrder order, String status) async {
+  /// Update status order (ride: DRIVER_ARRIVED/TRIP_STARTED/COMPLETED/CANCELLED;
+  /// food/send: PICKED_UP/IN_TRANSIT/DELIVERED). `reason` diteruskan ke backend
+  /// untuk cancel driver (mis. `DRIVER_EMERGENCY`, TD-170/TD-068).
+  Future<bool> updateStatus(DriverOrder order, String status, {String? reason}) async {
     try {
       switch (order.type) {
         case OrderType.ride:
-          await service.updateRideStatus(order.id, status);
+          await service.updateRideStatus(order.id, status, reason: reason);
         case OrderType.food:
           await service.updateFoodStatus(order.id, status);
         case OrderType.send:

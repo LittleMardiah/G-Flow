@@ -14,6 +14,7 @@ class _FakeOrderService extends OrderService {
   final List<String> acceptedSends = [];
   final List<String> acceptedFoods = [];
   final List<String> rideStatuses = [];
+  final List<String?> rideReasons = [];
   final List<String> stoppedStops = [];
   List<DriverOrder> availableOrders = [_ride('a-1')];
   List<DriverOrder> activeOrders = [_ride('ax-1', status: 'TRIP_STARTED')];
@@ -56,9 +57,10 @@ class _FakeOrderService extends OrderService {
   }
 
   @override
-  Future<Map<String, dynamic>> updateRideStatus(String orderId, String status) async {
+  Future<Map<String, dynamic>> updateRideStatus(String orderId, String status, {String? reason}) async {
     if (failUpdate) throw Exception('update fail');
     rideStatuses.add('$orderId:$status');
+    rideReasons.add(reason);
     return const {};
   }
 

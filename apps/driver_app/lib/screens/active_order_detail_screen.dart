@@ -103,6 +103,40 @@ class _ActiveOrderDetailScreenState extends ConsumerState<ActiveOrderDetailScree
     );
   }
 
+  Future<void> _cancelEmergency(DriverOrder order) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Batalkan order?'),
+        content: const Text(
+          'Order akan dibatalkan dengan alasan DRIVER_EMERGENCY. '
+          'Customer mendapat refund penuh, tanpa penalti untuk kamu, '
+          'dan kamu kembali berstatus IDLE.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Batal')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Ya')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _updating = true);
+    final success = await ref
+        .read(activeOrdersProvider.notifier)
+        .updateStatus(order, 'CANCELLED', reason: 'DRIVER_EMERGENCY');
+    if (!mounted) return;
+    setState(() => _updating = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Order dibatalkan (emergency). Customer di-refund penuh.'
+              : 'Gagal membatalkan order.',
+        ),
+      ),
+    );
+  }
+
   void _fitMap(DriverOrder order) {
     if (_didFit) return;
     _didFit = true;
@@ -219,16 +253,37 @@ class _ActiveOrderDetailScreenState extends ConsumerState<ActiveOrderDetailScree
                         label: const Text('Buka Multi-Stop Delivery'),
                       )
                     else if (action != null)
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size.fromHeight(46),
-                          backgroundColor: theme.colorScheme.primary,
-                        ),
-                        onPressed: _updating ? null : () => _applyAction(order, action),
-                        icon: _updating
-                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.arrow_forward),
-                        label: Text(_updating ? 'Menyimpan…' : action.label),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size.fromHeight(46),
+                                backgroundColor: theme.colorScheme.primary,
+                              ),
+                              onPressed: _updating ? null : () => _applyAction(order, action),
+                              icon: _updating
+                                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Icon(Icons.arrow_forward),
+                              label: Text(_updating ? 'Menyimpan…' : action.label),
+                            ),
+                          ),
+                          if (order.type == OrderType.ride && !order.isTerminal) ...[
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(46),
+                                  foregroundColor: theme.colorScheme.error,
+                                  side: BorderSide(color: theme.colorScheme.error),
+                                ),
+                                onPressed: _updating ? null : () => _cancelEmergency(order),
+                                icon: const Icon(Icons.warning_amber_rounded),
+                                label: const Text('Cancel (Emergency)'),
+                              ),
+                            ),
+                          ],
+                        ],
                       )
                     else
                       Container(

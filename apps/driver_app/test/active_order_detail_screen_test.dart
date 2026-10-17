@@ -9,8 +9,8 @@ import 'package:driver_app/screens/active_order_detail_screen.dart';
 
 import 'test_helpers.dart';
 
-Widget _build(DriverOrder? order) {
-  final svc = FakeOrderService();
+Widget _build(DriverOrder? order, {FakeOrderService? service}) {
+  final svc = service ?? FakeOrderService();
   return ProviderScope(
     overrides: [
       orderServiceProvider.overrideWithValue(svc),
@@ -74,5 +74,25 @@ void main() {
     await tester.pumpWidget(_build(null));
     await tester.pump();
     expect(find.textContaining('Order tidak ditemukan'), findsOneWidget);
+  });
+
+  testWidgets('ride emergency cancel: confirm dialog sends DRIVER_EMERGENCY reason', (tester) async {
+    final svc = FakeOrderService();
+    final order = makeRide('r-1', status: 'DRIVER_ARRIVED');
+    await tester.pumpWidget(_build(order, service: svc));
+    await _pumpMap(tester);
+
+    expect(find.text('Cancel (Emergency)'), findsOneWidget);
+    await tester.ensureVisible(find.text('Cancel (Emergency)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel (Emergency)'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('DRIVER_EMERGENCY'), findsOneWidget);
+
+    await tester.tap(find.text('Ya'));
+    await tester.pumpAndSettle();
+
+    expect(svc.rideReasons, contains('DRIVER_EMERGENCY'));
   });
 }

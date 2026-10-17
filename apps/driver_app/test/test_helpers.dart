@@ -20,6 +20,7 @@ class FakeOrderService extends OrderService {
 
   List<DriverOrder> availableOrders = [];
   List<DriverOrder> activeOrders = [];
+  final List<String?> rideReasons = [];
   bool failAccept = false;
 
   @override
@@ -55,7 +56,10 @@ class FakeOrderService extends OrderService {
   }
 
   @override
-  Future<Map<String, dynamic>> updateRideStatus(String orderId, String status) async => const {};
+  Future<Map<String, dynamic>> updateRideStatus(String orderId, String status, {String? reason}) async {
+    rideReasons.add(reason);
+    return const {};
+  }
 
   @override
   Future<Map<String, dynamic>> updateSendStatus(String orderId, String status) async => const {};
