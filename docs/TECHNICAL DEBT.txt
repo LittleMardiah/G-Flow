@@ -4964,8 +4964,8 @@ TOTAL HUTANG TEKNIS TERIDENTIFIKASI : 188 item (TD-051 di-reserve/skip)
              30 → 31 (+1). Konsisten: 8 + 40 + 72 + 31 = 151 = TOTAL dan
              42 + 14 + 7 + 88 = 151 = TOTAL.]
 
-STATUS: ✅ FIXED 114 item, 60 item CLOSED (FIXED/CLOSED 174), 14 item DEFERRED,
-        3 item OPEN.  [114 + 60 + 14 + 3 = 191 = TOTAL (+3 new TD-195/196/197)]
+STATUS: ✅ FIXED 115 item, 60 item CLOSED (FIXED/CLOSED 175), 14 item DEFERRED,
+        2 item OPEN.  [115 + 60 + 14 + 2 = 191 = TOTAL]
         [67/53/14/41 pada 2026-10-09 (sesi TD-109, wontfix 403 by design):
         TD-109 (SECURITY, `Prioritas : SEDANG`) berubah Status OPEN →
         ✅ CLOSED (2026-10-09, wontfix — 403 by design). Delta Status:
@@ -5264,21 +5264,21 @@ REKOMENDASI:
   bangun custom runner/wrapper scripts/migrate_with_psql.sh agar deploy tidak
   lagi manual & otomatis terdeteksi (CONCURRENTLY / ALTER TYPE ADD VALUE).
 
-3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S120 — TD-073 FIXED partial + 3 new TD):
+3. RINGKASAN STATUS TERKINI (2026-10-17, sesi S123 — TD-196 FIXED):
    - Total hutang teridentifikasi      : 191 item (TD-051 di-reserve/skip; 191 item aktif terdaftar setelah +3 dari S120).
-   - ✅ FIXED                           : 114 item
+   - ✅ FIXED                           : 115 item
    - CLOSED                             : 60 item (9 lama TD-011 s/d TD-019 + 5 via triage
                                           2026-09-25 TD-062, TD-063, TD-075, TD-092, TD-097
                                           + 15 via triage-v2 2026-09-30 + 15 via triage-v3
                                           2026-10-04 — lihat blok [Perubahan 2026-10-04] di bawah
                                           + 8 via triage-v4 2026-10-08 + TD-109 wontfix 2026-10-09)
-   - FIXED/CLOSED                       : 174 item
+   - FIXED/CLOSED                       : 175 item
    - DEFERRED                           : 14 item (TD-007, TD-010, TD-061, TD-066, TD-088, TD-090,
                                           TD-098, TD-100 + TD-065, TD-130, TD-134, TD-161, TD-162,
                                           TD-175 via triage-v4 2026-10-08).
-   - ❌ OPEN                              : 3 item (TD-195 favorites, TD-196 proactive debt, TD-197 dropoff geocoding — semua backend-dependent)
+   - ❌ OPEN                              : 2 item (TD-195 favorites, TD-197 dropoff geocoding — multi-layer each)
                                           masih ada TD-022, TD-026, TD-031 s/d TD-037, dst/).
-      [114 + 60 + 14 + 3 = 191 = TOTAL (+3 new items)]
+      [115 + 60 + 14 + 2 = 191 = TOTAL]
       [Perubahan 2026-10-09 (sesi TD-054 close + fix over-replace):
 
       TD-054 Status OPEN → ✅ FIXED (2026-10-09, sesi TD-054). Backend
@@ -9091,7 +9091,7 @@ Solusi     : (1) Backend: `GET /users/me` (atau extend `/wallets/me`)
              return `overdue_debt` field, (2) Mobile: fetch on screen mount
              → show banner blocking tanpa submit.
 Prioritas  : SEDANG
-Status     : OPEN
+Status     : ✅ FIXED (2026-10-17, sesi S121+S122 split §11.4.6 — backend /wallets/me expose overdue_debt (reuse overdueDebtFor helper) + mobile proactive banner via WalletBalanceState; analyze RC=0, 132 test PASS, integration PASS)
 Referensi  : S120a (S120 LAPOR matrix — debt warning reactive only),
              TD-073 (partial close), TD-047 (overdue debt origin)
 
@@ -10364,3 +10364,36 @@ CHANGELOG — 2026-10-17 (sesi S120, TD-073 FIXED (partial) + 3 NEW TD):
 - BOM drop: ride_booking_screen.dart BOM hilang saat rewrite. Dart tetap
   valid (analyze RC=0), non-blocker, cosmetic.
 - Commit: belum (R10). User commit via PowerShell (S120-commit).
+
+========================================================================
+CHANGELOG — 2026-10-17 (sesi S121+S122+S123, TD-196 FIXED — split §11.4.6):
+- TD-196 (MOBILE + BACKEND) Status OPEN → ✅ FIXED.
+- Split 2 sesi (per §11.4.6 cross-layer STOP):
+  * S121 backend: internal/wallet/service.go — MyWallet struct + field
+    OverdueDebt (service.go:129) populated via existing helper overdueDebtFor
+    (service.go:717-731, sudah pre-existing SELECT COALESCE(overdue_debt,0)
+    FROM users WHERE id=$1). Handler + repo TIDAK disentuh (response =
+    service.MyWallet langsung serialized). +3 test extended (service_test,
+    handler_test, me_integration_test — compile-forced sync karena MyWallet
+    struct berubah + db nil → mock).
+  * S122 mobile: lib/models/wallet.dart +OverdueDebt field (parse `_num`
+    tolerant string "30000"/decimal "45000.50" per handler_test.go:411 wire
+    string); lib/screens/ride/ride_booking_screen.dart +proactive banner via
+    `ref.listen(myWalletProvider)` mirror existing pattern
+    ride_tracking_screen.dart:49. Provider/service TIDAK disentuh karena
+    WalletBalanceState sudah carry Wallet penuh + getMyWallet parse
+    Wallet.fromJson → overdueDebt propagates free (L-S121-02 existing-pattern
+    first). Reactive `isOverdueDebtError` 422 catch retained as fallback.
+- VERIFY: 
+  * S121: gofmt/build/vet RC=0, unit PASS, integration TestIntegrationWalletMe_*
+    PASS (termasuk new TestIntegrationWalletMe_OverdueDebt).
+  * S122: analyze RC=0, test 132 PASS (127 + 5 new: 3 model + 2 widget).
+- Reviewer errors accrue v2.7.4: #98 (pre-CEK signature impact miss),
+  #99 (handler/repo spec drift — 5× recurrence), #100 (integration test
+  blast radius), #101 (L-S35 violation — S121 dirty tree masuk S122),
+  #102 (WalletBalanceState pattern tidak di-predict).
+- Lesson accrue L-S121-01..03: pre-CEK construct blast radius; pre-CEK
+  existing pattern; commit S121 sebelum S122 (split hygiene).
+- Counter §2/§3 sync: 115F/60C/14D/2O = 191 (TOTAL unchanged).
+- Delta register: FIXED +1 (TD-196), OPEN -1.
+- Commit: belum (R10). User commit via PowerShell (S124 — batch S121+S122).
